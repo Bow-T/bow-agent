@@ -1,0 +1,46 @@
+{
+  "name": "bow-agent",
+  "version": "0.1.0",
+  "description": "AI agent nhận đề tài / WBS / Jira ticket rồi tự lập kế hoạch và thực thi (plan-then-approve). Tái sử dụng cho nhiều dự án.",
+  "type": "module",
+  "bin": {
+    "bow-agent": "./dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli/index.ts",
+    "start": "node dist/cli/index.js",
+    "typecheck": "tsc --noEmit",
+    "ui": "concurrently -n api,web -c blue,green \"npm run ui:api\" \"npm run ui:web\"",
+    "ui:api": "tsx src/web/server.ts",
+    "ui:web": "vite",
+    "ui:build": "vite build",
+    "ui:preview": "npm run ui:build && node --loader tsx src/web/server.ts"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.199",
+    "cors": "^2.8.6",
+    "dotenv": "^16.4.5",
+    "express": "^4.22.2",
+    "pdf-parse": "^1.1.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^4.17.25",
+    "@types/node": "^22.10.0",
+    "@types/pdf-parse": "^1.1.5",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.7.0",
+    "concurrently": "^9.2.3",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.4.3"
+  }
+}
