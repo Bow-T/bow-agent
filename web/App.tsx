@@ -668,26 +668,9 @@ export function App() {
         <div className="brand">▚ BOW-AGENT</div>
         <div className="topbar-right">
           <div className="meta">
-            {cfg && (
-              <>
-                <span>model: {cfg.model}</span>
-                <span>
-                  auth:{' '}
-                  {cfg.authSource === 'api-key'
-                    ? '🔑 API key'
-                    : cfg.authSource === 'claude-cli'
-                      ? '👤 Claude CLI'
-                      : '❌ chưa có'}
-                </span>
-                <span>Jira: {cfg.jiraConfigured ? '✅' : '—'}</span>
-                {cfg.mcpServers && cfg.mcpServers.length > 0 && (
-                  <span>MCP: {cfg.mcpServers.join(', ')}</span>
-                )}
-                <span style={{ color: accumulatedCost > 2 ? 'var(--red)' : 'inherit' }}>
-                  Tích lũy: ${accumulatedCost.toFixed(4)}
-                </span>
-              </>
-            )}
+            <span style={{ color: accumulatedCost > 2 ? 'var(--red)' : 'inherit' }}>
+              Tích lũy: ${accumulatedCost.toFixed(4)}
+            </span>
           </div>
           <button
             className="theme-btn"
