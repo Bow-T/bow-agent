@@ -51,7 +51,7 @@ delivery_review_summary.dart:L30: shrink: if/else 6 dòng gán biến. đổi th
   config/param không ai set, tham số "phòng xa".
 - `shrink:` — logic đúng nhưng dài hơn cần thiết; gom về ít dòng hơn mà vẫn rõ.
 
-## Ghép với pipeline DUOCT
+## Ghép với pipeline <PROJECT_KEY>
 - Cắt code thừa kéo metric **Codebase Impact** (`deletions/(add+del)` → 0.2–0.6)
   về vùng mục tiêu — nêu con số này khi tổng kết nếu liên quan.
 - Sau khi người dùng đồng ý cắt, nếu đụng contract/cross-cutting thì chạy

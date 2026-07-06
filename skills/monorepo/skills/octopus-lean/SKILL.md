@@ -6,7 +6,7 @@ description: Viết ít code nhất có thể mà KHÔNG hy sinh correctness/sec
 # Octopus Lean — "lazy senior dev": code tốt nhất là code không phải viết
 
 > Adapt từ triết lý [ponytail](https://github.com/DietrichGebert/ponytail) (YAGNI /
-> "lazy senior developer") cho ngữ cảnh DUOCT (Flutter + Supabase). Khác với
+> "lazy senior developer") cho ngữ cảnh <PROJECT_KEY> (Flutter + Supabase). Khác với
 > [code-simplification] (dọn code ĐÃ viết cho dễ đọc), skill này chặn **TRƯỚC khi
 > gõ**: cân nhắc có cần viết không, và viết bằng cách rẻ nhất.
 
@@ -33,7 +33,7 @@ Dừng ở bậc thấp nhất giải quyết được vấn đề:
 1. **Có cần không? (YAGNI)** — Task/nhánh code này có thật sự cần tồn tại? Cắt được
    yêu cầu thừa (thêm 1 lựa chọn UI chưa ai dùng, 1 config chưa ai đọc) thì cắt.
 2. **Reuse trong repo?** — `grep -rln "<khái-niệm-peer>" apps/ packages/ supabase/`
-   trước. DUOCT có nhà sẵn cho nhiều concern: đọc `.env`/config → `AppBaseUrl`
+   trước. <PROJECT_KEY> có nhà sẵn cho nhiều concern: đọc `.env`/config → `AppBaseUrl`
    (đừng đẻ class `Env` mới); enum/status/formatter/localizer/model converter/icon
    resolver → tìm 1 peer rồi thêm cạnh nó. (xem [[app-base-url-single-env-reader]],
    [[impact-sweep]] mục 0).

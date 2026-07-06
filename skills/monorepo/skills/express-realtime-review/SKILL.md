@@ -1,6 +1,6 @@
 ---
 name: express-realtime-review
-description: Catch the recurring DUOCT express/delivery/notification/realtime bug classes BEFORE QC does — the six patterns a Sprint-7 multi-agent sweep found live in merged code (status-enum widened but not swept to every surface, per-stop timeline active-leg mis-derivation, copy-pasted realtime-badge logic, realtime channel/subscription leaks, widgets that don't re-sync when props change live, and DB FK/table re-points whose consumers still read the old table). Use when adding or editing anything under the express-delivery / courier-handling / delivery-tracking / notifications surfaces, when adding an express or booking status value, when touching a realtime subscription (subscribeToX / postgres_changes / badge count), when building a multi-stop timeline or any grouped/per-item UI, or when a QC bug lands on those surfaces. Pairs with [[impact-sweep]], [[octopus-ui]], [[octopus-i18n]] and [[verify-runtime-not-just-static-green]].
+description: Catch the recurring <PROJECT_KEY> express/delivery/notification/realtime bug classes BEFORE QC does — the six patterns a Sprint-7 multi-agent sweep found live in merged code (status-enum widened but not swept to every surface, per-stop timeline active-leg mis-derivation, copy-pasted realtime-badge logic, realtime channel/subscription leaks, widgets that don't re-sync when props change live, and DB FK/table re-points whose consumers still read the old table). Use when adding or editing anything under the express-delivery / courier-handling / delivery-tracking / notifications surfaces, when adding an express or booking status value, when touching a realtime subscription (subscribeToX / postgres_changes / badge count), when building a multi-stop timeline or any grouped/per-item UI, or when a QC bug lands on those surfaces. Pairs with [[impact-sweep]], [[octopus-ui]], [[octopus-i18n]] and [[verify-runtime-not-just-static-green]].
 ---
 
 # Express / Realtime review — the six bug classes QC keeps finding
@@ -40,7 +40,7 @@ a compile error, not a silent miss. See [[impact-sweep]] §"enum-widen".
 
 ## 2. Multi-stop timeline: derive the active leg the SAME way on every surface
 The courier and the sender render the same delivery; if they compute "which stop
-is current" differently, they disagree — and QC files it (DUOCT-2159).
+is current" differently, they disagree — and QC files it (<PROJECT_KEY>-2159).
 
 - **Trap:** every not-yet-reached stop carries a `pending` history row from
   booking time, so "highest non-terminal stop" ≠ "the leg being worked". The
@@ -108,7 +108,7 @@ tree constantly.
   ([[rls-realtime-needs-replica-identity-full]]).
 
 ## 8. Cross-cutting DB re-point: update the consumer, not just the writer
-When a migration re-points an FK or a table's meaning (DUOCT-1900 re-pointed
+When a migration re-points an FK or a table's meaning (<PROJECT_KEY>-1900 re-pointed
 `support_tickets.context_order_id` from `orders` → `express_deliveries`), grep
 **every reader** of that column. The admin reader still did
 `from('orders').eq('id', context_order_id)` — which now holds an

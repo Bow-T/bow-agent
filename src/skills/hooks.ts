@@ -3,7 +3,7 @@ import { dirname, join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { HookCallbackMatcher, HookEvent } from '@anthropic-ai/claude-agent-sdk';
-import { isMonorepo } from './monorepo.js';
+import { isMonorepo, detectJiraProjectKey } from './monorepo.js';
 
 /**
  * Hook của monorepo (gói từ .claude/hooks). Bọc 4 script shell đã kiểm chứng
@@ -38,13 +38,14 @@ function runHookScript(
   scriptPath: string,
   payload: unknown,
   projectDir: string,
+  projectKey: string,
 ): { decision?: 'block'; reason?: string; continue?: boolean; systemMessage?: string } {
   if (!existsSync(scriptPath)) return { continue: true };
   let res;
   try {
     res = spawnSync('bash', [scriptPath], {
       input: JSON.stringify(payload),
-      env: { ...process.env, CLAUDE_PROJECT_DIR: projectDir },
+      env: { ...process.env, CLAUDE_PROJECT_DIR: projectDir, BOW_PROJECT_KEY: projectKey },
       cwd: projectDir,
       encoding: 'utf8',
       timeout: 120_000,
@@ -73,6 +74,7 @@ export function buildMonorepoHooks(
   const dir = hooksDir();
   if (!existsSync(dir)) return undefined;
   const root = monorepoRoot(cwd);
+  const projectKey = detectJiraProjectKey(cwd);
 
   const guardPush = join(dir, 'guard-push.sh');
   const guardCommit = join(dir, 'guard-commit-branch.sh');
@@ -85,18 +87,18 @@ export function buildMonorepoHooks(
       {
         matcher: 'Bash',
         hooks: [
-          async (input) => runHookScript(guardPush, input, root),
-          async (input) => runHookScript(guardCommit, input, root),
+          async (input) => runHookScript(guardPush, input, root, projectKey),
+          async (input) => runHookScript(guardCommit, input, root, projectKey),
         ],
       },
     ],
     // Khi phiên bắt đầu: wire core.hooksPath → .githooks (idempotent, không chặn).
     SessionStart: [
-      { hooks: [async (input) => runHookScript(ensureGithooks, input, root)] },
+      { hooks: [async (input) => runHookScript(ensureGithooks, input, root, projectKey)] },
     ],
     // Khi kết thúc lượt: nhắc self-verify rubric nếu có commit chưa push (không chặn).
     Stop: [
-      { hooks: [async (input) => runHookScript(selfVerify, input, root)] },
+      { hooks: [async (input) => runHookScript(selfVerify, input, root, projectKey)] },
     ],
   };
 }

@@ -1,6 +1,6 @@
 ---
 name: test-driven-development
-description: Drives DUOCT development with tests (Flutter *_test.dart, Next.js admin *.spec.ts). Use when implementing logic, fixing a bug, or changing behavior. Use when you need to prove code works, when a bug report arrives, or before modifying existing functionality — and to lift the du-quest Test Discipline metric (>=25% test commits, split as Test(scope): commits). Pairs with [[debugging-and-error-recovery]].
+description: Drives <PROJECT_KEY> development with tests (Flutter *_test.dart, Next.js admin *.spec.ts). Use when implementing logic, fixing a bug, or changing behavior. Use when you need to prove code works, when a bug report arrives, or before modifying existing functionality — and to lift the du-quest Test Discipline metric (>=25% test commits, split as Test(scope): commits). Pairs with [[debugging-and-error-recovery]].
 ---
 
 # Test-Driven Development

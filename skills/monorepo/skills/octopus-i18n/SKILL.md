@@ -1,13 +1,13 @@
 ---
 name: octopus-i18n
-description: Make every user-facing string in the DUOCT mobile app render in the active language (EN/FR) — both hardcoded literals AND admin/DB-sourced vocabulary (catalog name/display_name/description, status, type, category, payment method, rejection reason). Use when adding or editing any UI copy, when binding a Supabase/admin column into Text/title/label/snackbar, when adding an enum/status/vocabulary value, or when QA files a "Missing French Translations" / "still in English under FR" bug. Catches the class of bug that static analysis and unit tests never see. Pairs with [[octopus-ui]] and the localizedX helpers in lib/src/utils.
+description: Make every user-facing string in the <PROJECT_KEY> mobile app render in the active language (EN/FR) — both hardcoded literals AND admin/DB-sourced vocabulary (catalog name/display_name/description, status, type, category, payment method, rejection reason). Use when adding or editing any UI copy, when binding a Supabase/admin column into Text/title/label/snackbar, when adding an enum/status/vocabulary value, or when QA files a "Missing French Translations" / "still in English under FR" bug. Catches the class of bug that static analysis and unit tests never see. Pairs with [[octopus-ui]] and the localizedX helpers in lib/src/utils.
 ---
 
 # Octopus i18n — nothing user-facing ships in one language
 
 The app ships EN + FR. `fvm flutter analyze` and unit tests are **blind** to
 localization: an English literal and a French one compile identically. So the
-"it's still in English under FR" bug (DUOCT-1963, DUOCT-2063, and the recurring
+"it's still in English under FR" bug (<PROJECT_KEY>-1963, <PROJECT_KEY>-2063, and the recurring
 QA filings) only ever surfaces in manual QA — unless you apply the rules below
 *before* QA does. **Every string a user can read must resolve through l10n.**
 

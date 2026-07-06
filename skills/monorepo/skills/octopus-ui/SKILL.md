@@ -1,6 +1,6 @@
 ---
 name: octopus-ui
-description: Build or edit Flutter UI and pages in apps/mobile using the DUOCT Flutter MVVM architecture — the BaseViewModel + MixinBasePage page+view-model pattern (ChangeState state machine, lifecycle hooks, optimistic updates), reusing existing components, the app theme/spacing/localization, and typed models (never raw maps) in widgets. Use whenever creating or changing a screen, page, view-model (vm), widget, dialog, or any UI/MVVM code under apps/mobile/lib/src/pages or components.
+description: Build or edit Flutter UI and pages in apps/mobile using the <PROJECT_KEY> Flutter MVVM architecture — the BaseViewModel + MixinBasePage page+view-model pattern (ChangeState state machine, lifecycle hooks, optimistic updates), reusing existing components, the app theme/spacing/localization, and typed models (never raw maps) in widgets. Use whenever creating or changing a screen, page, view-model (vm), widget, dialog, or any UI/MVVM code under apps/mobile/lib/src/pages or components.
 ---
 
 # Octopus UI — build screens the project way
@@ -125,7 +125,7 @@ Future<void> increment(FooItem it) async {
   - **Exception — keep `SizedBox` when it has a `child` or constrains *both* dimensions** (e.g. `SizedBox(width: 40, height: 40, child: icon)`): that is a sizing box, not a spacer, and has no extension form.
   - **Paddings:** there are no shared padding constants — write `EdgeInsets.symmetric/only/all(...)` inline, but reuse the same step values the rest of the app uses (8 / 12 / 16 / 20 / 24), not arbitrary numbers.
 - **Icons/images:** assets through `AppAsset.icons.*`; remote images through `CachedImage` / `CachedImageCircle` (never a bare `Image.network`).
-- **Tap targets — a `GestureDetector`/`InkWell` wrapping a whole row/card MUST set `behavior: HitTestBehavior.opaque`** (or `.translucent` if it must sit over another tappable layer). The default is `deferToChild`: it only registers taps where a *child paints pixels*, so the gaps in a card — `12.sizedWidth`/`sizedHeight` spacers, the slack in an `Expanded` after a short `Text`, the `padding`/`margin` of the wrapped `Container` — become **dead zones that silently swallow the tap**. The user sees a card that only reacts on its text/icon/radio, not the empty area beside them. This bit us repeatedly on selection cards (voucher/offer, payment method, delivery option) — QC logged it twice (DUOCT-2052). Rule of thumb: if the `onTap` is meant to select/open the *item*, make the hit area `opaque`; only leave it `deferToChild` when the `GestureDetector` truly wraps just one small glyph/`Text` (e.g. a trailing chevron with its own action).
+- **Tap targets — a `GestureDetector`/`InkWell` wrapping a whole row/card MUST set `behavior: HitTestBehavior.opaque`** (or `.translucent` if it must sit over another tappable layer). The default is `deferToChild`: it only registers taps where a *child paints pixels*, so the gaps in a card — `12.sizedWidth`/`sizedHeight` spacers, the slack in an `Expanded` after a short `Text`, the `padding`/`margin` of the wrapped `Container` — become **dead zones that silently swallow the tap**. The user sees a card that only reacts on its text/icon/radio, not the empty area beside them. This bit us repeatedly on selection cards (voucher/offer, payment method, delivery option) — QC logged it twice (<PROJECT_KEY>-2052). Rule of thumb: if the `onTap` is meant to select/open the *item*, make the hit area `opaque`; only leave it `deferToChild` when the `GestureDetector` truly wraps just one small glyph/`Text` (e.g. a trailing chevron with its own action).
 
 ## 4. Localization — every user-facing string
 All copy goes through generated l10n: `S.of(context).key` in widgets, or
@@ -148,7 +148,7 @@ A value that arrives from Supabase/admin (a catalog `name` / `display_name` /
 literal. These columns are seeded in **English only** and have **no i18n
 column**, so binding them straight into `Text(...)` ships English under FR — the
 exact bug QC keeps filing (item types, delivery service levels, vehicle names —
-DUOCT-2063). Don't add a DB i18n column for a small fixed vocabulary; mirror the
+<PROJECT_KEY>-2063). Don't add a DB i18n column for a small fixed vocabulary; mirror the
 [[order_status_localizer]] precedent — a pure `localizedX(context, value)` helper
 in `lib/src/utils/` that maps the canonical label to `S.of(context).<key>` and
 **falls back to the raw value** so a brand-new admin entry still renders (just
@@ -216,7 +216,7 @@ each shipped a Sprint-7 QC bug that `analyze` never saw.
   grep -nE "SizedBox\((height|width):" $F       # spacer → 12.sizedHeight / 10.sizedWidth (OK if it has a child)
   grep -n  "Image.network" $F                   # → CachedImage / CachedImageCircle
   grep -nE "Text\(['\"]" $F                      # hardcoded copy → S.of(context)/S.current
-  grep -nA1 "GestureDetector(" $F | grep -B1 "onTap"  # whole-card onTap? must have behavior: HitTestBehavior.opaque (else dead tap zones — DUOCT-2052)
+  grep -nA1 "GestureDetector(" $F | grep -B1 "onTap"  # whole-card onTap? must have behavior: HitTestBehavior.opaque (else dead tap zones — <PROJECT_KEY>-2052)
   ```
 - Re-check by hand: no map-indexing in widgets, reused existing components where possible, page follows the MixinBasePage pattern.
 - Then hand off to the `octopus-commit` skill to commit/push.

@@ -30,10 +30,11 @@ branch=$(git -C "$root" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 
 case "$branch" in
   develop|main|master|dev)
+    project_key="${BOW_PROJECT_KEY:-PROJ}"
     echo "❌ Commit blocked: you are on protected branch '$branch'." >&2
-    echo "   DUOCT convention forbids committing to dev/main/develop directly." >&2
+    echo "   $project_key convention forbids committing to dev/main/develop directly." >&2
     echo "   Create a feature branch first, e.g.:" >&2
-    echo "     git checkout -b feat/DUOCT-XXX-short-kebab" >&2
+    echo "     git checkout -b feat/${project_key}-XXX-short-kebab" >&2
     echo "   then re-run the commit." >&2
     exit 2
     ;;

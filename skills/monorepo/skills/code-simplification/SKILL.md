@@ -1,6 +1,6 @@
 ---
 name: code-simplification
-description: Simplifies code for clarity without changing behavior. Use when refactoring DUOCT code that works but is harder to read/maintain/extend than it should be, or when reviewing code with accumulated complexity. Removing dead/redundant code also helps the du-quest Codebase Impact metric (deletions/(additions+deletions) target 0.2-0.6).
+description: Simplifies code for clarity without changing behavior. Use when refactoring <PROJECT_KEY> code that works but is harder to read/maintain/extend than it should be, or when reviewing code with accumulated complexity. Removing dead/redundant code also helps the du-quest Codebase Impact metric (deletions/(additions+deletions) target 0.2-0.6).
 ---
 
 # Code Simplification

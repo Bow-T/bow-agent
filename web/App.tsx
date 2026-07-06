@@ -46,23 +46,20 @@ async function readImage(file: File): Promise<ImageAttachment> {
  * - target 'task': điền vào ô mô tả task.
  * - target 'jira': đưa con trỏ vào ô Jira (điền text gợi ý làm placeholder hành động).
  */
-const QUICK_PROMPTS: { label: string; text: string; target: 'task' | 'jira' }[] = [
-  { label: '🐛 Sửa bug từ Jira', text: '', target: 'jira' },
+const QUICK_PROMPTS: { label: string; text: string }[] = [
+  { label: '🐛 Sửa bug từ Jira', text: 'Hãy đọc và giải quyết ticket Jira: ' },
   {
     label: '💡 Làm theo đề xuất',
     text: 'Phân tích vấn đề, đề xuất hướng làm rồi trình bày kế hoạch để tôi duyệt trước khi thực thi.',
-    target: 'task',
   },
   {
     label: '📖 Giải thích codebase',
     text: 'Đọc và giải thích cấu trúc dự án này: các module chính, luồng dữ liệu, và điểm cần lưu ý.',
-    target: 'task',
   },
 ];
 
 export function App() {
   const [task, setTask] = useState(() => localStorage.getItem('bow-task') || '');
-  const [jiraRef, setJiraRef] = useState(() => localStorage.getItem('bow-jiraRef') || '');
   const [cwd, setCwd] = useState(() => localStorage.getItem('bow-cwd') || '');
   const [mode, setMode] = useState<Mode>(() => (localStorage.getItem('bow-mode') as Mode) || 'plan');
   const [profile, setProfile] = useState(() => localStorage.getItem('bow-profile') || 'auto');
@@ -98,7 +95,6 @@ export function App() {
 
   // Đồng bộ hóa cấu hình composer vào localStorage
   useEffect(() => { localStorage.setItem('bow-task', task); }, [task]);
-  useEffect(() => { localStorage.setItem('bow-jiraRef', jiraRef); }, [jiraRef]);
   useEffect(() => { localStorage.setItem('bow-cwd', cwd); }, [cwd]);
   useEffect(() => { localStorage.setItem('bow-mode', mode); }, [mode]);
   useEffect(() => { localStorage.setItem('bow-profile', profile); }, [profile]);
@@ -161,15 +157,10 @@ export function App() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const taskRef = useRef<HTMLTextAreaElement>(null);
-  const jiraInputRef = useRef<HTMLInputElement>(null);
 
-  /** Bấm một gợi ý nhanh: điền sẵn task hoặc đưa con trỏ vào ô Jira. */
-  function applyQuickPrompt(qp: { text: string; target: 'task' | 'jira' }) {
+  /** Bấm một gợi ý nhanh: điền sẵn task. */
+  function applyQuickPrompt(qp: { text: string }) {
     if (running) return;
-    if (qp.target === 'jira') {
-      jiraInputRef.current?.focus();
-      return;
-    }
     setTask(qp.text);
     // Chờ state cập nhật rồi focus + đưa con trỏ về cuối để sửa tiếp.
     setTimeout(() => {
@@ -277,7 +268,7 @@ export function App() {
 
   async function start() {
     if (running) return;
-    const hasInput = task.trim() || jiraRef.trim() || docs.length || pdfs.length || images.length;
+    const hasInput = task.trim() || docs.length || pdfs.length || images.length;
     if (!hasInput) return;
 
     // Giữ lịch sử cũ — task mới nối tiếp bên dưới (chat liên tục). Chỉ dọn approval treo.
@@ -287,7 +278,24 @@ export function App() {
     // Chốt dữ liệu đầu vào vào biến local TRƯỚC khi xóa ô nhập, để vẫn gửi đúng
     // lên backend. Xóa ô nhập ngay sau khi gửi (hành vi chat quen thuộc).
     const sentText = task.trim();
-    const sentJira = jiraRef.trim();
+    
+    let sentJira = '';
+    const selected = sentText.match(/[?&]selectedIssue=([A-Z][A-Z0-9]+-\d+)/i);
+    const ticket = selected ?? sentText.match(/\b([A-Z][A-Z0-9]+-\d+)\b/);
+    if (ticket) {
+      sentJira = ticket[1].toUpperCase();
+    } else {
+      const board = sentText.match(/\/boards\/(\d+)/);
+      if (board) {
+        sentJira = `board ${board[1]}`;
+      } else {
+        const project = sentText.match(/\/projects\/([A-Z][A-Z0-9]+)/i);
+        if (project) {
+          sentJira = `project ${project[1].toUpperCase()}`;
+        }
+      }
+    }
+
     const sentDocs = docs;
     const sentPdfs = pdfs;
     const sentImages = images;
@@ -300,9 +308,8 @@ export function App() {
     ].filter(Boolean);
     addItem('user', parts.join(' ') || '(đầu vào đính kèm)');
 
-    // Xóa ô nhập + file đính kèm (task/jiraRef được persist nên xóa cả localStorage).
+    // Xóa ô nhập + file đính kèm (task được persist nên xóa cả localStorage).
     setTask('');
-    setJiraRef('');
     setDocs([]);
     setPdfs([]);
     setImages([]);
@@ -549,7 +556,18 @@ export function App() {
   // Tính toán trạng thái các nơ-ron
   const taskNodeActive = task.trim().length > 0;
   const cwdNodeActive = cwd.trim().length > 0;
-  const jiraNodeActive = jiraRef.trim().length > 0;
+ 
+  const parsedJiraFromTask = (() => {
+    const selected = task.match(/[?&]selectedIssue=([A-Z][A-Z0-9]+-\d+)/i);
+    const ticket = selected ?? task.match(/\b([A-Z][A-Z0-9]+-\d+)\b/);
+    if (ticket) return ticket[1].toUpperCase();
+    const board = task.match(/\/boards\/(\d+)/);
+    if (board) return `board ${board[1]}`;
+    const project = task.match(/\/projects\/([A-Z][A-Z0-9]+)/i);
+    if (project) return `project ${project[1].toUpperCase()}`;
+    return '';
+  })();
+  const jiraNodeActive = parsedJiraFromTask.length > 0;
   const brainActive = running;
 
   const getLatestToolCategory = () => {
@@ -1004,14 +1022,6 @@ export function App() {
         )}
 
         <div className="row">
-          <input
-            ref={jiraInputRef}
-            className="jira"
-            placeholder="Jira ticket / URL (vd PROJ-123 hoặc /projects/PROJ/boards/123)"
-            value={jiraRef}
-            onChange={(e) => setJiraRef(e.target.value)}
-            disabled={running}
-          />
           <div className="cwd-container" style={{ display: 'flex', flex: 1, gap: '6px', alignItems: 'stretch' }}>
             <input
               className="cwd"
@@ -1065,7 +1075,7 @@ export function App() {
                 type="button"
                 className="quick-prompt-chip"
                 onClick={() => applyQuickPrompt(qp)}
-                title={qp.target === 'jira' ? 'Nhập ticket Jira' : qp.text}
+                title={qp.text}
               >
                 {qp.label}
               </button>

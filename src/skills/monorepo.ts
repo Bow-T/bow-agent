@@ -1,9 +1,11 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execSync } from 'node:child_process';
+import { config } from '../config/env.js';
 
 /**
- * Ngữ cảnh riêng của MONOREPO (DUOCT), gói sẵn từ .claude của monorepo vào
+ * Ngữ cảnh riêng của MONOREPO, gói sẵn từ .claude của monorepo vào
  * bow-agent (skills/monorepo/). Chỉ kích hoạt khi agent làm việc TRONG monorepo
  * — repo khác không bị nhiễu.
  *
@@ -16,6 +18,41 @@ import { fileURLToPath } from 'node:url';
 function monorepoBundleDir(): string {
   const here = dirname(fileURLToPath(import.meta.url));
   return resolve(here, '../../skills/monorepo');
+}
+
+/** Tự động phát hiện mã dự án Jira (ví dụ: DEAR, PROJ) dựa trên git branch hoặc lịch sử commit. */
+export function detectJiraProjectKey(cwd: string): string {
+  // 0. Ưu tiên cấu hình trong .env trước
+  if (config.defaultProjectKey) {
+    return config.defaultProjectKey.toUpperCase();
+  }
+
+  try {
+    // 1. Kiểm tra tên branch hiện tại
+    const branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd, encoding: 'utf8', stdio: [] }).trim();
+    const branchMatch = branch.match(/\b([A-Z][A-Z0-9]+)-\d+\b/);
+    if (branchMatch) return branchMatch[1].toUpperCase();
+
+    // 2. Kiểm tra lịch sử 20 commit gần nhất
+    const log = execSync('git log -n 20 --format="%s %b"', { cwd, encoding: 'utf8', stdio: [] });
+    const logMatch = log.match(/\b([A-Z][A-Z0-9]+)-\d+\b/);
+    if (logMatch) return logMatch[1].toUpperCase();
+  } catch {
+    // Bỏ qua lỗi nếu không chạy được lệnh git
+  }
+
+  // 3. Đoán từ tên thư mục dự án
+  try {
+    const dirName = resolve(cwd).split('/').pop();
+    if (dirName && dirName !== 'monorepo') {
+      const clean = dirName.replace(/-(app|mobile|admin|web|monorepo)$/i, '');
+      const parts = clean.split('-');
+      const guess = parts[parts.length - 1].toUpperCase();
+      if (guess.length >= 2 && guess.length <= 10) return guess;
+    }
+  } catch {}
+
+  return 'PROJ'; // Giá trị mặc định
 }
 
 /**
@@ -60,17 +97,27 @@ export function loadMonorepoContext(cwd: string): string {
   const dir = monorepoBundleDir();
   if (!existsSync(dir)) return '';
 
-  const parts: string[] = ['# Ngữ cảnh dự án MONOREPO (DUOCT)'];
+  const projectKey = detectJiraProjectKey(cwd);
+
+  const parts: string[] = [`# Ngữ cảnh dự án MONOREPO (${projectKey})`];
   parts.push(
-    'Bạn đang làm việc trong monorepo DUOCT. Áp dụng kiến thức và quy trình dưới đây.',
+    `Bạn đang làm việc trong monorepo ${projectKey}. Áp dụng kiến thức và quy trình dưới đây. ` +
+      `Lưu ý: Tất cả các tài liệu kỹ thuật hoặc skill định nghĩa trong thư mục skills/monorepo/ có thể sử dụng ` +
+      `từ khóa mặc định "<PROJECT_KEY>" làm ví dụ hoặc làm placeholder. Khi đọc và thực thi các skill này, bạn phải ` +
+      `luôn tự động ánh xạ (map) từ khóa "<PROJECT_KEY>" thành mã dự án hiện tại là "${projectKey}" (ví dụ: viết commit ` +
+      `message có "Refs: ${projectKey}-XXX" thay vì "Refs: <PROJECT_KEY>-XXX", tạo branch "feat/${projectKey}-XXX" thay vì "feat/<PROJECT_KEY>-XXX").`,
   );
 
   // 1) CLAUDE.md — kiến thức nền, đưa nguyên vào.
   const claudeMd = join(dir, 'CLAUDE.md');
   if (existsSync(claudeMd)) {
     try {
-      const text = readFileSync(claudeMd, 'utf8').trim();
-      if (text) parts.push('## Quy ước dự án (CLAUDE.md)\n\n' + text);
+      let text = readFileSync(claudeMd, 'utf8').trim();
+      if (text) {
+        // Thay thế "<PROJECT_KEY>" bằng projectKey
+        text = text.replace(/<PROJECT_KEY>/g, projectKey);
+        parts.push('## Quy ước dự án (CLAUDE.md)\n\n' + text);
+      }
     } catch {
       // bỏ qua nếu đọc lỗi
     }
@@ -91,7 +138,9 @@ export function loadMonorepoContext(cwd: string): string {
       if (!existsSync(skillMd)) continue;
       const meta = readSkillMeta(skillMd);
       if (!meta) continue;
-      catalog.push(`- **${meta.name}** — ${meta.description}\n  (Đọc đầy đủ: \`${skillMd}\`)`);
+      // Thay thế <PROJECT_KEY> bằng projectKey trong description
+      const desc = meta.description.replace(/<PROJECT_KEY>/g, projectKey);
+      catalog.push(`- **${meta.name}** — ${desc}\n  (Đọc đầy đủ: \`${skillMd}\`)`);
     }
     if (catalog.length > 0) {
       parts.push(

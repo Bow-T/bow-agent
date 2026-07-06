@@ -1,6 +1,6 @@
 ---
 name: octopus-commit
-description: Commit and push changes following the DUOCT "Octopus Mode" pipeline — staged safety scan (RLS/CORS/secrets), Flutter static analysis, strict Conventional-Commit message with Jira ref, then push. Use when the user says "octopus commit", "commit + push", "push + commit", "đẩy code chuẩn octopus", or asks to commit/push on this repo.
+description: Commit and push changes following the <PROJECT_KEY> "Octopus Mode" pipeline — staged safety scan (RLS/CORS/secrets), Flutter static analysis, strict Conventional-Commit message with Jira ref, then push. Use when the user says "octopus commit", "commit + push", "push + commit", "đẩy code chuẩn octopus", or asks to commit/push on this repo.
 ---
 
 # Octopus Mode — Commit & Push
@@ -11,9 +11,9 @@ any failure (fix, then resume). Do not skip the safety scan or the analyzer.
 ## 0. Pre-flight
 - `git status` and `git rev-parse --abbrev-ref HEAD` to see changes + branch.
 - Never commit on `develop`/`main` directly. If on a default branch, create a
-  branch first: `<type>/DUOCT-<num>-<slug>` (type ∈ feat|fix|refactor|perf|test|docs|chore|style).
-- Parse the Jira ticket from the branch name (e.g. `fix/DUOCT-800-…` → `DUOCT-800`).
-  If the branch has no ticket, ask the user for one (the footer needs `Refs: DUOCT-XXX`).
+  branch first: `<type>/<PROJECT_KEY>-<num>-<slug>` (type ∈ feat|fix|refactor|perf|test|docs|chore|style).
+- Parse the Jira ticket from the branch name (e.g. `fix/<PROJECT_KEY>-800-…` → `<PROJECT_KEY>-800`).
+  If the branch has no ticket, ask the user for one (the footer needs `Refs: <PROJECT_KEY>-XXX`).
 - Stage intended files with `git add` (prefer scoping to the app dir, e.g.
   `git add apps/mobile`). NEVER stage local config — exclude `.claude/settings.local.json`,
   `.gemini/scratch/`, secrets, `.env*`. Confirm with the user before `git add -A`.
@@ -42,7 +42,7 @@ Detailed explanation of WHY these changes were made — at least 3 lines
 describing the engineering decisions, structural/trigger/UI-behaviour changes,
 to avoid NCV penalisation.
 
-Refs: DUOCT-XXX
+Refs: <PROJECT_KEY>-XXX
 ```
 Rules (scoring-sensitive — get these exact):
 - **Type**: capitalised (`Feat`, `Fix`, `Refactor`, `Perf`, `Test`, `Docs`, `Chore`, `Style`). Lowercase loses points.
@@ -52,7 +52,7 @@ Rules (scoring-sensitive — get these exact):
   `Fix(notifications): 🌐 Localize push templates per recipient locale`.
 - **Subject**: 10–72 chars *including the emoji*, imperative verb (`add`/`fix`/`update`, not `adding`/`fixed`).
 - **Body**: ≥ 3 lines, explain WHY (not just what).
-- **Footer**: `Refs: DUOCT-<num>` — the SPECIFIC ticket THIS commit implements,
+- **Footer**: `Refs: <PROJECT_KEY>-<num>` — the SPECIFIC ticket THIS commit implements,
   not just the branch's umbrella ticket. **The footer ENDS at `Refs:` — never append
   a `Co-Authored-By:` / `Generated with …` / any AI-authorship trailer** (forbidden by
   docs/conventions/common.md → Git safety: commit as the human author only). The
@@ -62,11 +62,11 @@ Rules (scoring-sensitive — get these exact):
   already used on the branch and avoid reusing one unless this commit is genuinely
   the same unit of work:
   ```bash
-  git log --format='%b' origin/develop..HEAD | grep -oE 'DUOCT-[0-9]+' | sort -u
+  git log --format='%b' origin/develop..HEAD | grep -oE '<PROJECT_KEY>-[0-9]+' | sort -u
   ```
   A branch that touches several tickets (a multi-ticket feature sweep) should spread
   **distinct** `Refs:` across its commits — one ticket per commit where the work
-  cleanly maps — so each piece lands traceably. Repeating the same `DUOCT-XXX` on
+  cleanly maps — so each piece lands traceably. Repeating the same `<PROJECT_KEY>-XXX` on
   every commit collapses that traceability and is what reviewers flag. If the only
   honest ticket really is the same one already used, prefer **amending** the prior
   commit (when unpushed) over a second commit with the duplicate ref.

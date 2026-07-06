@@ -11,7 +11,7 @@ change done, **size the radius → map every site → cover in one pass → prov
 completeness.** "It compiles / analyze passes" is NOT done.
 
 > Pairs with [[verify-runtime-not-just-static-green]] and the
-> [[duoct-kyc-slot-full-surface-sweep]] memory.
+> [[project-key-kyc-slot-full-surface-sweep]] memory.
 
 ## 0. Before adding anything new — grep for the home it already has
 A change is often "add a new value/helper/config", not just "edit existing code".
@@ -73,7 +73,7 @@ need the full mapping below.
   gate or status-deriving trigger without a backfill + sign-off (it would regress
   every existing row). Decide per site; flag the unsafe ones, don't flip silently.
 - **Enum-widen fans out to admin surfaces too — not just mobile.** Adding one
-  status (`arrived_at_pickup`, Sprint-7 DUOCT-2159 cluster) that compiled clean
+  status (`arrived_at_pickup`, Sprint-7 <PROJECT_KEY>-2159 cluster) that compiled clean
   still slipped through THREE surfaces that grep-by-new-name missed: the mobile
   status→label badge `switch` (raw-token default), the admin **filter-option
   array** (`STATUS_OPTIONS` in `express-deliveries/index.tsx`), and a **DB
@@ -84,7 +84,7 @@ need the full mapping below.
   SQL function/trigger, edge validators, `.arb` keys. Grep a peer status across
   all three apps (`grep -rln "picked_up" apps/mobile apps/admin supabase`).
 - **FK / table re-point → grep every READER, not just the writer.** When a
-  migration re-points an FK or changes what a column means (DUOCT-1900 re-pointed
+  migration re-points an FK or changes what a column means (<PROJECT_KEY>-1900 re-pointed
   `support_tickets.context_order_id` from `orders` → `express_deliveries`), a
   consumer still doing `from('orders').eq('id', context_order_id)` silently
   returns null forever — the id now lives in a different table. A re-point is
@@ -113,7 +113,7 @@ for?". Only with explicit user opt-in (it spends real tokens).
 
 ---
 
-### Worked example (DUOCT — adding the `business_registration` KYC slot)
+### Worked example (<PROJECT_KEY> — adding the `business_registration` KYC slot)
 Peer = `insurance`. Surfaces grep surfaced: signup step 1/2/3, vehicle-info,
 Documents view+replace, admin detail/approve-reject/audit-labels/user-card, DB
 columns+CHECK, `courier_submit_document` + `admin_decide_document` allow-lists,

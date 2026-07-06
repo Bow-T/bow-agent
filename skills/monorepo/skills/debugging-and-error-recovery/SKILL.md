@@ -1,6 +1,6 @@
 ---
 name: debugging-and-error-recovery
-description: Guides systematic root-cause debugging across the DUOCT stack (Flutter, Supabase DB/CHECK/FK/triggers, edge functions, Next.js admin). Use when tests fail, builds break, behavior doesn't match expectations, or an unexpected error/runtime crash appears (e.g. Postgres constraint 23514). Use when you need root cause over guessing — verify the live runtime path, not just static green.
+description: Guides systematic root-cause debugging across the <PROJECT_KEY> stack (Flutter, Supabase DB/CHECK/FK/triggers, edge functions, Next.js admin). Use when tests fail, builds break, behavior doesn't match expectations, or an unexpected error/runtime crash appears (e.g. Postgres constraint 23514). Use when you need root cause over guessing — verify the live runtime path, not just static green.
 ---
 
 # Debugging and Error Recovery

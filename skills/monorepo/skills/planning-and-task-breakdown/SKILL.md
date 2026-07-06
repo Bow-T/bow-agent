@@ -1,6 +1,6 @@
 ---
 name: planning-and-task-breakdown
-description: Breaks DUOCT work into ordered tasks, one Jira branch (feat/DUOCT-XXX) per unit. Use when you have a spec or clear requirements and need implementable tasks. Use when a task feels too large to start, when estimating scope, or when parallel work is possible. Follows [[spec-driven-development]].
+description: Breaks <PROJECT_KEY> work into ordered tasks, one Jira branch (feat/<PROJECT_KEY>-XXX) per unit. Use when you have a spec or clear requirements and need implementable tasks. Use when a task feels too large to start, when estimating scope, or when parallel work is possible. Follows [[spec-driven-development]].
 ---
 
 # Planning and Task Breakdown

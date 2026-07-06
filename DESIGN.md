@@ -192,9 +192,9 @@ thao tác ghi. Skill của repo đích cũng chịu chung cổng duyệt này.
 - **Skill có tham số cấu hình**: skill code hiện nhận input trực tiếp; có thể thêm
   config tĩnh (vd lệnh test mặc định theo stack) đọc từ profile repo.
 
-## Ngữ cảnh monorepo (DUOCT) — gói sẵn, kích hoạt có điều kiện
+## Ngữ cảnh monorepo (<PROJECT_KEY>) — gói sẵn, kích hoạt có điều kiện
 
-Toàn bộ `.claude` của monorepo DUOCT được gói vào bow-agent (`skills/monorepo/`)
+Toàn bộ `.claude` của monorepo được gói vào bow-agent (`skills/monorepo/`)
 để agent KHÔNG cần `.claude` trong monorepo nữa. Chỉ áp khi cwd là monorepo.
 
 - **Nhận diện** (`src/skills/monorepo.ts` → `isMonorepo`): cwd có segment `monorepo`.

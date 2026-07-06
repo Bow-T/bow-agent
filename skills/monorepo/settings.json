@@ -70,5 +70,5 @@
       }
     ]
   },
-  "_comment": "SHARED, COMMITTED Claude Code config for the DUOCT monorepo. Keep this file free of secrets and machine-specific paths — put personal allow-rules and absolute paths in .claude/settings.local.json (git-ignored). See CONTRIBUTING.md."
+  "_comment": "SHARED, COMMITTED Claude Code config for the <PROJECT_KEY> monorepo. Keep this file free of secrets and machine-specific paths — put personal allow-rules and absolute paths in .claude/settings.local.json (git-ignored). See CONTRIBUTING.md."
 }

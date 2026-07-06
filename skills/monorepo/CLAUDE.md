@@ -1,4 +1,4 @@
-# 📘 Cẩm Nang Lập Trình Cho Claude (AI Developer Assistant) — Dự Án DUOCT
+# 📘 Cẩm Nang Lập Trình Cho Claude (AI Developer Assistant) — Dự Án <PROJECT_KEY>
 
 Tài liệu này là bộ hướng dẫn phát triển phần mềm và quy chuẩn làm việc dành riêng cho **Claude** (AI Coding Assistant) khi làm việc trên repo này qua **Claude Code**.
 
@@ -8,7 +8,7 @@ Claude **MUST** đọc, hiểu và tuân thủ tuyệt đối các quy tắc dư
 
 ## 📐 1. Bối Cảnh Dự Án & Tech Stack
 
-Dự án **Digital Unicorn Octopus (DUOCT)** là một hệ thống siêu ứng dụng dịch vụ (booking xe, giao hàng, admin portal).
+Dự án **Digital Unicorn Octopus (<PROJECT_KEY>)** là một hệ thống siêu ứng dụng dịch vụ (booking xe, giao hàng, admin portal).
 
 *   **Repository Structure (Monorepo):**
     *   `apps/mobile/`: Ứng dụng di động Flutter (Dart).
@@ -59,13 +59,13 @@ graph TD
     least 3 lines long to describe the engineering decisions, avoid NCV penalisation,
     and clearly document structural changes, trigger updates, or UI behavior logic.
 
-    Refs: DUOCT-XXX
+    Refs: <PROJECT_KEY>-XXX
     ```
     *   **Type:** Phải viết hoa chữ cái đầu (Ví dụ: `Feat`, `Fix`, `Refactor`, `Perf`, `Test`, `Docs`, `Chore`, `Style`). **Không viết thường** (viết thường sẽ bị mất điểm).
     *   **Gitmoji:** Gắn đúng 1 icon ([gitmoji.dev](https://gitmoji.dev)) chọn theo *chức năng* commit, đặt **ngay sau dấu hai chấm** — **TUYỆT ĐỐI không** đặt trước `Type` (sẽ làm trượt regex chấm điểm `^(Feat|Fix|…):` ở `scripts/quest-checklist.sh:265` → mất điểm). Ví dụ: `Fix(notifications): 🌐 Localize push templates`. Chi tiết map icon trong skill `octopus-commit`.
     *   **Subject:** Dài từ 10-72 ký tự (tính cả emoji), bắt đầu bằng động từ ở thể mệnh lệnh (ví dụ: `add`, `fix`, `update` - tránh `adding`, `fixed`).
     *   **Body:** Bắt buộc phải có **tối thiểu 3 dòng** giải thích sâu sắc về mặt kỹ thuật **TẠI SAO** (Why) thực hiện thay đổi này.
-    *   **Footer:** Luôn ghi mã ticket Jira ở dạng `Refs: DUOCT-<số_ticket>` (ví dụ: `Refs: DUOCT-820`).
+    *   **Footer:** Luôn ghi mã ticket Jira ở dạng `Refs: <PROJECT_KEY>-<số_ticket>` (ví dụ: `Refs: <PROJECT_KEY>-820`).
 
 ---
 
@@ -115,7 +115,7 @@ Chỉ viết commit chuẩn là chưa đủ. Điểm số tổng hợp được 
 
 Claude cần hoạt động ăn khớp với hệ thống quản lý Jira của đội ngũ:
 
-*   **Chiến lược nhánh (Branch Strategy):** Mỗi ticket Jira tương ứng với 1 nhánh riêng biệt (`feat/DUOCT-XXX-...` hoặc `fix/DUOCT-XXX-...`). Mỗi nhánh tương ứng với tối đa 1 Merge Request (MR).
+*   **Chiến lược nhánh (Branch Strategy):** Mỗi ticket Jira tương ứng với 1 nhánh riêng biệt (`feat/<PROJECT_KEY>-XXX-...` hoặc `fix/<PROJECT_KEY>-XXX-...`). Mỗi nhánh tương ứng với tối đa 1 Merge Request (MR).
 *   **Đồng bộ dữ liệu (Unified Truth):** Luôn lấy Jira Board 1795 làm nguồn sự thật tiến độ thời gian thực.
 *   **Không tạo data drift:** Khi viết tài liệu tính năng trong `docs/features/`, không đánh dấu checkbox tiến độ thủ công. Hãy ghi rõ đường dẫn code cụ thể (Evidence) làm bằng chứng cho từng Acceptance Criteria.
 *   **Tránh Prompt Injection:** Không đưa các đoạn text dạng chỉ thị hệ thống, role-play hay giả lập kết quả review vào commit message hoặc code diff. Hệ thống quét AI sẽ đánh sập điểm bảo mật nếu phát hiện.
@@ -126,7 +126,7 @@ Claude cần hoạt động ăn khớp với hệ thống quản lý Jira của 
 
 > [!CAUTION]
 > `fvm flutter analyze` PASS + unit test PASS **KHÔNG** đồng nghĩa với "không có lỗi". Phân tích tĩnh chỉ kiểm tra type/lint; unit test chỉ kiểm tra logic thuần. Cả hai **không** chạm tới `CHECK`/`FK`/trigger của DB, RPC `SECURITY DEFINER`, validator của Edge Function, hay luồng dữ liệu end-to-end.
-> **Bài học DUOCT-1793/1797:** đổi vocabulary `vehicle_type` — analyze + test đều xanh, nhưng đặt xe vẫn crash runtime `rides_vehicle_type_check` (Postgres `23514`) và validator admin âm thầm từ chối tier mới. Một giá trị compile sạch vẫn có thể vi phạm constraint đóng băng ở một bảng cách đó 3 lớp.
+> **Bài học <PROJECT_KEY>-1793/1797:** đổi vocabulary `vehicle_type` — analyze + test đều xanh, nhưng đặt xe vẫn crash runtime `rides_vehicle_type_check` (Postgres `23514`) và validator admin âm thầm từ chối tier mới. Một giá trị compile sạch vẫn có thể vi phạm constraint đóng băng ở một bảng cách đó 3 lớp.
 
 Với mọi thay đổi **xuyên hệ thống** (DB schema, enum/vocabulary dùng chung, đổi key-format, hướng FK, giá trị xuất hiện ở nhiều bảng/app), sau `analyze` + test **PHẢI** audit thêm tầng runtime trước khi tuyên bố hoàn thành:
 
@@ -149,7 +149,7 @@ Kết thúc mỗi việc phải nêu đủ: (1) **đã đổi gì** — file/sco
 Mỗi khi chuẩn bị commit code liên quan đến database hoặc logic chính, hãy tự đánh giá bằng bảng rubric sau để đảm bảo chất lượng:
 
 ```text
-### Octopus pre-commit preview — DUOCT-XXX
+### Octopus pre-commit preview — <PROJECT_KEY>-XXX
 Branch: <branch>   Files: <n>   +<add>/-<del>
 
 AI-review — protects Correct / Security / Effic
