@@ -1,7 +1,12 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+
+/** Đường dẫn file cấu hình Claude Code (chứa block mcpServers dùng chung). */
+function claudeJsonPath(): string {
+  return join(homedir(), '.claude.json');
+}
 
 /**
  * Nạp các MCP server mà người dùng đã cấu hình cho Claude Code (~/.claude.json).
@@ -12,7 +17,7 @@ import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 
 /** Đọc block mcpServers từ ~/.claude.json (nếu có). Trả {} nếu không có. */
 function readGlobalMcp(): Record<string, unknown> {
-  const file = join(homedir(), '.claude.json');
+  const file = claudeJsonPath();
   if (!existsSync(file)) return {};
   try {
     const data = JSON.parse(readFileSync(file, 'utf8')) as { mcpServers?: Record<string, unknown> };
@@ -125,4 +130,151 @@ export function mcpReadToolPatterns(names: string[]): string[] {
     }
   }
   return patterns;
+}
+
+// ── Quản lý MCP từ UI: list / add / remove (chỉ stdio, ghi vào ~/.claude.json) ──
+
+/** Thông tin MCP trả về UI — CHE token: chỉ liệt kê TÊN các biến env, không kèm value. */
+export interface McpInfo {
+  name: string;
+  command: string;
+  args: string[];
+  /** Tên các biến env (KHÔNG kèm value — tránh lộ token ra client). */
+  envKeys: string[];
+  /** false nếu entry không phải stdio (không sửa được qua UI này). */
+  stdio: boolean;
+}
+
+/** Tên MCP hợp lệ: chữ/số/gạch, không rỗng. */
+function isValidMcpName(name: string): boolean {
+  return /^[a-zA-Z0-9_-]+$/.test(name);
+}
+
+/**
+ * Che token/secret lẫn trong args trước khi trả về UI. Nhiều MCP nhét secret vào args
+ * (vd supabase: `--access-token sbp_xxx`), không chỉ env — nếu trả nguyên là lộ token.
+ * Quy tắc: phần tử ĐỨNG SAU một cờ tên nhạy cảm (--token/--key/--secret/--password...),
+ * hoặc bản thân trông giống secret (dài + có tiền tố sbp_/sk-/ghp_... hoặc chuỗi dài),
+ * đều bị thay bằng '***'.
+ */
+function maskArgs(args: string[]): string[] {
+  const SECRET_FLAG = /(token|key|secret|password|passwd|api[-_]?key|access[-_]?token|auth)/i;
+  const SECRET_VALUE = /^(sbp_|sk-|ghp_|gho_|xox[baprs]-|eyJ)/; // tiền tố token phổ biến
+  return args.map((a, i) => {
+    const prev = i > 0 ? args[i - 1] : '';
+    // Đứng sau cờ nhạy cảm (--access-token VALUE) → che.
+    if (prev.startsWith('-') && SECRET_FLAG.test(prev)) return '***';
+    // Bản thân là cờ dạng --token=VALUE → che phần value.
+    if (a.startsWith('-') && SECRET_FLAG.test(a) && a.includes('=')) {
+      return `${a.slice(0, a.indexOf('=') + 1)}***`;
+    }
+    // Trông giống token (tiền tố đặc trưng, hoặc chuỗi dài không có khoảng trắng).
+    if (SECRET_VALUE.test(a) || (a.length >= 24 && !a.includes(' ') && !a.startsWith('-') && !a.includes('/'))) {
+      return '***';
+    }
+    return a;
+  });
+}
+
+/**
+ * Đọc TOÀN BỘ ~/.claude.json (không chỉ mcpServers) để khi ghi lại giữ nguyên mọi
+ * state khác (userID, cache, toolUsage...). Trả object rỗng nếu file chưa có/hỏng.
+ */
+function readClaudeJson(): Record<string, unknown> {
+  const file = claudeJsonPath();
+  if (!existsSync(file)) return {};
+  return JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+}
+
+/**
+ * Ghi lại ~/.claude.json AN TOÀN: backup trước, ghi, rồi validate JSON đọc lại được;
+ * nếu hỏng thì khôi phục từ backup và ném lỗi. Không bao giờ để file ở trạng thái hỏng.
+ */
+function writeClaudeJsonSafely(data: Record<string, unknown>): void {
+  const file = claudeJsonPath();
+  const serialized = JSON.stringify(data, null, 2);
+  // Backup file cũ (nếu có) trước khi ghi đè.
+  if (existsSync(file)) {
+    copyFileSync(file, `${file}.bak`);
+  }
+  writeFileSync(file, serialized, 'utf8');
+  // Validate: đọc lại phải parse được. Nếu không, rollback từ backup.
+  try {
+    JSON.parse(readFileSync(file, 'utf8'));
+  } catch (err) {
+    if (existsSync(`${file}.bak`)) copyFileSync(`${file}.bak`, file);
+    throw new Error(`Ghi ~/.claude.json thất bại, đã khôi phục backup: ${(err as Error).message}`);
+  }
+}
+
+/** Liệt kê MCP server hiện có (che token). Dùng cho GET /api/mcp. */
+export function listGlobalMcp(): McpInfo[] {
+  const raw = readGlobalMcp();
+  return Object.entries(raw).map(([name, cfg]) => {
+    const c = cfg as { command?: string; args?: string[]; env?: Record<string, string>; type?: string };
+    const stdio = typeof c.command === 'string';
+    return {
+      name,
+      command: stdio ? c.command! : '',
+      args: Array.isArray(c.args) ? maskArgs(c.args) : [],
+      envKeys: c.env ? Object.keys(c.env) : [],
+      stdio,
+    };
+  });
+}
+
+/**
+ * Thêm MCP server (stdio) mới vào ~/.claude.json. Từ chối nếu tên không hợp lệ,
+ * command rỗng, hoặc tên đã tồn tại. Env value hỗ trợ `$ENV_VAR` → lấy từ env server.
+ */
+export function addGlobalMcp(input: {
+  name: string;
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+}): void {
+  const name = input.name.trim();
+  const command = input.command.trim();
+  if (!isValidMcpName(name)) {
+    throw new Error(`Tên MCP không hợp lệ: "${name}" (chỉ chữ/số/gạch dưới/gạch ngang).`);
+  }
+  if (!command) {
+    throw new Error('Command không được để trống.');
+  }
+
+  const data = readClaudeJson();
+  const servers = (data.mcpServers as Record<string, unknown>) ?? {};
+  if (servers[name]) {
+    throw new Error(`MCP "${name}" đã tồn tại. Xóa nó trước nếu muốn cấu hình lại.`);
+  }
+
+  // Env: value dạng "$VAR" → thay bằng process.env[VAR] (bỏ nếu không có). Còn lại giữ nguyên.
+  const resolvedEnv: Record<string, string> = {};
+  for (const [k, v] of Object.entries(input.env ?? {})) {
+    if (typeof v === 'string' && v.startsWith('$')) {
+      const envVal = process.env[v.slice(1)];
+      if (envVal !== undefined) resolvedEnv[k] = envVal;
+    } else {
+      resolvedEnv[k] = String(v);
+    }
+  }
+
+  servers[name] = {
+    type: 'stdio',
+    command,
+    ...(input.args && input.args.length ? { args: input.args } : {}),
+    ...(Object.keys(resolvedEnv).length ? { env: resolvedEnv } : {}),
+  };
+  data.mcpServers = servers;
+  writeClaudeJsonSafely(data);
+}
+
+/** Xóa một MCP server khỏi ~/.claude.json. No-op nếu không tồn tại. */
+export function removeGlobalMcp(name: string): void {
+  const data = readClaudeJson();
+  const servers = (data.mcpServers as Record<string, unknown>) ?? {};
+  if (!servers[name]) return;
+  delete servers[name];
+  data.mcpServers = servers;
+  writeClaudeJsonSafely(data);
 }

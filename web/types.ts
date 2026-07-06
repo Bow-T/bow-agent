@@ -4,7 +4,6 @@ export type WebEvent =
   | { type: 'tool'; name: string; describe: string }
   | { type: 'result'; text: string; turns: number; outputTokens: number; costUsd: number }
   | { type: 'error'; subtype: string }
-  | { type: 'learned'; added: number }
   | {
       type: 'approval-request';
       id: string;
