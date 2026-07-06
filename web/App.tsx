@@ -73,7 +73,6 @@ export function App() {
       return [];
     }
   });
-  const [newProject, setNewProject] = useState(() => localStorage.getItem('bow-newProject') === 'true');
   const [accumulatedCost, setAccumulatedCost] = useState(0);
 
   const [docs, setDocs] = useState<DocAttachment[]>([]);
@@ -101,7 +100,7 @@ export function App() {
   useEffect(() => { localStorage.setItem('bow-selectedModel', selectedModel); }, [selectedModel]);
   useEffect(() => { localStorage.setItem('bow-effort', effort); }, [effort]);
   useEffect(() => { localStorage.setItem('bow-selectedMcps', JSON.stringify(selectedMcps)); }, [selectedMcps]);
-  useEffect(() => { localStorage.setItem('bow-newProject', String(newProject)); }, [newProject]);
+
   // Lưu lịch sử chat để giữ qua refresh. Chỉ giữ 300 item gần nhất để không vượt
   // quota localStorage (~5MB); chat rất dài thì tin cũ nhất bị lược, tránh crash.
   useEffect(() => {
@@ -233,10 +232,6 @@ export function App() {
         .then((r) => r.json())
         .then((d: DetectedSource) => {
           setDetected(d);
-          // Đồng bộ toggle "dự án mới" theo repo: trống → bật, có code → tắt.
-          // (Nếu không auto-tắt, cờ persist trong localStorage sẽ dính sang repo có sẵn
-          //  và khiến agent scaffold nhầm lên code đang có.)
-          setNewProject(d.empty);
         })
         .catch(() => setDetected(null));
     }, 400);
@@ -325,7 +320,6 @@ export function App() {
           docs: sentDocs.length ? sentDocs : undefined,
           pdfs: sentPdfs.length ? sentPdfs : undefined,
           images: sentImages.length ? sentImages : undefined,
-          newProject,
           mcpServers: selectedMcps,
           mode,
           profile,
@@ -809,8 +803,7 @@ export function App() {
             Nhập đề tài / task, dán Jira ticket hoặc URL board, kéo-thả tài liệu &amp; ảnh
             (wireframe) vào đây.
             <br />
-            Agent tự nhận diện <b>source</b> từ thư mục repo. Bật <b>Dự án mới</b> để khởi tạo
-            từ đầu.
+            Agent tự nhận diện <b>source</b> từ thư mục repo.
           </div>
         )}
         {items.map((it) => (
@@ -958,16 +951,7 @@ export function App() {
               ]}
             />
           </label>
-          <label className="px-check">
-            <input
-              type="checkbox"
-              checked={newProject}
-              onChange={(e) => setNewProject(e.target.checked)}
-              disabled={running}
-            />
-            <span className="px-box">{newProject ? '✓' : ''}</span>
-            Dự án mới
-          </label>
+
         </div>
 
         {cfg && cfg.mcpServers && cfg.mcpServers.length > 0 && (

@@ -1,9 +1,9 @@
 ---
-name: octopus-lean-review
-description: Rà diff/file để SĂN over-engineering (chỉ complexity, KHÔNG đụng bug/security) — stdlib tự viết lại, dep thừa, abstraction đầu cơ, config chết, logic dài dòng. Xuất mỗi finding một dòng có tag (delete/stdlib/native/yagni/shrink) + "net: -N dòng có thể cắt". Dùng khi người dùng nói "review over-engineering", "cắt được gì", "có bị over-engineer không", "lean review", hoặc trước khi commit muốn xem diff có phình không. Bổ trợ [[octopus-lean]] và code-simplification; bug/security để cho /code-review.
+name: bow-lean-review
+description: Rà diff/file để SĂN over-engineering (chỉ complexity, KHÔNG đụng bug/security) — stdlib tự viết lại, dep thừa, abstraction đầu cơ, config chết, logic dài dòng. Xuất mỗi finding một dòng có tag (delete/stdlib/native/yagni/shrink) + "net: -N dòng có thể cắt". Dùng khi người dùng nói "review over-engineering", "cắt được gì", "có bị over-engineer không", "lean review", hoặc trước khi commit muốn xem diff có phình không. Bổ trợ [[bow-lean]] và code-simplification; bug/security để cho /code-review.
 ---
 
-# Octopus Lean Review — chỉ săn phức tạp thừa, không săn bug
+# Bow Lean Review — chỉ săn phức tạp thừa, không săn bug
 
 > Adapt từ `ponytail-review`. Một pass **hẹp và sắc**: tìm code viết ra mà lẽ ra
 > không cần. Đây KHÔNG phải code review đầy đủ — **correctness bug, lỗ hổng
@@ -12,14 +12,14 @@ description: Rà diff/file để SĂN over-engineering (chỉ complexity, KHÔNG
 
 ## Khi nào dùng
 Người dùng nói: "review over-engineering", "cắt được gì", "có bị over-engineer
-không", "lean review", "diff này có phình không", hoặc trước khi octopus-commit
+không", "lean review", "diff này có phình không", hoặc trước khi bow-commit
 muốn soi diff còn mỡ thừa.
 
 ## Phạm vi (đọc trước khi bắt đầu)
 - **Chỉ complexity.** Không báo bug/security/perf ở đây — route sang review thường.
 - **Không đụng safety tối thiểu.** Một `assert`/1 test nhỏ giữ logic không tầm
   thường là hợp lệ, đừng đòi cắt. Validation ở biên, error-handling chống mất data,
-  RLS/CORS — bất khả xâm phạm (xem ngoại lệ trong [[octopus-lean]]).
+  RLS/CORS — bất khả xâm phạm (xem ngoại lệ trong [[bow-lean]]).
 - **Đọc-thẩm định trước.** Hiểu code làm gì rồi mới đề xuất cắt.
 
 ## Cách chạy

@@ -1,9 +1,9 @@
 ---
-name: octopus-log-subtask
+name: bow-log-subtask
 description: Khi nhận một task/ticket lớn đáng tách nhỏ, chủ động gợi ý tách thành subtask và in ra một danh sách subtask paste-ready (title + mô tả tiếng Việt ngắn) để người dùng tự log lên Jira. Dùng khi user nói "log subtask", "tách subtask", "chia nhỏ task này", "log lên jira", hoặc khi user đưa một Jira Story/epic nhiều Acceptance Criteria. KHÔNG tự tạo qua Jira MCP (writes bị chặn) — chỉ in danh sách.
 ---
 
-# Octopus — Log Subtask (gợi ý + in danh sách paste-ready)
+# Bow — Log Subtask (gợi ý + in danh sách paste-ready)
 
 Mục tiêu: biến một **task lớn** (Jira Story nhiều AC, hoặc một yêu cầu công việc rộng)
 thành một **danh sách subtask gọn, in thẳng ra chat** để user tự tạo trên Jira.

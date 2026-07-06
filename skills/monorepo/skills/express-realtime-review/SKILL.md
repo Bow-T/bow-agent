@@ -1,6 +1,6 @@
 ---
 name: express-realtime-review
-description: Catch the recurring <PROJECT_KEY> express/delivery/notification/realtime bug classes BEFORE QC does — the six patterns a Sprint-7 multi-agent sweep found live in merged code (status-enum widened but not swept to every surface, per-stop timeline active-leg mis-derivation, copy-pasted realtime-badge logic, realtime channel/subscription leaks, widgets that don't re-sync when props change live, and DB FK/table re-points whose consumers still read the old table). Use when adding or editing anything under the express-delivery / courier-handling / delivery-tracking / notifications surfaces, when adding an express or booking status value, when touching a realtime subscription (subscribeToX / postgres_changes / badge count), when building a multi-stop timeline or any grouped/per-item UI, or when a QC bug lands on those surfaces. Pairs with [[impact-sweep]], [[octopus-ui]], [[octopus-i18n]] and [[verify-runtime-not-just-static-green]].
+description: Catch the recurring <PROJECT_KEY> express/delivery/notification/realtime bug classes BEFORE QC does — the six patterns a Sprint-7 multi-agent sweep found live in merged code (status-enum widened but not swept to every surface, per-stop timeline active-leg mis-derivation, copy-pasted realtime-badge logic, realtime channel/subscription leaks, widgets that don't re-sync when props change live, and DB FK/table re-points whose consumers still read the old table). Use when adding or editing anything under the express-delivery / courier-handling / delivery-tracking / notifications surfaces, when adding an express or booking status value, when touching a realtime subscription (subscribeToX / postgres_changes / badge count), when building a multi-stop timeline or any grouped/per-item UI, or when a QC bug lands on those surfaces. Pairs with [[impact-sweep]], [[bow-ui]], [[bow-i18n]] and [[verify-runtime-not-just-static-green]].
 ---
 
 # Express / Realtime review — the six bug classes QC keeps finding
@@ -12,7 +12,7 @@ change done, walk this checklist against the code you touched. Each item cites t
 real Sprint-7 site so you can see the shape.
 
 > This skill is a **review lens**, not a build guide. For building the UI use
-> [[octopus-ui]]; for blast-radius mapping use [[impact-sweep]]; for the runtime
+> [[bow-ui]]; for blast-radius mapping use [[impact-sweep]]; for the runtime
 > audit use [[verify-runtime-not-just-static-green]].
 
 ---
@@ -94,7 +94,7 @@ tree constantly.
 - **Rule:** add `didUpdateWidget` to sync the derived state on the meaningful edge
   (respecting a user's manual override — open on false→true active, don't yank a
   still-open section shut), and give list items a **stable `ValueKey`** so State
-  tracks the right item across rebuilds. See [[octopus-ui]] §"live props".
+  tracks the right item across rebuilds. See [[bow-ui]] §"live props".
 
 ## 7. Realtime subscriptions: no leaks, no double-subscribe
 - **Re-subscribe leak:** `subscribeToX` that does `_channels[key] = channel`

@@ -1,9 +1,9 @@
 ---
-name: octopus-model
-description: Write Octopus data models and parsing the project way — every model is a @JsonSerializable class with a part '*.g.dart' file and _$FromJson/_$ToJson, dates/ints/enums go through the shared Utilities converters and @JsonValue enums, and build_runner regenerates the .g.dart. NEVER hand-write fromJson/toJson/fromMap, never index map['key'] in app code, never edit generated files. Use when creating or editing anything under apps/mobile/lib/src/models, when parsing an API/Supabase payload, when adding a field/enum, or when "gen" output (.g.dart/.gr.dart) is involved. Pairs with [[octopus-ui]].
+name: bow-model
+description: Write Bow data models and parsing the project way — every model is a @JsonSerializable class with a part '*.g.dart' file and _$FromJson/_$ToJson, dates/ints/enums go through the shared Utilities converters and @JsonValue enums, and build_runner regenerates the .g.dart. NEVER hand-write fromJson/toJson/fromMap, never index map['key'] in app code, never edit generated files. Use when creating or editing anything under apps/mobile/lib/src/models, when parsing an API/Supabase payload, when adding a field/enum, or when "gen" output (.g.dart/.gr.dart) is involved. Pairs with [[bow-ui]].
 ---
 
-# Octopus Model — data the generated way
+# Bow Model — data the generated way
 
 Goal: every model parses, serialises and type-checks like the 54 existing ones.
 **If a generator exists, generate — never hand-write what build_runner produces.**
@@ -16,8 +16,8 @@ Stack (`apps/mobile/pubspec.yaml`): `json_annotation` + `json_serializable` +
 ## 1. The canonical model shape — copy this every time
 ```dart
 import 'package:json_annotation/json_annotation.dart';
-import 'package:octopus/src/utils/enum.dart';
-import 'package:octopus/src/utils/utils.dart';
+import 'package:bow/src/utils/enum.dart';
+import 'package:bow/src/utils/utils.dart';
 
 part 'foo_model.g.dart';                       // 1. part file = <name>.g.dart
 
@@ -77,13 +77,13 @@ cd apps/mobile && fvm flutter pub run build_runner build --delete-conflicting-ou
 ```
 - Commit the regenerated `*.g.dart` alongside the model (54 are tracked — keep parity).
 - **Never hand-edit `*.g.dart`.** It's overwritten on the next run.
-- Same rule for other generators: router `*.gr.dart` (auto_route — see [[octopus-ui]] §routing) and l10n. "Gen" means gen: change the source, run build_runner, commit the output.
-- Then `fvm flutter analyze` must be clean before commit (see [[octopus-commit]]).
+- Same rule for other generators: router `*.gr.dart` (auto_route — see [[bow-ui]] §routing) and l10n. "Gen" means gen: change the source, run build_runner, commit the output.
+- Then `fvm flutter analyze` must be clean before commit (see [[bow-commit]]).
 
 ## 6. Consume models type-safely
 App code (VMs, widgets, queries) reads **typed fields**: `model.status`, `model.price`.
 If you find yourself writing `json['key']` or `map['price']` outside a model's parse
-layer, the model is missing — add the field instead of indexing a map. See [[octopus-ui]] §typed models.
+layer, the model is missing — add the field instead of indexing a map. See [[bow-ui]] §typed models.
 
 ## Red flags — stop and fix before commit
 - ✗ `factory X.fromJson` / `fromMap` with a **hand-written body** (not `_$XFromJson`). → annotate `@JsonSerializable`, add `part`, run build_runner.

@@ -1,9 +1,9 @@
 ---
-name: octopus-ui
+name: bow-ui
 description: Build or edit Flutter UI and pages in apps/mobile using the <PROJECT_KEY> Flutter MVVM architecture — the BaseViewModel + MixinBasePage page+view-model pattern (ChangeState state machine, lifecycle hooks, optimistic updates), reusing existing components, the app theme/spacing/localization, and typed models (never raw maps) in widgets. Use whenever creating or changing a screen, page, view-model (vm), widget, dialog, or any UI/MVVM code under apps/mobile/lib/src/pages or components.
 ---
 
-# Octopus UI — build screens the project way
+# Bow UI — build screens the project way
 
 Goal: every new screen looks and behaves like the existing ones, reuses what's
 already there, and stays type-safe. **Reuse before you build. Match the base
@@ -116,7 +116,7 @@ Future<void> increment(FooItem it) async {
   - Need a shadow? `AppColor.shadow` / `AppColor.boxShadow` (ready-made `List<BoxShadow>`).
   - **Only exception:** `Colors.transparent` is allowed (there is no `AppColor.transparent`).
 - **Text — every `Text` needs a style token; a bare `Text('x')` is a violation:** always `Text('x', style: context.appStyle.<token>)` (e.g. `context.appStyle.display14Bold`). Never write `Text('x')` with no `style:`, and never inline a bespoke `TextStyle` when a token exists. Tints/weights: copy off a token — `context.appStyle.body14.copyWith(color: AppColor.primary)` — not a fresh `TextStyle(...)`.
-- **Spacing — use the `num`/`BuildContext` extensions, never a bare spacer `SizedBox`** (defined in `lib/src/utils/extension.dart`; import `package:octopus/src/utils/extension.dart`):
+- **Spacing — use the `num`/`BuildContext` extensions, never a bare spacer `SizedBox`** (defined in `lib/src/utils/extension.dart`; import `package:bow/src/utils/extension.dart`):
   - Vertical gap: `12.sizedHeight` — **not** `SizedBox(height: 12)`.
   - Horizontal gap: `10.sizedWidth` — **not** `SizedBox(width: 10)`.
   - Top safe-area gap: `context.sizedTop([extra])` → `padding.top + extra` (default 12). Replaces `SizedBox(height: context.padding.top + N)`.
@@ -219,4 +219,4 @@ each shipped a Sprint-7 QC bug that `analyze` never saw.
   grep -nA1 "GestureDetector(" $F | grep -B1 "onTap"  # whole-card onTap? must have behavior: HitTestBehavior.opaque (else dead tap zones — <PROJECT_KEY>-2052)
   ```
 - Re-check by hand: no map-indexing in widgets, reused existing components where possible, page follows the MixinBasePage pattern.
-- Then hand off to the `octopus-commit` skill to commit/push.
+- Then hand off to the `bow-commit` skill to commit/push.

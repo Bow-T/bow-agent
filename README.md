@@ -80,7 +80,6 @@ npm run ui
 - **Tự nhận diện source**: gõ `cwd` → agent tự đoán loại dự án và chọn profile phù hợp (`auto`). Dòng 🔎 hiện kết quả nhận diện.
 - **Jira URL hoặc key**: dán `PROJ-123` hoặc cả URL `/projects/PROJ/boards/123` — agent tự bóc ticket / board / project rồi đọc đúng.
 - **Kéo-thả tài liệu, PDF & ảnh**: thả file WBS/spec (text/markdown), **PDF** (tự trích text) và ảnh (wireframe/screenshot) vào ô nhập, hoặc bấm 📎. Agent đọc tài liệu và nhìn ảnh (vision).
-- **Dự án mới**: tick ☑ *Dự án mới* (tự bật khi thư mục trống) → agent scaffold từ đầu.
 - **Sinh profile cho repo lạ**: trỏ vào repo chưa biết → nút *Sinh profile* → agent quét repo (chỉ đọc) rồi lưu kiến thức vào `generated-profiles/`, lần sau dùng ngay.
 - Toggle **Chế độ**: `Kế hoạch` (an toàn, chỉ đọc/phân tích) / `Thực thi` (sửa code, hỏi duyệt).
 - Nút **🌙/☀** đổi giao diện **Dark/Light** (pixel-art).

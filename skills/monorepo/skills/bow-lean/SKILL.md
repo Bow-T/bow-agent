@@ -1,9 +1,9 @@
 ---
-name: octopus-lean
+name: bow-lean
 description: Viết ít code nhất có thể mà KHÔNG hy sinh correctness/security — leo "decision ladder" (có cần không → reuse → stdlib → native → dep sẵn có → one-liner → mới viết tối thiểu) TRƯỚC khi gõ code. Dùng khi sắp thêm code/thư viện/abstraction mới, khi thấy mình định copy logic, wrap helper thừa, hoặc tự viết lại thứ stdlib/SDK đã có. Nâng metric du-quest Codebase Impact (ưu tiên xóa, tỉ lệ deletions/(add+del) mục tiêu 0.2–0.6). Pairs với [[impact-sweep]] và skill code-simplification.
 ---
 
-# Octopus Lean — "lazy senior dev": code tốt nhất là code không phải viết
+# Bow Lean — "lazy senior dev": code tốt nhất là code không phải viết
 
 > Adapt từ triết lý [ponytail](https://github.com/DietrichGebert/ponytail) (YAGNI /
 > "lazy senior developer") cho ngữ cảnh <PROJECT_KEY> (Flutter + Supabase). Khác với
@@ -74,7 +74,7 @@ Dừng ở bậc thấp nhất giải quyết được vấn đề:
 
 ## Đánh dấu shortcut cố ý
 Khi cố tình đơn giản hóa và có trần hiệu năng/đường nâng cấp, để lại comment `ponytail:`
-(hoặc `octopus:`) nêu rõ trade-off — để người sau biết đây là lựa chọn, không phải sót:
+(hoặc `bow:`) nêu rõ trade-off — để người sau biết đây là lựa chọn, không phải sót:
 ```dart
 // ponytail: khóa toàn cục cho counter; tách khóa theo account nếu throughput thành vấn đề
 ```

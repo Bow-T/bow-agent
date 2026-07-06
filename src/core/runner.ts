@@ -75,11 +75,7 @@ export interface RunOptions {
    * + mediaType (vd 'image/png'). Rỗng = không có ảnh.
    */
   images?: { base64: string; mediaType: string }[];
-  /**
-   * Chế độ dự án mới: agent được phép scaffold từ đầu (thư mục trống). Ảnh hưởng
-   * lời nhắc — hướng agent khởi tạo cấu trúc thay vì chỉ sửa code có sẵn.
-   */
-  newProject?: boolean;
+
   /**
    * Danh sách MCP servers muốn kích hoạt (tên từ config Claude Code).
    * Rỗng = không dùng MCP.
@@ -271,16 +267,10 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
       : {}),
   };
 
-  const newProjectHint = opts.newProject
-    ? '\n\nĐây là DỰ ÁN MỚI (thư mục có thể trống). Hãy đề xuất cấu trúc dự án phù hợp, ' +
-      'scaffold khung ban đầu (config, thư mục, màn hình đầu), giải thích lựa chọn stack. ' +
-      'Vẫn theo quy trình plan-then-approve.'
-    : '';
-
   const promptText =
     opts.mode === 'plan'
-      ? `${opts.brief}${newProjectHint}\n\n---\nHãy HIỂU và LẬP KẾ HOẠCH chi tiết cho task trên (không sửa file). Trình bày kế hoạch để tôi duyệt.`
-      : `${opts.brief}${newProjectHint}\n\n---\nHãy thực hiện task trên theo quy trình. Xin duyệt trước các thao tác thay đổi trạng thái.`;
+      ? `${opts.brief}\n\n---\nHãy HIỂU và LẬP KẾ HOẠCH chi tiết cho task trên (không sửa file). Trình bày kế hoạch để tôi duyệt.`
+      : `${opts.brief}\n\n---\nHãy thực hiện task trên theo quy trình. Xin duyệt trước các thao tác thay đổi trạng thái.`;
 
   // Có ảnh → gửi prompt dạng message với content blocks (text + image) để agent nhìn.
   // Không có ảnh → prompt string đơn giản.

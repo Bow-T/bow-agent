@@ -1,9 +1,9 @@
 ---
-name: octopus-i18n
-description: Make every user-facing string in the <PROJECT_KEY> mobile app render in the active language (EN/FR) — both hardcoded literals AND admin/DB-sourced vocabulary (catalog name/display_name/description, status, type, category, payment method, rejection reason). Use when adding or editing any UI copy, when binding a Supabase/admin column into Text/title/label/snackbar, when adding an enum/status/vocabulary value, or when QA files a "Missing French Translations" / "still in English under FR" bug. Catches the class of bug that static analysis and unit tests never see. Pairs with [[octopus-ui]] and the localizedX helpers in lib/src/utils.
+name: bow-i18n
+description: Make every user-facing string in the <PROJECT_KEY> mobile app render in the active language (EN/FR) — both hardcoded literals AND admin/DB-sourced vocabulary (catalog name/display_name/description, status, type, category, payment method, rejection reason). Use when adding or editing any UI copy, when binding a Supabase/admin column into Text/title/label/snackbar, when adding an enum/status/vocabulary value, or when QA files a "Missing French Translations" / "still in English under FR" bug. Catches the class of bug that static analysis and unit tests never see. Pairs with [[bow-ui]] and the localizedX helpers in lib/src/utils.
 ---
 
-# Octopus i18n — nothing user-facing ships in one language
+# Bow i18n — nothing user-facing ships in one language
 
 The app ships EN + FR. `fvm flutter analyze` and unit tests are **blind** to
 localization: an English literal and a French one compile identically. So the
@@ -115,4 +115,4 @@ visually correct under FR — **not** "analyze passed".
 State which surfaces you localized, which vocabulary, how many render sites you
 swept (this is cross-cutting — see [[impact-sweep]]), and call out anything left
 raw on purpose (free-text make+model, technical Stripe identifiers like
-"PaymentIntent", brand names like "Octopus", language autonyms "English"/"Français").
+"PaymentIntent", brand names like "Bow", language autonyms "English"/"Français").
