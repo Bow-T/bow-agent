@@ -52,12 +52,14 @@ export async function buildTaskBrief(input: TaskInput): Promise<string | null> {
     if (ref.kind === 'ticket' && ref.ticketKey) {
       sections.push(
         `## Jira ticket: ${ref.ticketKey}\n` +
-          `→ Dùng \`get_issue\` (và \`get_comments\` nếu cần) đọc chi tiết trước khi làm.`,
+          `→ Dùng tool Jira (MCP) để đọc chi tiết ticket này (summary, mô tả, acceptance ` +
+          `criteria) và các comment quan trọng, TRƯỚC khi lập kế hoạch/làm.`,
       );
     } else if (ref.kind === 'board' && ref.boardId) {
       sections.push(
         `## Jira board: ${ref.boardId}${ref.projectKey ? ` (project ${ref.projectKey})` : ''}\n` +
-          `→ Dùng \`list_board_issues\` với boardId=${ref.boardId} để xem các task, rồi hỏi tôi chọn task nào (hoặc làm theo yêu cầu text kèm theo).`,
+          `→ Dùng tool Jira (MCP) để liệt kê các issue trên board ${ref.boardId}, rồi hỏi ` +
+          `tôi chọn task nào (hoặc làm theo yêu cầu text kèm theo).`,
       );
     } else if (ref.kind === 'project' && ref.projectKey) {
       sections.push(
