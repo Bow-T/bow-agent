@@ -22,6 +22,10 @@ import {
 import { reflectAndMutate } from './reflect.js';
 import { buildJiraServer, JIRA_READ_TOOLS } from '../tools/jira.js';
 import { loadClaudeCodeMcp, mcpReadToolPatterns, describeTool } from '../tools/mcp.js';
+import { loadPromptSkills } from '../skills/index.js';
+import { buildSkillsServer, BOW_SKILLS_READ_TOOLS } from '../skills/code.js';
+import { loadMonorepoContext } from '../skills/monorepo.js';
+import { buildMonorepoHooks } from '../skills/hooks.js';
 
 /** Sự kiện tiến độ agent phát ra — CLI/web tự quyết cách hiển thị. */
 export type AgentEvent =
@@ -164,6 +168,8 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   const mcpServers = {
     ...cc.servers,
     ...(jiraServer ? { jira: jiraServer } : {}),
+    // Skill kèm code của bow-agent — server nội bộ, luôn có mặt cho mọi repo.
+    'bow-skills': buildSkillsServer(),
   };
   const hasMcp = Object.keys(mcpServers).length > 0;
 
@@ -174,10 +180,21 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     'Glob',
     ...(jiraServer ? JIRA_READ_TOOLS : []),
     ...mcpReadToolPatterns(cc.names), // read tools của MCP Claude Code (write phải duyệt)
+    ...BOW_SKILLS_READ_TOOLS, // skill kèm code chỉ-đọc/kiểm-chứng (vd run_tests)
   ];
 
-  // System prompt = quy trình chung + (nếu có) kiến thức dự án + genome đã học.
+  // System prompt = quy trình chung + skill dùng chung + (nếu có) kiến thức dự án + genome.
   let appendText = BOW_AGENT_APPEND;
+  // Skill prompt-only của bow-agent (skills/prompt/*.md) — áp cho mọi repo.
+  const promptSkills = loadPromptSkills();
+  if (promptSkills) {
+    appendText += `\n\n---\n\n${promptSkills}`;
+  }
+  // Ngữ cảnh monorepo (CLAUDE.md + danh mục skill) — CHỈ khi cwd là monorepo.
+  const monorepoContext = loadMonorepoContext(opts.cwd);
+  if (monorepoContext) {
+    appendText += `\n\n---\n\n${monorepoContext}`;
+  }
   if (opts.projectProfile) {
     appendText += `\n\n---\n\n# Kiến thức dự án hiện tại\n\n${opts.projectProfile}`;
   }
@@ -204,12 +221,19 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     /^git diff/,
   ];
 
+  // Hook monorepo (guard-push/commit, self-verify, githooks) — chỉ khi cwd là monorepo.
+  const monorepoHooks = buildMonorepoHooks(opts.cwd);
+
   const options: Options = {
     model: opts.model ?? config.model,
     effort: opts.effort ?? 'high',
     cwd: opts.cwd,
     permissionMode,
     allowedTools,
+    // Bật Agent Skills: SDK tự nạp .claude/skills/* của repo đích (nhờ settingSources
+    // 'project' bên dưới) và mở tool 'Skill'. Agent tự chọn skill theo mô tả.
+    skills: 'all',
+    ...(monorepoHooks ? { hooks: monorepoHooks } : {}),
     pathToClaudeCodeExecutable: findClaudeCodeExecutable(opts.cwd || process.cwd()),
     ...(opts.abortSignal ? { abortController: toController(opts.abortSignal) } : {}),
     ...(hasMcp ? { mcpServers } : {}),

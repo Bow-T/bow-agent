@@ -73,7 +73,23 @@ export function describeTool(name: string): string {
     if (server.includes('codemagic')) return `Codemagic: ${tool}…`;
     return `MCP ${server}: ${tool}…`;
   }
-  return `dùng tool: ${name}`;
+  // Nhãn thân thiện cho các tool hệ thống hay lặp — tránh hiển thị tên thô khó hiểu.
+  const FRIENDLY: Record<string, string> = {
+    ToolSearch: '🔍 tìm công cụ phù hợp…',
+    Read: 'đọc file…',
+    Grep: 'tìm trong code…',
+    Glob: 'quét danh sách file…',
+    Bash: 'chạy lệnh…',
+    Edit: 'sửa file…',
+    Write: 'ghi file…',
+    Agent: '🤖 giao việc cho agent phụ…',
+    Skill: '📚 dùng skill…',
+    TodoWrite: 'cập nhật danh sách việc…',
+    WebFetch: 'tải trang web…',
+    WebSearch: 'tìm trên web…',
+    ScheduleWakeup: 'hẹn kiểm tra lại…',
+  };
+  return FRIENDLY[name] ?? `dùng tool: ${name}`;
 }
 
 /**

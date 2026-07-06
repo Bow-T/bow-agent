@@ -56,4 +56,7 @@ export const config = {
   get jiraConfigured(): boolean {
     return Boolean(this.jira.baseUrl && this.jira.email && this.jira.apiToken);
   },
+
+  /** Mã dự án mặc định (ví dụ: DEAR, PROJ), nếu không cấu hình sẽ tự động phát hiện từ git. */
+  defaultProjectKey: optional('BOW_PROJECT_KEY') ?? optional('JIRA_PROJECT_KEY'),
 } as const;

@@ -156,3 +156,63 @@ Tất cả nằm ở đầu `core/genome.ts`:
 - **Sinh sản hữu tính**: trộn gen giữa hai repo cùng stack (2 dự án Flutter+Supabase
   chia sẻ gen chung) — lúc ẩn dụ ADN thành thật nhất.
 - **UI genome**: hiển thị traits + fitness trên web để người dùng xem/sửa/xóa gen tay.
+
+---
+
+# Phụ lục: Skill — năng lực tái sử dụng của agent
+
+Ngoài genome (tri thức ĐỘNG, học theo từng repo), agent còn có **skill** — năng lực
+TĨNH, khai báo sẵn, dùng lại cho nhiều repo. Skill được nạp TỰ ĐỘNG (agent tự chọn
+theo mô tả, không cần người dùng bật qua UI).
+
+## Ba nguồn skill
+
+| Nguồn | Cơ chế | Phạm vi |
+|---|---|---|
+| **Repo đích** `.claude/skills/*/SKILL.md` | SDK auto-discover nhờ `settingSources:['project']` + `skills:'all'` | Riêng từng dự án |
+| **bow-agent** `skills/prompt/*.md` (prompt-only) | `loadPromptSkills()` đọc → append vào system prompt | Mọi repo |
+| **bow-agent** skill kèm code (`src/skills/code.ts`) | `tool()` + `createSdkMcpServer()` → server nội bộ `bow-skills` | Mọi repo |
+
+## Prompt-only vs kèm code
+
+- **Prompt-only**: chỉ là hướng dẫn/checklist Markdown (vd `coding-convention.md`).
+  Không chạy gì — chỉ định hình cách agent suy nghĩ. Thêm skill = thêm 1 file `.md`.
+- **Kèm code**: chạy logic thật (đọc file, chạy lệnh, gọi API). Agent gọi qua tool
+  `mcp__bow-skills__<tên>`. Skill mẫu `run_tests` chạy lệnh test rồi tóm tắt pass/fail.
+
+## An toàn (đồng nhất với genome/MCP)
+
+Skill kèm code chỉ-đọc/kiểm-chứng (liệt trong `BOW_SKILLS_READ_TOOLS`) được auto-allow;
+skill có side-effect KHÔNG liệt vào đó nên vẫn qua cổng duyệt `canUseTool` như mọi
+thao tác ghi. Skill của repo đích cũng chịu chung cổng duyệt này.
+
+## Chưa làm (hướng mở rộng)
+
+- **UI chọn skill**: hiện agent tự chọn hết; có thể thêm ô chọn skill trên web như MCP.
+- **Skill có tham số cấu hình**: skill code hiện nhận input trực tiếp; có thể thêm
+  config tĩnh (vd lệnh test mặc định theo stack) đọc từ profile repo.
+
+## Ngữ cảnh monorepo (<PROJECT_KEY>) — gói sẵn, kích hoạt có điều kiện
+
+Toàn bộ `.claude` của monorepo được gói vào bow-agent (`skills/monorepo/`)
+để agent KHÔNG cần `.claude` trong monorepo nữa. Chỉ áp khi cwd là monorepo.
+
+- **Nhận diện** (`src/skills/monorepo.ts` → `isMonorepo`): cwd có segment `monorepo`.
+  Tách riêng 1 hàm để dễ đổi sang marker file (vd `scripts/check-quest.sh`) sau này.
+- **CLAUDE.md + danh mục skill** (`loadMonorepoContext`): CLAUDE.md đưa nguyên vào
+  system prompt; 18 skill chỉ đưa name+description+đường-dẫn (agent tự `Read` full
+  SKILL.md khi task khớp) — tránh nhồi ~3400 dòng vào mọi lượt, tiết kiệm token.
+- **Hooks** (`src/skills/hooks.ts` → `buildMonorepoHooks`): bọc 4 script shell đã
+  copy thành SDK hook callback, chỉ gắn khi cwd là monorepo:
+  - `PreToolUse(Bash)`: guard-push (chặn push khi quest gate fail), guard-commit-branch
+    (chặn commit trên branch protected) → `exit 2` map thành `{ decision: 'block' }`.
+  - `SessionStart`: ensure-githooks (wire core.hooksPath, không chặn).
+  - `Stop`: self-verify-rubric (nhắc rubric khi có commit chưa push, không chặn).
+  - Script tìm `scripts/*.sh` của monorepo qua `CLAUDE_PROJECT_DIR` = monorepo root.
+  - Fail-open: hook lỗi hạ tầng không kéo sập agent.
+
+Bản gói là COPY (không đụng `.claude` của monorepo). Khi monorepo đổi skill/hook,
+đồng bộ lại bằng `npm run sync-monorepo` (`scripts/sync-monorepo.ts`) — script làm
+mới `skills/monorepo/`, deref symlink (vd stripe-*) thành nội dung thật để bundle
+tự túc, dọn `.DS_Store`. Nguồn override qua arg hoặc `BOW_AGENT_MONOREPO_CLAUDE`.
+`.claude` monorepo giữ nguyên để vẫn dùng được Claude Code trực tiếp.
