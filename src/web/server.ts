@@ -9,9 +9,8 @@ import { pdfToText } from '../input/pdf.js';
 import { getProfile } from '../profiles/index.js';
 import { detectSource } from '../profiles/detect.js';
 import { generateProfile } from '../profiles/generate.js';
-import { config } from '../config/env.js';
 import { createSession, getSession, removeSession } from './session.js';
-import { loadClaudeCodeMcp } from '../tools/mcp.js';
+import { loadClaudeCodeMcp, listGlobalMcp, addGlobalMcp, removeGlobalMcp } from '../tools/mcp.js';
 import { parseJiraRef } from '../input/jira-ref.js';
 
 
@@ -42,6 +41,7 @@ app.post('/api/run', async (req, res) => {
       mode,
       profile,
       effort,
+      language,
       cwd,
       model,
     } = req.body ?? {};
@@ -56,10 +56,17 @@ app.post('/api/run', async (req, res) => {
       }
     }
 
-    if (activeJiraRef && !config.jiraConfigured) {
+    // Jira đọc qua MCP (server jira của Claude Code), KHÔNG cần JIRA_* nữa.
+    // Chỉ chặn khi có Jira ref THUẦN (không kèm text/tài liệu khác) mà lại KHÔNG chọn
+    // MCP jira nào — vì lúc đó agent không có cách nào đọc ticket. Có text/tài liệu kèm
+    // thì vẫn chạy được (agent làm theo phần mô tả), nên không chặn.
+    const hasJiraMcp = Array.isArray(mcpServers) && mcpServers.some((n: string) => String(n).includes('jira'));
+    if (activeJiraRef && !hasJiraMcp) {
       const isPureJiraRef = text ? text.trim() === activeJiraRef.trim() : true;
       if (isPureJiraRef || jiraRef) {
-        res.status(400).json({ error: 'Có Jira ref nhưng chưa cấu hình JIRA_* trong .env.' });
+        res.status(400).json({
+          error: 'Có Jira ref nhưng chưa bật MCP jira. Chọn server "jira" ở panel MCP để agent đọc được ticket, hoặc mô tả task bằng text.',
+        });
         return;
       }
     }
@@ -111,6 +118,7 @@ app.post('/api/run', async (req, res) => {
       cwd: workdir,
       mode: runMode,
       effort: effort ?? 'high',
+      language: language === 'en' ? 'en' : 'vi',
       projectProfile,
       images: Array.isArray(images) ? images : undefined,
       mcpServers: Array.isArray(mcpServers) ? mcpServers : undefined,
@@ -189,16 +197,52 @@ app.post('/api/stop/:id', (req, res) => {
   res.json({ ok: Boolean(session) });
 });
 
-/** GET /api/config — thông tin cấu hình cho UI (model, jira, auth, profiles). */
+/** GET /api/config — thông tin cấu hình cho UI (MCP, cwd). Model do web tự chọn. */
 app.get('/api/config', (_req, res) => {
   const cc = loadClaudeCodeMcp();
   res.json({
-    model: config.model,
-    jiraConfigured: config.jiraConfigured,
-    authSource: config.authSource, // 'api-key' | 'claude-cli' | 'none'
     defaultCwd: process.cwd(),
     mcpServers: cc.names,
   });
+});
+
+/** GET /api/mcp — liệt kê MCP server đã cấu hình (che token, chỉ trả tên env key). */
+app.get('/api/mcp', (_req, res) => {
+  try {
+    res.json({ servers: listGlobalMcp() });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+/** POST /api/mcp — thêm MCP server stdio mới. body: {name, command, args?, env?} */
+app.post('/api/mcp', (req, res) => {
+  const { name, command, args, env } = req.body ?? {};
+  if (typeof name !== 'string' || typeof command !== 'string') {
+    res.status(400).json({ error: 'Thiếu name hoặc command.' });
+    return;
+  }
+  try {
+    addGlobalMcp({
+      name,
+      command,
+      args: Array.isArray(args) ? args.map(String) : undefined,
+      env: env && typeof env === 'object' ? (env as Record<string, string>) : undefined,
+    });
+    res.json({ ok: true, servers: listGlobalMcp() });
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+  }
+});
+
+/** DELETE /api/mcp/:name — xóa một MCP server. */
+app.delete('/api/mcp/:name', (req, res) => {
+  try {
+    removeGlobalMcp(req.params.name);
+    res.json({ ok: true, servers: listGlobalMcp() });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
 });
 
 /** GET /api/browse-dirs?path=... — duyệt thư mục local. */
