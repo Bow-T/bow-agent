@@ -9,9 +9,10 @@ import { config } from '../config/env.js';
  * bow-agent (skills/monorepo/). Chỉ kích hoạt khi agent làm việc TRONG monorepo
  * — repo khác không bị nhiễu.
  *
- * Gồm: CLAUDE.md (kiến thức nền) + danh mục 18 skill (name + description, kèm
- * đường dẫn để agent tự Read full SKILL.md khi cần — không nhồi cả nghìn dòng
- * vào system prompt). Hooks xử lý riêng ở ./hooks.ts.
+ * Gồm: CLAUDE.md (kiến thức nền) + danh mục skill (name + description, kèm đường
+ * dẫn để agent tự Read full SKILL.md khi cần — không nhồi cả nghìn dòng vào system
+ * prompt). Danh mục quét động từ skills/monorepo/skills/ nên số lượng tự cập nhật
+ * theo bundle. Hooks xử lý riêng ở ./hooks.ts.
  */
 
 /** Thư mục skills/monorepo/ ở root repo bow-agent (dù chạy từ src/ hay dist/). */
