@@ -1,0 +1,74 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bash scripts/check-quest.sh*)",
+      "Bash(bash scripts/octopus-commit.sh*)",
+      "Bash(bash scripts/quest-checklist.sh*)",
+      "mcp__jira__jira_get_visible_projects",
+      "mcp__jira__jira_search_issues",
+      "mcp__jira__jira_get_project_info",
+      "mcp__jira__jira_get_issue",
+      "mcp__jira__jira_get_comments",
+      "mcp__jira__jira_get_create_meta",
+      "mcp__jira__jira_get_custom_fields",
+      "mcp__supabase-mcp-server__list_projects",
+      "mcp__supabase-mcp-server__get_edge_function",
+      "Bash(fvm install *)",
+      "Bash(fvm list *)",
+      "Bash(git check-ignore *)",
+      "Bash(node_modules/.bin/tsc --noEmit -p tsconfig.json)",
+      "Bash(bun test *)",
+      "Bash(fvm dart *)",
+      "Bash(git commit *)",
+      "Bash(supabase projects *)",
+      "Bash(grep -vE \"^\\\\s*#|^\\\\s*$\" supabase/.env)",
+      "Bash(supabase functions *)",
+      "mcp__supabase__list_projects",
+      "mcp__codemagic__wait_for_build",
+      "mcp__codemagic__trigger_build",
+      "Edit(/.claude/skills/octopus-commit/**)",
+      "Bash(pbcopy)",
+      "Bash(chmod +x .claude/hooks/guard-commit-branch.sh .claude/hooks/self-verify-rubric.sh)",
+      "Bash(python3 -c 'import json; json.load\\(open\\(\".claude/settings.json\"\\)\\); print\\(\"✓ valid JSON\"\\)')",
+      "Bash(bash .claude/hooks/guard-commit-branch.sh)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/ensure-githooks.sh\""
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-push.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-commit-branch.sh\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/self-verify-rubric.sh\""
+          }
+        ]
+      }
+    ]
+  },
+  "_comment": "SHARED, COMMITTED Claude Code config for the DUOCT monorepo. Keep this file free of secrets and machine-specific paths — put personal allow-rules and absolute paths in .claude/settings.local.json (git-ignored). See CONTRIBUTING.md."
+}

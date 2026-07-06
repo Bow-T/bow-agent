@@ -41,6 +41,25 @@ async function readImage(file: File): Promise<ImageAttachment> {
   return { name: file.name, base64, mediaType: file.type || 'image/png' };
 }
 
+/**
+ * Gợi ý bấm nhanh ở khung nhập. Thêm mẫu mới = thêm 1 phần tử vào đây.
+ * - target 'task': điền vào ô mô tả task.
+ * - target 'jira': đưa con trỏ vào ô Jira (điền text gợi ý làm placeholder hành động).
+ */
+const QUICK_PROMPTS: { label: string; text: string; target: 'task' | 'jira' }[] = [
+  { label: '🐛 Sửa bug từ Jira', text: '', target: 'jira' },
+  {
+    label: '💡 Làm theo đề xuất',
+    text: 'Phân tích vấn đề, đề xuất hướng làm rồi trình bày kế hoạch để tôi duyệt trước khi thực thi.',
+    target: 'task',
+  },
+  {
+    label: '📖 Giải thích codebase',
+    text: 'Đọc và giải thích cấu trúc dự án này: các module chính, luồng dữ liệu, và điểm cần lưu ý.',
+    target: 'task',
+  },
+];
+
 export function App() {
   const [task, setTask] = useState(() => localStorage.getItem('bow-task') || '');
   const [jiraRef, setJiraRef] = useState(() => localStorage.getItem('bow-jiraRef') || '');
@@ -64,7 +83,15 @@ export function App() {
   const [pdfs, setPdfs] = useState<{ name: string; base64: string }[]>([]);
   const [images, setImages] = useState<ImageAttachment[]>([]);
 
-  const [items, setItems] = useState<ChatItem[]>([]);
+  const [items, setItems] = useState<ChatItem[]>(() => {
+    // Khôi phục lịch sử chat từ phiên trước (giữ qua refresh trang).
+    try {
+      const raw = localStorage.getItem('bow-chat-items');
+      return raw ? (JSON.parse(raw) as ChatItem[]) : [];
+    } catch {
+      return [];
+    }
+  });
   const [pending, setPending] = useState<PendingApproval[]>([]);
   const [running, setRunning] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -79,11 +106,23 @@ export function App() {
   useEffect(() => { localStorage.setItem('bow-effort', effort); }, [effort]);
   useEffect(() => { localStorage.setItem('bow-selectedMcps', JSON.stringify(selectedMcps)); }, [selectedMcps]);
   useEffect(() => { localStorage.setItem('bow-newProject', String(newProject)); }, [newProject]);
+  // Lưu lịch sử chat để giữ qua refresh. Chỉ giữ 300 item gần nhất để không vượt
+  // quota localStorage (~5MB); chat rất dài thì tin cũ nhất bị lược, tránh crash.
+  useEffect(() => {
+    try {
+      const MAX = 300;
+      const trimmed = items.length > MAX ? items.slice(-MAX) : items;
+      localStorage.setItem('bow-chat-items', JSON.stringify(trimmed));
+    } catch {
+      // Vượt quota hoặc lỗi serialize → bỏ qua, không chặn UI.
+    }
+  }, [items]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerPath, setPickerPath] = useState('');
   const [pickerParent, setPickerParent] = useState<string | null>(null);
   const [pickerDirs, setPickerDirs] = useState<string[]>([]);
   const [pickerError, setPickerError] = useState('');
+  const [confirmClearOpen, setConfirmClearOpen] = useState(false);
 
   const openPicker = (initialPath: string) => {
     setPickerError('');
@@ -121,6 +160,30 @@ export function App() {
   );
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const taskRef = useRef<HTMLTextAreaElement>(null);
+  const jiraInputRef = useRef<HTMLInputElement>(null);
+
+  /** Bấm một gợi ý nhanh: điền sẵn task hoặc đưa con trỏ vào ô Jira. */
+  function applyQuickPrompt(qp: { text: string; target: 'task' | 'jira' }) {
+    if (running) return;
+    if (qp.target === 'jira') {
+      jiraInputRef.current?.focus();
+      return;
+    }
+    setTask(qp.text);
+    // Chờ state cập nhật rồi focus + đưa con trỏ về cuối để sửa tiếp.
+    setTimeout(() => {
+      const el = taskRef.current;
+      if (el) {
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+      }
+    }, 0);
+  }
+  // Số item có TRƯỚC khi session hiện tại bắt đầu. Backend replay toàn bộ history
+  // của session khi reconnect (refresh giữa chừng) → ta cắt items về mốc này rồi
+  // dựng lại từ event, tránh nhân đôi mà vẫn giữ lịch sử các task cũ phía trên.
+  const sessionBaselineRef = useRef(0);
 
   // Áp theme lên <html data-theme> và nhớ vào localStorage.
   useEffect(() => {
@@ -154,6 +217,9 @@ export function App() {
         .then((r) => r.json())
         .then((data: { exists: boolean }) => {
           if (data.exists) {
+            // Khôi phục mốc baseline đã lưu để replay không xóa lịch sử task cũ.
+            const savedBase = Number(localStorage.getItem('bow-session-baseline'));
+            sessionBaselineRef.current = Number.isFinite(savedBase) ? savedBase : 0;
             setSessionId(savedSessionId);
             setRunning(true);
             streamEvents(savedSessionId);
@@ -214,17 +280,32 @@ export function App() {
     const hasInput = task.trim() || jiraRef.trim() || docs.length || pdfs.length || images.length;
     if (!hasInput) return;
 
-    setItems([]);
+    // Giữ lịch sử cũ — task mới nối tiếp bên dưới (chat liên tục). Chỉ dọn approval treo.
     setPending([]);
     setRunning(true);
 
+    // Chốt dữ liệu đầu vào vào biến local TRƯỚC khi xóa ô nhập, để vẫn gửi đúng
+    // lên backend. Xóa ô nhập ngay sau khi gửi (hành vi chat quen thuộc).
+    const sentText = task.trim();
+    const sentJira = jiraRef.trim();
+    const sentDocs = docs;
+    const sentPdfs = pdfs;
+    const sentImages = images;
+
     const parts = [
-      jiraRef.trim() && `[${jiraRef.trim()}]`,
-      task.trim(),
-      docs.length && `📄×${docs.length}`,
-      images.length && `🖼×${images.length}`,
+      sentJira && `[${sentJira}]`,
+      sentText,
+      sentDocs.length && `📄×${sentDocs.length}`,
+      sentImages.length && `🖼×${sentImages.length}`,
     ].filter(Boolean);
     addItem('user', parts.join(' ') || '(đầu vào đính kèm)');
+
+    // Xóa ô nhập + file đính kèm (task/jiraRef được persist nên xóa cả localStorage).
+    setTask('');
+    setJiraRef('');
+    setDocs([]);
+    setPdfs([]);
+    setImages([]);
 
     let res: Response;
     try {
@@ -232,11 +313,11 @@ export function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          text: task.trim() || undefined,
-          jiraRef: jiraRef.trim() || undefined,
-          docs: docs.length ? docs : undefined,
-          pdfs: pdfs.length ? pdfs : undefined,
-          images: images.length ? images : undefined,
+          text: sentText || undefined,
+          jiraRef: sentJira || undefined,
+          docs: sentDocs.length ? sentDocs : undefined,
+          pdfs: sentPdfs.length ? sentPdfs : undefined,
+          images: sentImages.length ? sentImages : undefined,
           newProject,
           mcpServers: selectedMcps,
           mode,
@@ -262,11 +343,21 @@ export function App() {
     const { sessionId: sid } = await res.json();
     setSessionId(sid);
     localStorage.setItem('bow-session-id', sid);
+    // Mốc baseline = mọi item hiện có (gồm dòng 'user' vừa thêm). Session này sẽ
+    // append event của nó SAU mốc này. Dùng updater để đọc độ dài items mới nhất.
+    setItems((prev) => {
+      sessionBaselineRef.current = prev.length;
+      localStorage.setItem('bow-session-baseline', String(prev.length));
+      return prev;
+    });
     streamEvents(sid);
   }
 
   function streamEvents(sid: string) {
-    setItems([]);
+    // Backend replay toàn bộ history của session này từ đầu. Cắt items về mốc
+    // baseline (số item trước khi session bắt đầu) để dựng lại sạch, không nhân
+    // đôi, mà vẫn giữ nguyên lịch sử các task cũ nằm phía trên baseline.
+    setItems((prev) => prev.slice(0, sessionBaselineRef.current));
     setPending([]);
     const src = new EventSource(`/api/events/${sid}`);
     src.onmessage = (msg) => {
@@ -342,10 +433,27 @@ export function App() {
     await fetch(`/api/stop/${sessionId}`, { method: 'POST' }).catch(() => {});
   }
 
+  /** Xóa toàn bộ lịch sử chat (thủ công). Không đụng session đang chạy. */
+  /** Mở cửa sổ xác nhận xóa chat (không xóa ngay). */
+  function clearChat() {
+    if (!items.length || running) return;
+    setConfirmClearOpen(true);
+  }
+
+  /** Thực thi xóa sau khi người dùng xác nhận trong modal. */
+  function confirmClearChat() {
+    setItems([]);
+    setPending([]);
+    sessionBaselineRef.current = 0;
+    localStorage.removeItem('bow-chat-items');
+    localStorage.removeItem('bow-session-baseline');
+    setConfirmClearOpen(false);
+  }
+
   async function genProfile() {
     if (running) return;
     setRunning(true);
-    setItems([]);
+    // Giữ lịch sử cũ, nối tiếp bên dưới (như start).
     addItem('system', `🔧 Đang quét repo để sinh profile: ${cwd}`);
     try {
       const res = await fetch('/api/generate-profile', {
@@ -356,6 +464,11 @@ export function App() {
       const { sessionId: sid } = await res.json();
       setSessionId(sid);
       localStorage.setItem('bow-session-id', sid);
+      setItems((prev) => {
+        sessionBaselineRef.current = prev.length;
+        localStorage.setItem('bow-session-baseline', String(prev.length));
+        return prev;
+      });
       streamEvents(sid);
     } catch (err) {
       addItem('error', `Không sinh được profile: ${(err as Error).message}`);
@@ -364,7 +477,7 @@ export function App() {
   }
 
   const buildActivityNodes = () => {
-    const nodes: { id: string; type: string; label: string; detail?: string; active?: boolean }[] = [];
+    const nodes: { id: string; type: string; label: string; detail?: string; active?: boolean; count?: number }[] = [];
 
     if (items.length > 0 || running) {
       nodes.push({
@@ -377,11 +490,21 @@ export function App() {
 
     items.forEach((it) => {
       if (it.kind === 'tool') {
-        nodes.push({
-          id: it.id,
-          type: 'tool',
-          label: it.text,
-        });
+        // Gộp các lần dùng CÙNG một tool liên tiếp thành 1 dòng kèm số lần (×N),
+        // tránh 7 dòng "🔍 tìm công cụ…" giống hệt nhau gây rối.
+        const last = nodes[nodes.length - 1];
+        if (last && last.type === 'tool' && last.label.replace(/ ×\d+$/, '') === it.text) {
+          const n = (last.count ?? 1) + 1;
+          last.count = n;
+          last.label = `${it.text} ×${n}`;
+        } else {
+          nodes.push({
+            id: it.id,
+            type: 'tool',
+            label: it.text,
+            count: 1,
+          });
+        }
       } else if (it.kind === 'result') {
         nodes.push({
           id: it.id,
@@ -461,43 +584,66 @@ export function App() {
   const renderConnection = (x1: number, y1: number, x2: number, y2: number, active: boolean) => {
     return (
       <g key={`${x1}-${y1}-${x2}-${y2}`}>
-        <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="var(--outline)" strokeWidth="1" opacity="0.3" />
+        {/* Đường nền mờ luôn hiện */}
+        <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="rgba(148,163,184,0.18)" strokeWidth="1" />
         {active && (
-          <line
-            x1={x1}
-            y1={y1}
-            x2={x2}
-            y2={y2}
-            stroke="var(--gold)"
-            strokeWidth="2"
-            className="pulsing-signal"
-          />
+          <>
+            {/* Lớp glow nền */}
+            <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#38bdf8" strokeWidth="3" opacity="0.25" className="nn-wire-glow" />
+            {/* Tín hiệu chạy */}
+            <line
+              x1={x1}
+              y1={y1}
+              x2={x2}
+              y2={y2}
+              stroke="#7dd3fc"
+              strokeWidth="1.5"
+              className="nn-wire-signal"
+            />
+          </>
         )}
       </g>
     );
   };
 
+  // Bảng màu neon theo loại nơ-ron (khối này luôn tối, không phụ thuộc theme app).
+  const NEON: Record<'input' | 'brain' | 'tool' | 'output', string> = {
+    input: '#38bdf8', // cyan
+    brain: '#a78bfa', // tím
+    tool: '#4ade80', // xanh lá
+    output: '#4ade80', // xanh lá (đổi đỏ khi lỗi)
+  };
+
   const renderNode = (x: number, y: number, label: string, active: boolean, type: 'input' | 'brain' | 'tool' | 'output') => {
-    let fill = 'var(--panel)';
-    let stroke = 'var(--outline)';
-    let r = 14;
-    if (active) {
-      if (type === 'input') {
-        fill = 'var(--gold)';
-      } else if (type === 'brain') {
-        fill = 'var(--wood)';
-        r = 18;
-      } else if (type === 'tool') {
-        fill = 'var(--leaf)';
-      } else if (type === 'output') {
-        fill = hasErrorResult ? 'var(--red)' : 'var(--leaf)';
-      }
-    }
+    const isBrain = type === 'brain';
+    const r = isBrain ? 17 : 13;
+    const accent = type === 'output' && hasErrorResult ? '#f87171' : NEON[type];
+    // Node nghỉ: glass mờ tối, viền xám mờ. Node active: viền + lõi phát sáng neon.
+    const coreFill = active ? accent : 'rgba(255,255,255,0.03)';
+    const ring = active ? accent : 'rgba(148,163,184,0.25)';
 
     return (
-      <g key={label}>
-        <circle cx={x} cy={y} r={r} fill={fill} stroke={stroke} strokeWidth="2" className={active ? 'glow' : ''} />
-        <text x={x} y={y + r + 10} textAnchor="middle" fill="var(--text)" style={{ fontSize: '7px', fontFamily: '"Press Start 2P"', userSelect: 'none' }}>
+      <g key={label} className={active ? 'nn-node nn-node-active' : 'nn-node'} style={{ ['--nn-accent' as string]: accent }}>
+        {/* Halo glow ngoài khi active */}
+        {active && <circle cx={x} cy={y} r={r + 7} fill={accent} opacity="0.12" className="nn-halo" />}
+        {/* Vòng glass nền */}
+        <circle cx={x} cy={y} r={r} fill="rgba(255,255,255,0.04)" stroke={ring} strokeWidth="1.5" />
+        {/* Lõi neon */}
+        <circle
+          cx={x}
+          cy={y}
+          r={active ? r - 4 : 3}
+          fill={coreFill}
+          className={active ? 'nn-core nn-core-active' : 'nn-core'}
+          style={{ ['--nn-accent' as string]: accent }}
+        />
+        <text
+          x={x}
+          y={y + r + 12}
+          textAnchor="middle"
+          fill={active ? accent : 'rgba(203,213,225,0.65)'}
+          style={{ fontSize: '8px', fontFamily: 'ui-sans-serif, system-ui, sans-serif', fontWeight: 600, letterSpacing: '0.08em', userSelect: 'none' }}
+        >
           {label}
         </text>
       </g>
@@ -543,10 +689,28 @@ export function App() {
 
       <div className="main-layout">
         <aside className="sidebar-pipeline">
-          <div className="sidebar-pipeline-title">☰ MẠNG NƠ-RON HOẠT ĐỘNG</div>
+          <div className="sidebar-pipeline-title">◈ MẠNG NƠ-RON HOẠT ĐỘNG</div>
 
-          <div className="neural-net-container" style={{ position: 'relative', width: '100%', height: '280px', background: 'var(--inset)', border: 'var(--bd-thin) solid var(--outline)', borderRadius: '2px', marginBottom: '14px', overflow: 'hidden' }}>
+          <div className="neural-net-container">
             <svg width="100%" height="100%" viewBox="0 0 280 280">
+              <defs>
+                {/* Filter glow neon dùng chung */}
+                <filter id="nn-glow" x="-50%" y="-50%" width="200%" height="200%">
+                  <feGaussianBlur stdDeviation="2.5" result="blur" />
+                  <feMerge>
+                    <feMergeNode in="blur" />
+                    <feMergeNode in="SourceGraphic" />
+                  </feMerge>
+                </filter>
+                {/* Lưới nền mờ */}
+                <radialGradient id="nn-bg" cx="50%" cy="35%" r="75%">
+                  <stop offset="0%" stopColor="#1e293b" />
+                  <stop offset="100%" stopColor="#0b1120" />
+                </radialGradient>
+              </defs>
+              {/* Nền gradient tối */}
+              <rect x="0" y="0" width="280" height="280" fill="url(#nn-bg)" />
+
               {/* Connections */}
               {renderConnection(50, 30, 140, 100, taskNodeActive && brainActive)}
               {renderConnection(140, 30, 140, 100, cwdNodeActive && brainActive)}
@@ -841,6 +1005,7 @@ export function App() {
 
         <div className="row">
           <input
+            ref={jiraInputRef}
             className="jira"
             placeholder="Jira ticket / URL (vd PROJ-123 hoặc /projects/PROJ/boards/123)"
             value={jiraRef}
@@ -892,8 +1057,25 @@ export function App() {
           </div>
         )}
 
+        {!running && (
+          <div className="quick-prompts">
+            {QUICK_PROMPTS.map((qp) => (
+              <button
+                key={qp.label}
+                type="button"
+                className="quick-prompt-chip"
+                onClick={() => applyQuickPrompt(qp)}
+                title={qp.target === 'jira' ? 'Nhập ticket Jira' : qp.text}
+              >
+                {qp.label}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="row">
           <textarea
+            ref={taskRef}
             className="task"
             placeholder="Mô tả task / đề tài… (Ctrl+Enter để chạy · kéo-thả file/ảnh vào ô này)"
             value={task}
@@ -924,6 +1106,14 @@ export function App() {
                 Chạy
               </button>
             )}
+            <button
+              className="btn clear-chat"
+              onClick={clearChat}
+              disabled={running || !items.length}
+              title="Xóa toàn bộ lịch sử chat"
+            >
+              Xóa chat
+            </button>
           </div>
         </div>
         </div>
@@ -985,6 +1175,36 @@ export function App() {
                 }}
               >
                 Chọn thư mục này
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmClearOpen && (
+        <div className="modal-overlay" onClick={() => setConfirmClearOpen(false)}>
+          <div
+            className="modal-content pixel-panel"
+            style={{ maxWidth: '420px' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <span>🗑 Xóa lịch sử chat</span>
+              <button className="close-btn" onClick={() => setConfirmClearOpen(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <p style={{ margin: 0, lineHeight: 1.6 }}>
+                Xóa toàn bộ <strong>{items.length}</strong> tin nhắn trong cửa sổ này?
+                <br />
+                Thao tác này không thể hoàn tác.
+              </p>
+            </div>
+            <div className="modal-footer" style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '16px' }}>
+              <button className="btn deny" onClick={() => setConfirmClearOpen(false)}>
+                Hủy
+              </button>
+              <button className="btn stop" onClick={confirmClearChat}>
+                Xóa hết
               </button>
             </div>
           </div>
