@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { PixelSelect } from './PixelSelect.js';
+import { NeuralBrain } from './NeuralBrain.js';
 import type {
   ChatItem,
   DetectedSource,
@@ -65,6 +66,9 @@ export function App() {
   const [profile, setProfile] = useState(() => localStorage.getItem('bow-profile') || 'auto');
   const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem('bow-selectedModel') || 'claude-opus-4-8');
   const [effort, setEffort] = useState(() => localStorage.getItem('bow-effort') || 'high');
+  // Bước (điểm trên não neuron) đang được người dùng bấm chọn để xem chi tiết.
+  const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
+  const [language, setLanguage] = useState(() => localStorage.getItem('bow-language') || 'vi');
   const [selectedMcps, setSelectedMcps] = useState<string[]>(() => {
     try {
       const val = localStorage.getItem('bow-selectedMcps');
@@ -99,6 +103,7 @@ export function App() {
   useEffect(() => { localStorage.setItem('bow-profile', profile); }, [profile]);
   useEffect(() => { localStorage.setItem('bow-selectedModel', selectedModel); }, [selectedModel]);
   useEffect(() => { localStorage.setItem('bow-effort', effort); }, [effort]);
+  useEffect(() => { localStorage.setItem('bow-language', language); }, [language]);
   useEffect(() => { localStorage.setItem('bow-selectedMcps', JSON.stringify(selectedMcps)); }, [selectedMcps]);
 
   // Lưu lịch sử chat để giữ qua refresh. Chỉ giữ 300 item gần nhất để không vượt
@@ -118,6 +123,107 @@ export function App() {
   const [pickerDirs, setPickerDirs] = useState<string[]>([]);
   const [pickerError, setPickerError] = useState('');
   const [confirmClearOpen, setConfirmClearOpen] = useState(false);
+
+  // ── Panel quản lý MCP server ──
+  const [mcpPanelOpen, setMcpPanelOpen] = useState(false);
+  const [mcpList, setMcpList] = useState<
+    { name: string; command: string; args: string[]; envKeys: string[]; stdio: boolean }[]
+  >([]);
+  const [mcpForm, setMcpForm] = useState({ name: '', command: '', args: '', env: '' });
+  const [mcpError, setMcpError] = useState('');
+  const [mcpBusy, setMcpBusy] = useState(false);
+
+  /** Tải danh sách MCP từ backend (che token). */
+  const loadMcpList = () => {
+    fetch('/api/mcp')
+      .then((r) => r.json())
+      .then((d) => setMcpList(d.servers ?? []))
+      .catch(() => setMcpError('Không tải được danh sách MCP.'));
+  };
+
+  const openMcpPanel = () => {
+    setMcpError('');
+    setMcpForm({ name: '', command: '', args: '', env: '' });
+    setMcpPanelOpen(true);
+    loadMcpList();
+  };
+
+  /** Thêm MCP mới: parse args (mỗi dòng/khoảng trắng) + env (mỗi dòng KEY=VALUE). */
+  const submitMcp = async () => {
+    setMcpError('');
+    const name = mcpForm.name.trim();
+    const command = mcpForm.command.trim();
+    if (!name || !command) {
+      setMcpError('Cần nhập Tên và Command.');
+      return;
+    }
+    // Args: tách theo dòng, mỗi dòng có thể chứa nhiều token phân tách bởi khoảng trắng.
+    const args = mcpForm.args
+      .split('\n')
+      .flatMap((line) => line.trim().split(/\s+/))
+      .filter(Boolean);
+    // Env: mỗi dòng "KEY=VALUE". Bỏ dòng rỗng / không có '='.
+    const env: Record<string, string> = {};
+    for (const line of mcpForm.env.split('\n')) {
+      const t = line.trim();
+      if (!t || !t.includes('=')) continue;
+      const idx = t.indexOf('=');
+      env[t.slice(0, idx).trim()] = t.slice(idx + 1).trim();
+    }
+    setMcpBusy(true);
+    try {
+      const res = await fetch('/api/mcp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, command, args, env }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setMcpError(data.error ?? 'Thêm MCP thất bại.');
+        return;
+      }
+      setMcpList(data.servers ?? []);
+      setMcpForm({ name: '', command: '', args: '', env: '' });
+      // Refresh /api/config để checkbox MCP ở composer cập nhật danh sách mới.
+      fetch('/api/config')
+        .then((r) => r.json())
+        .then((c) => { if (c.mcpServers) setCfg((prev) => (prev ? { ...prev, mcpServers: c.mcpServers } : prev)); })
+        .catch(() => {});
+    } catch (err) {
+      setMcpError(`Lỗi gọi backend: ${(err as Error).message}`);
+    } finally {
+      setMcpBusy(false);
+    }
+  };
+
+  /** Xóa một MCP. */
+  const deleteMcp = async (name: string) => {
+    setMcpError('');
+    setMcpBusy(true);
+    try {
+      const res = await fetch(`/api/mcp/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) {
+        setMcpError(data.error ?? 'Xóa thất bại.');
+        return;
+      }
+      setMcpList(data.servers ?? []);
+      fetch('/api/config')
+        .then((r) => r.json())
+        .then((c) => {
+          if (c.mcpServers) {
+            setCfg((prev) => (prev ? { ...prev, mcpServers: c.mcpServers } : prev));
+            // Bỏ MCP vừa xóa khỏi danh sách đang chọn.
+            setSelectedMcps((prev) => prev.filter((n) => c.mcpServers.includes(n)));
+          }
+        })
+        .catch(() => {});
+    } catch (err) {
+      setMcpError(`Lỗi gọi backend: ${(err as Error).message}`);
+    } finally {
+      setMcpBusy(false);
+    }
+  };
 
   const openPicker = (initialPath: string) => {
     setPickerError('');
@@ -143,9 +249,6 @@ export function App() {
   };
 
   const [cfg, setCfg] = useState<{
-    model: string;
-    jiraConfigured: boolean;
-    authSource: 'api-key' | 'claude-cli' | 'none';
     defaultCwd: string;
     mcpServers?: string[];
   } | null>(null);
@@ -268,6 +371,7 @@ export function App() {
 
     // Giữ lịch sử cũ — task mới nối tiếp bên dưới (chat liên tục). Chỉ dọn approval treo.
     setPending([]);
+    setSelectedStepId(null); // bỏ chọn bước cũ khi bắt đầu task mới
     setRunning(true);
 
     // Chốt dữ liệu đầu vào vào biến local TRƯỚC khi xóa ô nhập, để vẫn gửi đúng
@@ -324,6 +428,7 @@ export function App() {
           mode,
           profile,
           effort,
+          language,
           cwd: cwd.trim() || undefined,
           model: selectedModel,
         }),
@@ -379,9 +484,6 @@ export function App() {
           break;
         case 'error':
           addItem('error', `Kết thúc bất thường: ${ev.subtype}`);
-          break;
-        case 'learned':
-          addItem('system', `🧬 Genome: Đã học thêm ${ev.added} tri thức mới về repo này.`);
           break;
         case 'approval-request':
           setPending((prev) => [
@@ -547,121 +649,6 @@ export function App() {
 
   const pipelineNodes = buildActivityNodes();
 
-  // Tính toán trạng thái các nơ-ron
-  const taskNodeActive = task.trim().length > 0;
-  const cwdNodeActive = cwd.trim().length > 0;
- 
-  const parsedJiraFromTask = (() => {
-    const selected = task.match(/[?&]selectedIssue=([A-Z][A-Z0-9]+-\d+)/i);
-    const ticket = selected ?? task.match(/\b([A-Z][A-Z0-9]+-\d+)\b/);
-    if (ticket) return ticket[1].toUpperCase();
-    const board = task.match(/\/boards\/(\d+)/);
-    if (board) return `board ${board[1]}`;
-    const project = task.match(/\/projects\/([A-Z][A-Z0-9]+)/i);
-    if (project) return `project ${project[1].toUpperCase()}`;
-    return '';
-  })();
-  const jiraNodeActive = parsedJiraFromTask.length > 0;
-  const brainActive = running;
-
-  const getLatestToolCategory = () => {
-    if (pending.length > 0) {
-      const toolName = pending[0].toolName;
-      if (toolName === 'Bash') return 'bash';
-      if (toolName === 'Read' || toolName === 'Glob' || toolName === 'view_file' || toolName === 'grep_search') return 'read';
-      if (toolName === 'Edit' || toolName === 'replace_file_content' || toolName === 'write_to_file' || toolName === 'multi_replace_file_content') return 'write';
-      if (toolName.startsWith('mcp__') || toolName.includes('mcp')) return 'mcp';
-    }
-    for (let i = items.length - 1; i >= 0; i--) {
-      const it = items[i];
-      if (it.kind === 'tool') {
-        const text = it.text.toLowerCase();
-        if (text.includes('bash') || text.includes('command')) return 'bash';
-        if (text.includes('read') || text.includes('view') || text.includes('glob') || text.includes('grep')) return 'read';
-        if (text.includes('edit') || text.includes('write') || text.includes('replace') || text.includes('modify')) return 'write';
-        if (text.includes('mcp') || text.includes('db') || text.includes('jira')) return 'mcp';
-      }
-    }
-    return null;
-  };
-
-  const latestTool = getLatestToolCategory();
-  const readActive = running && latestTool === 'read';
-  const writeActive = running && latestTool === 'write';
-  const bashActive = running && latestTool === 'bash';
-  const mcpActive = running && latestTool === 'mcp';
-  const outputActive = items.some((it) => it.kind === 'result' || it.kind === 'error');
-  const hasErrorResult = items.some((it) => it.kind === 'error');
-
-  const renderConnection = (x1: number, y1: number, x2: number, y2: number, active: boolean) => {
-    return (
-      <g key={`${x1}-${y1}-${x2}-${y2}`}>
-        {/* Đường nền mờ luôn hiện */}
-        <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="rgba(148,163,184,0.18)" strokeWidth="1" />
-        {active && (
-          <>
-            {/* Lớp glow nền */}
-            <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#38bdf8" strokeWidth="3" opacity="0.25" className="nn-wire-glow" />
-            {/* Tín hiệu chạy */}
-            <line
-              x1={x1}
-              y1={y1}
-              x2={x2}
-              y2={y2}
-              stroke="#7dd3fc"
-              strokeWidth="1.5"
-              className="nn-wire-signal"
-            />
-          </>
-        )}
-      </g>
-    );
-  };
-
-  // Bảng màu neon theo loại nơ-ron (khối này luôn tối, không phụ thuộc theme app).
-  const NEON: Record<'input' | 'brain' | 'tool' | 'output', string> = {
-    input: '#38bdf8', // cyan
-    brain: '#a78bfa', // tím
-    tool: '#4ade80', // xanh lá
-    output: '#4ade80', // xanh lá (đổi đỏ khi lỗi)
-  };
-
-  const renderNode = (x: number, y: number, label: string, active: boolean, type: 'input' | 'brain' | 'tool' | 'output') => {
-    const isBrain = type === 'brain';
-    const r = isBrain ? 17 : 13;
-    const accent = type === 'output' && hasErrorResult ? '#f87171' : NEON[type];
-    // Node nghỉ: glass mờ tối, viền xám mờ. Node active: viền + lõi phát sáng neon.
-    const coreFill = active ? accent : 'rgba(255,255,255,0.03)';
-    const ring = active ? accent : 'rgba(148,163,184,0.25)';
-
-    return (
-      <g key={label} className={active ? 'nn-node nn-node-active' : 'nn-node'} style={{ ['--nn-accent' as string]: accent }}>
-        {/* Halo glow ngoài khi active */}
-        {active && <circle cx={x} cy={y} r={r + 7} fill={accent} opacity="0.12" className="nn-halo" />}
-        {/* Vòng glass nền */}
-        <circle cx={x} cy={y} r={r} fill="rgba(255,255,255,0.04)" stroke={ring} strokeWidth="1.5" />
-        {/* Lõi neon */}
-        <circle
-          cx={x}
-          cy={y}
-          r={active ? r - 4 : 3}
-          fill={coreFill}
-          className={active ? 'nn-core nn-core-active' : 'nn-core'}
-          style={{ ['--nn-accent' as string]: accent }}
-        />
-        <text
-          x={x}
-          y={y + r + 12}
-          textAnchor="middle"
-          fill={active ? accent : 'rgba(203,213,225,0.65)'}
-          style={{ fontSize: '8px', fontFamily: 'ui-sans-serif, system-ui, sans-serif', fontWeight: 600, letterSpacing: '0.08em', userSelect: 'none' }}
-        >
-          {label}
-        </text>
-      </g>
-    );
-  };
-
   return (
     <div className="app">
       <header className="topbar">
@@ -672,6 +659,24 @@ export function App() {
               Tích lũy: ${accumulatedCost.toFixed(4)}
             </span>
           </div>
+          <div className="lang-select" title="Ngôn ngữ trả lời của agent">
+            <span aria-hidden="true">🌐</span>
+            <PixelSelect
+              value={language}
+              onChange={setLanguage}
+              options={[
+                { value: 'vi', label: 'VIỆT' },
+                { value: 'en', label: 'ENGLISH' },
+              ]}
+            />
+          </div>
+          <button
+            className="theme-btn"
+            title="Quản lý MCP server (Jira/Supabase/... cho agent)"
+            onClick={openMcpPanel}
+          >
+            🔌
+          </button>
           <button
             className="theme-btn"
             title={theme === 'light' ? 'Chuyển Dark' : 'Chuyển Light'}
@@ -687,55 +692,47 @@ export function App() {
           <div className="sidebar-pipeline-title">◈ MẠNG NƠ-RON HOẠT ĐỘNG</div>
 
           <div className="neural-net-container">
-            <svg width="100%" height="100%" viewBox="0 0 280 280">
-              <defs>
-                {/* Filter glow neon dùng chung */}
-                <filter id="nn-glow" x="-50%" y="-50%" width="200%" height="200%">
-                  <feGaussianBlur stdDeviation="2.5" result="blur" />
-                  <feMerge>
-                    <feMergeNode in="blur" />
-                    <feMergeNode in="SourceGraphic" />
-                  </feMerge>
-                </filter>
-                {/* Lưới nền mờ */}
-                <radialGradient id="nn-bg" cx="50%" cy="35%" r="75%">
-                  <stop offset="0%" stopColor="#1e293b" />
-                  <stop offset="100%" stopColor="#0b1120" />
-                </radialGradient>
-              </defs>
-              {/* Nền gradient tối */}
-              <rect x="0" y="0" width="280" height="280" fill="url(#nn-bg)" />
-
-              {/* Connections */}
-              {renderConnection(50, 30, 140, 100, taskNodeActive && brainActive)}
-              {renderConnection(140, 30, 140, 100, cwdNodeActive && brainActive)}
-              {renderConnection(230, 30, 140, 100, jiraNodeActive && brainActive)}
-
-              {renderConnection(140, 100, 40, 170, brainActive && readActive)}
-              {renderConnection(140, 100, 105, 170, brainActive && writeActive)}
-              {renderConnection(140, 100, 175, 170, brainActive && bashActive)}
-              {renderConnection(140, 100, 240, 170, brainActive && mcpActive)}
-
-              {renderConnection(40, 170, 140, 240, (readActive || (outputActive && latestTool === 'read')) && outputActive)}
-              {renderConnection(105, 170, 140, 240, (writeActive || (outputActive && latestTool === 'write')) && outputActive)}
-              {renderConnection(175, 170, 140, 240, (bashActive || (outputActive && latestTool === 'bash')) && outputActive)}
-              {renderConnection(240, 170, 140, 240, (mcpActive || (outputActive && latestTool === 'mcp')) && outputActive)}
-
-              {/* Nodes */}
-              {renderNode(50, 30, 'TASK', taskNodeActive, 'input')}
-              {renderNode(140, 30, 'CWD', cwdNodeActive, 'input')}
-              {renderNode(230, 30, 'JIRA', jiraNodeActive, 'input')}
-
-              {renderNode(140, 100, 'BRAIN', brainActive, 'brain')}
-
-              {renderNode(40, 170, 'READ', readActive || (outputActive && latestTool === 'read'), 'tool')}
-              {renderNode(105, 170, 'WRITE', writeActive || (outputActive && latestTool === 'write'), 'tool')}
-              {renderNode(175, 170, 'BASH', bashActive || (outputActive && latestTool === 'bash'), 'tool')}
-              {renderNode(240, 170, 'MCP', mcpActive || (outputActive && latestTool === 'mcp'), 'tool')}
-
-              {renderNode(140, 240, outputActive ? (hasErrorResult ? 'ERROR' : 'DONE') : 'OUT', outputActive, 'output')}
-            </svg>
+            <NeuralBrain
+              active={running}
+              steps={pipelineNodes}
+              selectedId={selectedStepId}
+              onSelect={(s) => setSelectedStepId((prev) => (prev === s.id ? null : s.id))}
+            />
           </div>
+
+          {/* Chi tiết bước được bấm trên não — "đang làm gì ở bước đó". */}
+          {(() => {
+            const sel = selectedStepId ? pipelineNodes.find((n) => n.id === selectedStepId) : null;
+            if (!sel) {
+              return (
+                <div className="step-detail step-detail-empty">
+                  Bấm vào một điểm trên não để xem bước đó đang làm gì.
+                </div>
+              );
+            }
+            return (
+              <div className={`step-detail step-${sel.type}`}>
+                <div className="step-detail-head">
+                  <span className="step-detail-label">
+                    {sel.active ? '⏳ ' : ''}{sel.label}
+                  </span>
+                  <button
+                    className="step-detail-close"
+                    title="Đóng"
+                    onClick={() => setSelectedStepId(null)}
+                  >
+                    ✕
+                  </button>
+                </div>
+                {sel.detail && <div className="step-detail-body">{sel.detail}</div>}
+                {!sel.detail && (
+                  <div className="step-detail-body step-detail-muted">
+                    {sel.active ? 'Đang thực hiện…' : 'Đã hoàn tất bước này.'}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           <div className="sidebar-pipeline-title" style={{ marginTop: '8px', borderTop: 'var(--bd-thin) solid var(--outline)', paddingTop: '10px' }}>
             ☰ LỊCH SỬ HOẠT ĐỘNG
@@ -937,45 +934,6 @@ export function App() {
 
         </div>
 
-        {cfg && cfg.mcpServers && cfg.mcpServers.length > 0 && (
-          <div className="mcp-selector-panel" style={{
-            display: 'flex',
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: '12px',
-            flexWrap: 'wrap',
-            padding: '8px 12px',
-            background: 'var(--inset)',
-            border: 'var(--bd-thin) solid var(--outline)',
-            marginTop: '8px',
-            marginBottom: '4px',
-            borderRadius: '2px'
-          }}>
-            <span style={{ fontSize: '8px', fontFamily: '"Press Start 2P"', color: 'var(--text-2)' }}>MCP:</span>
-            {cfg.mcpServers.map((name) => {
-              const isChecked = selectedMcps.includes(name);
-              return (
-                <label key={name} className="px-check" style={{ margin: 0, fontSize: '15px' }} title={`Kích hoạt MCP: ${name}`}>
-                  <input
-                    type="checkbox"
-                    checked={isChecked}
-                    disabled={running}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        setSelectedMcps((prev) => [...prev, name]);
-                      } else {
-                        setSelectedMcps((prev) => prev.filter((n) => n !== name));
-                      }
-                    }}
-                  />
-                  <span className="px-box">{isChecked ? '✓' : ''}</span>
-                  {name}
-                </label>
-              );
-            })}
-          </div>
-        )}
-
         {detected && (
           <div className="detected">
             🔎 {detected.summary}
@@ -1152,6 +1110,101 @@ export function App() {
                 }}
               >
                 Chọn thư mục này
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {mcpPanelOpen && (
+        <div className="modal-overlay" onClick={() => setMcpPanelOpen(false)}>
+          <div
+            className="modal-content pixel-panel"
+            style={{ maxWidth: '640px', width: '92%' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <span>🔌 Quản lý MCP server</span>
+              <button className="close-btn" onClick={() => setMcpPanelOpen(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              {mcpError && (
+                <div className="picker-error" style={{ color: 'var(--red)', marginBottom: '10px' }}>⚠️ {mcpError}</div>
+              )}
+
+              {/* Danh sách MCP hiện có */}
+              <div className="mcp-list-title" style={{ fontSize: '10px', fontFamily: '"Press Start 2P"', color: 'var(--text-2)', marginBottom: '8px' }}>
+                ĐÃ CẤU HÌNH ({mcpList.length})
+              </div>
+              <div className="mcp-list" style={{ maxHeight: '180px', overflowY: 'auto', border: 'var(--bd-thin) solid var(--outline)', padding: '6px', background: 'var(--inset)', marginBottom: '16px' }}>
+                {mcpList.length === 0 && (
+                  <div style={{ padding: '10px', textAlign: 'center', color: 'var(--muted)' }}>Chưa có MCP nào</div>
+                )}
+                {mcpList.map((m) => (
+                  <div key={m.name} className="mcp-row" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px', padding: '6px 8px', borderBottom: 'var(--bd-thin) solid var(--outline)' }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 600 }}>
+                        {m.name} {!m.stdio && <span style={{ color: 'var(--muted)', fontSize: '12px' }}>(không phải stdio)</span>}
+                      </div>
+                      <div style={{ fontFamily: 'monospace', fontSize: '12px', color: 'var(--muted)', overflowWrap: 'anywhere' }}>
+                        {m.command} {m.args.join(' ')}
+                      </div>
+                      {m.envKeys.length > 0 && (
+                        <div style={{ fontSize: '11px', color: 'var(--muted)' }}>env: {m.envKeys.join(', ')}</div>
+                      )}
+                    </div>
+                    <button
+                      className="btn deny"
+                      style={{ padding: '2px 10px', fontSize: '12px' }}
+                      disabled={mcpBusy}
+                      onClick={() => deleteMcp(m.name)}
+                      title={`Xóa MCP ${m.name}`}
+                    >
+                      Xóa
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {/* Form thêm mới */}
+              <div className="mcp-list-title" style={{ fontSize: '10px', fontFamily: '"Press Start 2P"', color: 'var(--text-2)', marginBottom: '8px' }}>
+                THÊM MCP MỚI (stdio)
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <input
+                  placeholder="Tên (vd: jira, my-server) — chỉ chữ/số/gạch"
+                  value={mcpForm.name}
+                  onChange={(e) => setMcpForm((f) => ({ ...f, name: e.target.value }))}
+                  style={{ padding: '8px' }}
+                />
+                <input
+                  placeholder="Command (vd: npx, /opt/homebrew/bin/npx)"
+                  value={mcpForm.command}
+                  onChange={(e) => setMcpForm((f) => ({ ...f, command: e.target.value }))}
+                  style={{ padding: '8px', fontFamily: 'monospace' }}
+                />
+                <textarea
+                  placeholder="Args — mỗi dòng hoặc cách nhau bởi khoảng trắng (vd: -y mcp-jira-stdio)"
+                  value={mcpForm.args}
+                  onChange={(e) => setMcpForm((f) => ({ ...f, args: e.target.value }))}
+                  rows={2}
+                  style={{ padding: '8px', fontFamily: 'monospace', resize: 'vertical' }}
+                />
+                <textarea
+                  placeholder={'Env — mỗi dòng KEY=VALUE\nGiá trị $TEN_BIEN sẽ lấy từ env server (vd: API_TOKEN=$JIRA_TOKEN)'}
+                  value={mcpForm.env}
+                  onChange={(e) => setMcpForm((f) => ({ ...f, env: e.target.value }))}
+                  rows={3}
+                  style={{ padding: '8px', fontFamily: 'monospace', resize: 'vertical' }}
+                />
+              </div>
+            </div>
+            <div className="modal-footer" style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '16px' }}>
+              <button className="btn deny" onClick={() => setMcpPanelOpen(false)}>
+                Đóng
+              </button>
+              <button className="btn allow" disabled={mcpBusy} onClick={submitMcp}>
+                {mcpBusy ? 'Đang lưu…' : 'Thêm MCP'}
               </button>
             </div>
           </div>
