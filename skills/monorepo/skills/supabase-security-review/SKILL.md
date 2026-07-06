@@ -45,4 +45,4 @@ The automated rules are:
 ## 3. Report
 For each item give `[✓/✗/N/A] <rule> <file:line> — note`. End with a verdict:
 clean / list of blocking findings to fix before commit. This maps onto the
-"AI-review" section of the Octopus pre-commit rubric in `.claude/CLAUDE.md`.
+"AI-review" section of the Bow pre-commit rubric in `.claude/CLAUDE.md`.

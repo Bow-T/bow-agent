@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # .claude/hooks/self-verify-rubric.sh — Claude Code Stop hook.
 #
-# Backstops the octopus-commit SKILL step "4b. Self-verify the quest checklist".
+# Backstops the bow-commit SKILL step "4b. Self-verify the quest checklist".
 # That step depends on Claude remembering to fill the rubric; this hook makes the
 # harness re-surface the auto-evaluated checklist whenever a turn ENDS with new
 # commits on a feature branch that haven't been pushed yet — the exact moment the

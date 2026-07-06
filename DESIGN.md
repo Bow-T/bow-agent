@@ -141,7 +141,7 @@ Tất cả nằm ở đầu `core/genome.ts`:
 - **Repo nhỏ / task rõ / model mạnh (Opus 4.8)** → genome **KHÔNG** tạo khác biệt.
   Với bẫy quy ước (đọc code là thấy) và cả bẫy runtime (null-deref), agent-không-genome
   vẫn tự làm đúng. Genome chỉ lặp lại thứ model đã suy ra được → **chi phí token thừa**.
-- **Repo LỚN thật (monorepo Octopus, Flutter)** → genome **CÓ** tạo khác biệt. Nó học
+- **Repo LỚN thật (monorepo Bow, Flutter)** → genome **CÓ** tạo khác biệt. Nó học
   được tri thức cross-cutting không nằm gọn trong một file, ví dụ: *"thêm service phải
   cập nhật 3 nơi: locator.dart + base_vm.dart + VM"*, *"repo dùng AutoRoute, thêm route
   phải regen .gr.dart"*. Trong A/B, kế hoạch **có genome** nhắc đúng `locator.dart` +

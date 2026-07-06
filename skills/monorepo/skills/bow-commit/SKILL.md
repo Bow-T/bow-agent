@@ -1,9 +1,9 @@
 ---
-name: octopus-commit
-description: Commit and push changes following the <PROJECT_KEY> "Octopus Mode" pipeline — staged safety scan (RLS/CORS/secrets), Flutter static analysis, strict Conventional-Commit message with Jira ref, then push. Use when the user says "octopus commit", "commit + push", "push + commit", "đẩy code chuẩn octopus", or asks to commit/push on this repo.
+name: bow-commit
+description: Commit and push changes following the <PROJECT_KEY> "Bow Mode" pipeline — staged safety scan (RLS/CORS/secrets), Flutter static analysis, strict Conventional-Commit message with Jira ref, then push. Use when the user says "bow commit", "commit + push", "push + commit", "đẩy code chuẩn bow", or asks to commit/push on this repo.
 ---
 
-# Octopus Mode — Commit & Push
+# Bow Mode — Commit & Push
 
 Automates the project's commit pipeline. Run the steps **in order** and STOP on
 any failure (fix, then resume). Do not skip the safety scan or the analyzer.
@@ -20,7 +20,7 @@ any failure (fix, then resume). Do not skip the safety scan or the analyzer.
 
 ## 1. Safety scan (RLS / CORS / secrets) — BLOCKING
 ```bash
-bash scripts/octopus-commit.sh
+bash scripts/bow-commit.sh
 ```
 This runs `scripts/check-quest.sh --staged` (RLS FK-ownership, `security_invoker`
 views, CORS wildcards, secrets) + branch-name check + `fvm flutter analyze` +
@@ -28,7 +28,7 @@ views, CORS wildcards, secrets) + branch-name check + `fvm flutter analyze` +
 > If it exits non-zero, STOP, extract the finding (file:line), fix the code, re-stage, re-run. Do not commit around it.
 
 ## 2. Flutter static analysis (if `apps/mobile` touched)
-`scripts/octopus-commit.sh` already runs it, but if you ran a partial flow:
+`scripts/bow-commit.sh` already runs it, but if you ran a partial flow:
 ```bash
 cd apps/mobile && fvm flutter analyze
 ```
@@ -87,7 +87,7 @@ The repo also ships `scripts/agent-commit-push.sh` which automates stage → tic
 or the message, and use the script only when the user wants the fully-automated path.
 
 ## 4b. Self-verify the quest checklist — MANDATORY, do NOT defer to the user
-Step 1 (`scripts/octopus-commit.sh`) already prints the `scripts/quest-checklist.sh`
+Step 1 (`scripts/bow-commit.sh`) already prints the `scripts/quest-checklist.sh`
 preview. **Do not just let that scroll past.** READ it, then fill in the
 "Pre-commit preview" rubric from `.claude/CLAUDE.md` (§ 📝) yourself — the user
 should never have to tick a box by hand. For **every** row:
@@ -108,5 +108,5 @@ READY` proceeds to push.
 Summarise: branch, commit hash + subject, files/insertions/deletions, push result,
 and the GitLab MR-create URL printed by the push. Include the filled rubric from
 § 4b (or a one-line "rubric: READY <pct>%" pointer if already shown above). Per
-Octopus Mode, one branch = one MR; do NOT self-merge — assign review to a teammate
+Bow Mode, one branch = one MR; do NOT self-merge — assign review to a teammate
 (Hieu / Tuan).

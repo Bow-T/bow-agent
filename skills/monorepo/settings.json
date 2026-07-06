@@ -2,7 +2,7 @@
   "permissions": {
     "allow": [
       "Bash(bash scripts/check-quest.sh*)",
-      "Bash(bash scripts/octopus-commit.sh*)",
+      "Bash(bash scripts/bow-commit.sh*)",
       "Bash(bash scripts/quest-checklist.sh*)",
       "mcp__jira__jira_get_visible_projects",
       "mcp__jira__jira_search_issues",
@@ -26,7 +26,7 @@
       "mcp__supabase__list_projects",
       "mcp__codemagic__wait_for_build",
       "mcp__codemagic__trigger_build",
-      "Edit(/.claude/skills/octopus-commit/**)",
+      "Edit(/.claude/skills/bow-commit/**)",
       "Bash(pbcopy)",
       "Bash(chmod +x .claude/hooks/guard-commit-branch.sh .claude/hooks/self-verify-rubric.sh)",
       "Bash(python3 -c 'import json; json.load\\(open\\(\".claude/settings.json\"\\)\\); print\\(\"✓ valid JSON\"\\)')",
