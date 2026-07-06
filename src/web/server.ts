@@ -12,6 +12,7 @@ import { generateProfile } from '../profiles/generate.js';
 import { config } from '../config/env.js';
 import { createSession, getSession, removeSession } from './session.js';
 import { loadClaudeCodeMcp } from '../tools/mcp.js';
+import { parseJiraRef } from '../input/jira-ref.js';
 
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -48,9 +49,20 @@ app.post('/api/run', async (req, res) => {
 
     const workdir = cwd || process.cwd();
 
-    if (jiraRef && !config.jiraConfigured) {
-      res.status(400).json({ error: 'Có Jira ref nhưng chưa cấu hình JIRA_* trong .env.' });
-      return;
+    let activeJiraRef = jiraRef;
+    if (!activeJiraRef && text) {
+      const parsed = parseJiraRef(text);
+      if (parsed.kind !== 'none') {
+        activeJiraRef = text;
+      }
+    }
+
+    if (activeJiraRef && !config.jiraConfigured) {
+      const isPureJiraRef = text ? text.trim() === activeJiraRef.trim() : true;
+      if (isPureJiraRef || jiraRef) {
+        res.status(400).json({ error: 'Có Jira ref nhưng chưa cấu hình JIRA_* trong .env.' });
+        return;
+      }
     }
 
     // Parse PDF (base64) → text, gộp vào docs.

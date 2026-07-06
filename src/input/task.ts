@@ -39,8 +39,16 @@ export async function buildTaskBrief(input: TaskInput): Promise<string | null> {
   const sections: string[] = [];
 
   // Jira: bóc URL/key thành ticket/board/project rồi hướng dẫn agent đọc đúng.
-  if (input.jiraRef) {
-    const ref = parseJiraRef(input.jiraRef);
+  let activeJiraRef = input.jiraRef;
+  if (!activeJiraRef && input.text) {
+    const parsed = parseJiraRef(input.text);
+    if (parsed.kind !== 'none') {
+      activeJiraRef = input.text;
+    }
+  }
+
+  if (activeJiraRef) {
+    const ref = parseJiraRef(activeJiraRef);
     if (ref.kind === 'ticket' && ref.ticketKey) {
       sections.push(
         `## Jira ticket: ${ref.ticketKey}\n` +
@@ -56,7 +64,7 @@ export async function buildTaskBrief(input: TaskInput): Promise<string | null> {
         `## Jira project: ${ref.projectKey}\n→ Chưa rõ ticket cụ thể — hỏi tôi ticket/board cần làm.`,
       );
     } else {
-      sections.push(`## Jira (không bóc được ref rõ ràng từ: ${input.jiraRef})`);
+      sections.push(`## Jira (không bóc được ref rõ ràng từ: ${activeJiraRef})`);
     }
   }
 
