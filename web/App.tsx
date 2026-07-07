@@ -3,6 +3,7 @@ import { PixelSelect } from './PixelSelect.js';
 import { NeuralBrain } from './NeuralBrain.js';
 import { Markdown } from './Markdown.js';
 import { QuestionCard } from './QuestionCard.js';
+import { Icon, type IconName } from './Icon.js';
 import type {
   ChatItem,
   DetectedSource,
@@ -11,10 +12,25 @@ import type {
   Mode,
   PendingApproval,
   PendingQuestion,
+  ToolDetail,
   WebEvent,
 } from './types.js';
 
-type Theme = 'light' | 'dark' | 'simple';
+type Theme = 'light' | 'dark';
+
+/** Một node trong Activity Log / Star Chart. `ops` & `approval` phục vụ khung chi tiết mở rộng. */
+interface ActivityNode {
+  id: string;
+  type: string;
+  label: string;
+  detail?: string;
+  active?: boolean;
+  count?: number;
+  /** Các thao tác con (khi node là nhóm tool) — hiển thị từng lệnh/file/kết quả. */
+  ops?: ToolDetail[];
+  /** Thông tin yêu cầu duyệt (khi node là 'approval'). */
+  approval?: PendingApproval;
+}
 
 let seq = 0;
 const nextId = () => `${Date.now()}-${seq++}`;
@@ -50,14 +66,16 @@ async function readImage(file: File): Promise<ImageAttachment> {
  * - target 'task': điền vào ô mô tả task.
  * - target 'jira': đưa con trỏ vào ô Jira (điền text gợi ý làm placeholder hành động).
  */
-const QUICK_PROMPTS: { label: string; text: string }[] = [
-  { label: '🐛 Sửa bug từ Jira', text: 'Hãy đọc và giải quyết ticket Jira: ' },
+const QUICK_PROMPTS: { icon: IconName; label: string; text: string }[] = [
+  { icon: 'bug', label: 'Sửa bug từ Jira', text: 'Hãy đọc và giải quyết ticket Jira: ' },
   {
-    label: '💡 Làm theo đề xuất',
+    icon: 'lamp',
+    label: 'Làm theo đề xuất',
     text: 'Phân tích vấn đề, đề xuất hướng làm rồi trình bày kế hoạch để tôi duyệt trước khi thực thi.',
   },
   {
-    label: '📖 Giải thích codebase',
+    icon: 'book',
+    label: 'Giải thích codebase',
     text: 'Đọc và giải thích cấu trúc dự án này: các module chính, luồng dữ liệu, và điểm cần lưu ý.',
   },
 ];
@@ -71,6 +89,8 @@ export function App() {
   const [effort, setEffort] = useState(() => localStorage.getItem('bow-effort') || 'high');
   // Bước (điểm trên não neuron) đang được người dùng bấm chọn để xem chi tiết.
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
+  // Item Activity Log đang mở rộng để xem chi tiết (từng thao tác/lệnh/kết quả).
+  const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   const [language, setLanguage] = useState(() => localStorage.getItem('bow-language') || 'vi');
   const [selectedMcps, setSelectedMcps] = useState<string[]>(() => {
     try {
@@ -268,9 +288,21 @@ export function App() {
     mcpServers?: string[];
   } | null>(null);
   const [detected, setDetected] = useState<DetectedSource | null>(null);
-  const [theme, setTheme] = useState<Theme>(
-    () => (localStorage.getItem('bow-theme') as Theme) || 'light',
-  );
+  const [theme, setTheme] = useState<Theme>(() => {
+    // Lần đầu: theo cài đặt hệ điều hành. Sau đó ưu tiên lựa chọn user đã lưu.
+    const saved = localStorage.getItem('bow-theme') as Theme | null;
+    if (saved === 'light' || saved === 'dark') return saved;
+    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  });
+
+  // Đồng hồ UTC sống ở header (chi tiết "bảng điều khiển đài quan sát").
+  const [utc, setUtc] = useState('');
+  useEffect(() => {
+    const tick = () => setUtc(new Date().toISOString().slice(11, 19));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, []);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const [isScrolled, setIsScrolled] = useState(false);
@@ -372,8 +404,8 @@ export function App() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [items, pending]);
 
-  const addItem = (kind: ChatItem['kind'], text: string) =>
-    setItems((prev) => [...prev, { id: nextId(), kind, text }]);
+  const addItem = (kind: ChatItem['kind'], text: string, tool?: ChatItem['tool']) =>
+    setItems((prev) => [...prev, { id: nextId(), kind, text, tool }]);
 
   async function onFiles(files: FileList | null) {
     if (!files) return;
@@ -517,7 +549,31 @@ export function App() {
           addItem('agent', ev.text);
           break;
         case 'tool':
-          addItem('tool', ev.describe);
+          // Dedup theo toolId: replay lịch sử / 2 EventSource chồng lấn có thể giao
+          // cùng một sự kiện tool nhiều lần → tránh nhân đôi dòng ở Activity Log.
+          setItems((prev) =>
+            ev.id && prev.some((it) => it.kind === 'tool' && it.tool?.toolId === ev.id)
+              ? prev
+              : [
+                  ...prev,
+                  {
+                    id: nextId(),
+                    kind: 'tool',
+                    text: ev.describe,
+                    tool: { toolId: ev.id, name: ev.name, summary: ev.summary },
+                  },
+                ],
+          );
+          break;
+        case 'tool-result':
+          // Khớp kết quả về đúng item tool (theo toolId) để hiện "→ ...".
+          setItems((prev) =>
+            prev.map((it) =>
+              it.kind === 'tool' && it.tool?.toolId === ev.toolId
+                ? { ...it, tool: { ...it.tool, result: ev.text, resultError: ev.isError } }
+                : it,
+            ),
+          );
           break;
         case 'result':
           addItem(
@@ -530,21 +586,33 @@ export function App() {
           addItem('error', `Kết thúc bất thường: ${ev.subtype}`);
           break;
         case 'approval-request':
-          setPending((prev) => [
-            ...prev,
-            {
-              id: ev.id,
-              toolName: ev.toolName,
-              input: ev.input,
-              title: ev.title,
-              description: ev.description,
-              blockedPath: ev.blockedPath,
-              decisionReason: ev.decisionReason,
-            },
-          ]);
+          // Dedup theo id: replay lịch sử hoặc 2 EventSource chồng lấn (StrictMode /
+          // reconnect) có thể giao CÙNG một approval-request nhiều lần → nếu chỉ append
+          // sẽ hiện thẻ duyệt double. Bỏ qua khi id đã có trong hàng chờ.
+          setPending((prev) =>
+            prev.some((p) => p.id === ev.id)
+              ? prev
+              : [
+                  ...prev,
+                  {
+                    id: ev.id,
+                    toolName: ev.toolName,
+                    input: ev.input,
+                    title: ev.title,
+                    description: ev.description,
+                    blockedPath: ev.blockedPath,
+                    decisionReason: ev.decisionReason,
+                  },
+                ],
+          );
           break;
         case 'question-request':
-          setQuestions((prev) => [...prev, { id: ev.id, questions: ev.questions }]);
+          // Dedup theo id (xem giải thích ở approval-request) — tránh câu hỏi double.
+          setQuestions((prev) =>
+            prev.some((q) => q.id === ev.id)
+              ? prev
+              : [...prev, { id: ev.id, questions: ev.questions }],
+          );
           break;
         case 'conversation':
           // session_id THẬT của SDK. Lưu để lượt sau gửi lại làm conversationId →
@@ -675,7 +743,7 @@ export function App() {
   }
 
   const buildActivityNodes = () => {
-    const nodes: { id: string; type: string; label: string; detail?: string; active?: boolean; count?: number }[] = [];
+    const nodes: ActivityNode[] = [];
 
     if (items.length > 0 || running) {
       nodes.push({
@@ -686,10 +754,17 @@ export function App() {
       });
     }
 
-    // Bộ tích lũy các tool thông thường (đọc/tìm/sửa code...)
+    // Bộ tích lũy các tool thông thường (đọc/tìm/sửa code...) — giữ cả bản ĐẦY ĐỦ
+    // từng thao tác (ops) để mở rộng xem "đã chạy lệnh gì / sửa file nào".
     let tempToolsCount: Record<string, number> = {};
     let tempToolsActive = false;
     let tempToolsIds: string[] = [];
+    let tempOps: ToolDetail[] = [];
+    // Số thứ tự nhóm trong lượt build. Dùng làm mỏ neo id BỀN cho node nhóm:
+    // id không được phụ thuộc phần tử đầu (nó đổi khi có result/agent phụ xen
+    // giữa gây flush), nếu không node sẽ đổi id mỗi lần stream và panel mở-rộng
+    // tự sập vì expandedLogId không còn khớp node.id.
+    let groupSeq = 0;
 
     const flushTempTools = () => {
       if (tempToolsIds.length > 0) {
@@ -697,44 +772,48 @@ export function App() {
           .map(([txt, count]) => `• ${txt} (x${count})`)
           .join('\n');
         nodes.push({
-          id: 'grouped-' + tempToolsIds[0],
+          id: 'grouped-' + groupSeq++,
           type: 'tool', // Hành tinh xanh lá đại diện cho nhóm
           label: `⚙️ Xử lý mã nguồn (${tempToolsIds.length} thao tác)`,
           detail: `Chi tiết các thao tác thực hiện:\n${details}`,
           active: tempToolsActive,
+          ops: tempOps,
         });
         tempToolsIds = [];
         tempToolsActive = false;
         tempToolsCount = {};
+        tempOps = [];
       }
     };
 
     items.forEach((it) => {
       if (it.kind === 'tool') {
         const isAgentCall = it.text.includes('agent phụ:');
-        
+
         if (isAgentCall) {
           // Dồn các tool thường tích lũy trước đó trước khi gọi agent phụ
           flushTempTools();
-          
+
           const match = it.text.match(/agent phụ:\s*([a-zA-Z0-9_-]+)/i);
           const agentName = match ? match[1] : 'Subagent';
-          
+
           nodes.push({
             id: it.id,
             type: 'thinking', // Sao xung tím
             label: `🤖 Gọi Agent phụ: ${agentName}`,
-            detail: it.text,
+            detail: it.tool?.summary || it.text,
             active: false,
+            ops: it.tool ? [it.tool] : undefined,
           });
         } else {
           // Tích lũy các tool đọc, tìm, sửa, chạy lệnh... vào nhóm
           const cleanText = it.text.replace(/ ×\d+$/, '');
           const countMatch = it.text.match(/×(\d+)$/);
           const increment = countMatch ? parseInt(countMatch[1], 10) : 1;
-          
+
           tempToolsCount[cleanText] = (tempToolsCount[cleanText] || 0) + increment;
           tempToolsIds.push(it.id);
+          if (it.tool) tempOps.push(it.tool);
         }
       } else {
         flushTempTools();
@@ -760,12 +839,16 @@ export function App() {
     flushTempTools();
 
     pending.forEach((p) => {
+      const bits = [p.title, p.description, p.blockedPath && `Đường dẫn bị chặn: ${p.blockedPath}`, p.decisionReason]
+        .filter(Boolean)
+        .join('\n');
       nodes.push({
         id: p.id,
         type: 'approval',
         label: `Chờ duyệt: ${p.toolName}`,
-        detail: p.title || p.description || '',
+        detail: bits || '',
         active: true,
+        approval: p,
       });
     });
 
@@ -900,21 +983,45 @@ export function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <div className="brand">▚ BOW-AGENT</div>
-        <div className="topbar-right">
-          <div className="meta">
-            <span style={{ color: accumulatedCost > 2 ? 'var(--red)' : 'inherit' }}>
-              Tích lũy: ${accumulatedCost.toFixed(4)}
+        <div className="brand">
+          <span className="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" fill="none">
+              <circle cx="16" cy="16" r="10.5" stroke="currentColor" strokeWidth="1.6" />
+              <path d="M16 3.5v25M3.5 16h25" stroke="currentColor" strokeWidth="1" />
+              <circle cx="16" cy="16" r="2.6" fill="currentColor" />
+            </svg>
+          </span>
+          <span className="brand-name">BOW</span>
+          <span className="brand-tag">Observatory</span>
+        </div>
+        <div className="obs-readouts">
+          <span className="readout" title="Giờ UTC">
+            <span className="rl">UTC</span>
+            <span className="rv">{utc}</span>
+          </span>
+          <span className="readout" title="Chi phí tích lũy phiên này">
+            <span className="rl">Cost</span>
+            <span className="rv" style={{ color: accumulatedCost > 2 ? 'var(--danger)' : undefined }}>
+              ${accumulatedCost.toFixed(4)}
             </span>
-          </div>
+          </span>
+          <span className="readout" title={mode === 'plan' ? 'Chế độ an toàn — chỉ lập kế hoạch' : 'Chế độ thực thi — hỏi duyệt mọi thao tác ghi'}>
+            <span className="rl">Mode</span>
+            <span className={`rv ${mode === 'plan' ? 'mode-plan' : 'mode-exec'}`}>
+              {mode === 'plan' ? 'PLAN' : 'EXEC'}
+            </span>
+          </span>
+        </div>
+        <div className="topbar-right">
           <div className="lang-select" title="Ngôn ngữ trả lời của agent">
-            <span aria-hidden="true">🌐</span>
+            <span className="lang-icon" aria-hidden="true"><Icon name="lang" size={16} /></span>
             <PixelSelect
               value={language}
               onChange={setLanguage}
+              direction="down"
               options={[
-                { value: 'vi', label: 'VIỆT' },
-                { value: 'en', label: 'ENGLISH' },
+                { value: 'vi', label: 'Tiếng Việt' },
+                { value: 'en', label: 'English' },
               ]}
             />
           </div>
@@ -923,21 +1030,21 @@ export function App() {
             title="Quản lý MCP server (Jira/Supabase/... cho agent)"
             onClick={openMcpPanel}
           >
-            🔌
+            <Icon name="mcp" size={18} />
           </button>
           <button
             className="theme-btn"
-            title={theme === 'light' ? 'Chuyển Dark' : theme === 'dark' ? 'Chuyển Simple' : 'Chuyển Light'}
-            onClick={() => setTheme(theme === 'light' ? 'dark' : theme === 'dark' ? 'simple' : 'light')}
+            title={theme === 'light' ? 'Chuyển giao diện tối' : 'Chuyển giao diện sáng'}
+            onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
           >
-            {theme === 'light' ? '🌙' : theme === 'dark' ? '✦' : '☀'}
+            <Icon name={theme === 'light' ? 'moon' : 'sun'} size={18} />
           </button>
         </div>
       </header>
 
       <div className="main-layout">
         <aside className="sidebar-pipeline">
-          <div className="sidebar-pipeline-title">◈ BẢN ĐỒ VŨ TRỤ HOẠT ĐỘNG</div>
+          <div className="sidebar-pipeline-title">Star Chart</div>
           <div className="neural-net-container">
             <NeuralBrain
               active={running}
@@ -962,14 +1069,14 @@ export function App() {
               <div className={`step-detail step-${sel.type}`}>
                 <div className="step-detail-head">
                   <span className="step-detail-label">
-                    {sel.active ? '⏳ ' : ''}{sel.label}
+                    {sel.active && <Icon name="pending" size={14} className="step-detail-spin" />}{sel.label}
                   </span>
                   <button
                     className="step-detail-close"
                     title="Đóng"
                     onClick={() => setSelectedStepId(null)}
                   >
-                    ✕
+                    <Icon name="close" size={16} />
                   </button>
                 </div>
                 {sel.detail && <div className="step-detail-body" style={{ whiteSpace: 'pre-wrap' }}>{sel.detail}</div>}
@@ -977,42 +1084,127 @@ export function App() {
             );
           })()}
 
-          <div className="sidebar-pipeline-title" style={{ marginTop: '8px', borderTop: 'var(--bd-thin) solid var(--outline)', paddingTop: '10px' }}>
-            ☰ LỊCH SỬ HOẠT ĐỘNG
+          <div className="sidebar-pipeline-title" style={{ marginTop: '4px', borderTop: 'var(--bd-thin) solid var(--outline)', paddingTop: '12px' }}>
+            Activity Log
           </div>
 
           <div className="pipeline-flow" style={{ flex: 1, overflowY: 'auto' }}>
             {pipelineNodes.map((node) => {
               let dotClass = '';
-              let dotIcon = '●';
+              let dotIcon: IconName = 'dot';
               if (node.active) {
                 dotClass = 'active';
-                dotIcon = '⏳';
+                dotIcon = 'pending';
               } else if (node.type === 'result') {
                 dotClass = 'success';
-                dotIcon = '✓';
+                dotIcon = 'success';
               } else if (node.type === 'error') {
                 dotClass = 'error';
-                dotIcon = '✗';
+                dotIcon = 'error';
               } else if (node.type === 'tool') {
-                dotIcon = '🔧';
+                dotIcon = 'tool';
               } else if (node.type === 'approval') {
                 dotClass = 'active';
-                dotIcon = '⛔';
+                dotIcon = 'block';
+              }
+
+              const expanded = expandedLogId === node.id;
+              // Có gì để mở rộng: danh sách thao tác con, detail dài, hoặc thông tin duyệt.
+              const hasDetail =
+                (node.ops && node.ops.length > 0) || !!node.detail || !!node.approval;
+              // Dòng preview 1 hàng khi CHƯA mở. Với node có thao tác con, ưu tiên hiện
+              // thao tác GẦN NHẤT (đã làm gì cụ thể) thay vì dòng tiêu đề "Chi tiết...".
+              let preview = node.detail ? node.detail.split('\n')[0] : '';
+              if (node.ops && node.ops.length > 0) {
+                const last = node.ops[node.ops.length - 1];
+                preview = last.summary ? `${last.name}: ${last.summary}` : last.name;
               }
 
               return (
-                <div key={node.id} className="pipeline-item">
-                  <div className={`pipeline-dot ${dotClass}`}>{dotIcon}</div>
-                  <div className="pipeline-content">
-                    <div className="pipeline-label">{node.label}</div>
-                    {node.detail && <div className="pipeline-detail">{node.detail}</div>}
+                <div
+                  key={node.id}
+                  className={`pipeline-item${hasDetail ? ' clickable' : ''}${expanded ? ' expanded' : ''}`}
+                  onClick={
+                    hasDetail
+                      ? () => setExpandedLogId((prev) => (prev === node.id ? null : node.id))
+                      : undefined
+                  }
+                >
+                  <div className="pipeline-item-row">
+                    <div className={`pipeline-dot ${dotClass}${dotIcon === 'pending' ? ' spin' : ''}`}>
+                      <Icon name={dotIcon} size={14} />
+                    </div>
+                    <div className="pipeline-content">
+                      <div className="pipeline-label">
+                        {node.label}
+                        {hasDetail && (
+                          <span className="pipeline-caret">
+                            <Icon name={expanded ? 'caretDown' : 'caretRight'} size={14} />
+                          </span>
+                        )}
+                      </div>
+                      {!expanded && preview && <div className="pipeline-detail">{preview}</div>}
+                    </div>
+                  </div>
+
+                  {/* Luôn render (không mount/unmount) để animate mở/đóng mượt bằng grid-rows. */}
+                  <div className={`pipeline-expand-wrap${expanded ? ' open' : ''}`} aria-hidden={!expanded}>
+                    <div className="pipeline-expand-inner">
+                      <div className="pipeline-expand" onClick={(e) => e.stopPropagation()}>
+                        {/* Danh sách thao tác con: đã chạy lệnh gì / đọc-sửa file nào + kết quả. */}
+                        {node.ops && node.ops.length > 0 && (
+                          <ul className="op-list">
+                            {node.ops.map((op, i) => (
+                              <li key={op.toolId || i} className={`op-row${op.resultError ? ' op-error' : ''}`}>
+                                <div className="op-head">
+                                  <span className="op-name">{op.name}</span>
+                                  {op.summary && <span className="op-summary">{op.summary}</span>}
+                                </div>
+                                {op.result && (
+                                  <div className="op-result">
+                                    <span className="op-arrow"><Icon name="caretRight" size={13} /></span>
+                                    <Markdown text={op.result} />
+                                  </div>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+
+                        {/* Chi tiết yêu cầu duyệt. */}
+                        {node.approval && (
+                          <div className="approval-detail">
+                            <div>
+                              <b>Tool:</b> {node.approval.toolName}
+                            </div>
+                            {node.approval.title && <div>{node.approval.title}</div>}
+                            {node.approval.description && <div>{node.approval.description}</div>}
+                            {node.approval.blockedPath && (
+                              <div className="op-error"><Icon name="lock" size={13} /> {node.approval.blockedPath}</div>
+                            )}
+                            {node.approval.decisionReason && (
+                              <div className="approval-reason">{node.approval.decisionReason}</div>
+                            )}
+                            <div className="approval-hint">
+                              Bấm nút Cho phép / Từ chối ở khung chat để tiếp tục.
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Node không có ops/approval (start/result/error/agent phụ): hiện detail đầy đủ (markdown). */}
+                        {!node.ops?.length && !node.approval && node.detail && (
+                          <div className="pipeline-expand-text md-compact">
+                            <Markdown text={node.detail} />
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </div>
               );
             })}
             {pipelineNodes.length === 0 && (
-              <div style={{ textAlign: 'center', color: 'var(--muted)', padding: '24px 0', fontFamily: 'VT323', fontSize: '18px' }}>
+              <div style={{ textAlign: 'center', color: 'var(--muted)', padding: '28px 12px', fontSize: '13px', lineHeight: 1.5 }}>
                 Chưa có tiến trình hoạt động
               </div>
             )}
@@ -1022,7 +1214,7 @@ export function App() {
         <div className="chat-container">
           {isScrolled && activeQuery && (
             <div className="chat-pinned-query" key={activeQuery} title={activeQuery}>
-              <span className="pinned-icon">📌</span>
+              <span className="pinned-icon"><Icon name="pin" size={14} /></span>
               <span className="pinned-text">{activeQuery.replace(/\s+/g, ' ')}</span>
             </div>
           )}
@@ -1069,99 +1261,123 @@ export function App() {
             Agent tự nhận diện <b>source</b> từ thư mục repo.
           </div>
         )}
-        {items.map((it) => (
-          <div key={it.id} data-id={it.id} className={`bubble ${it.kind}`}>
-            {it.kind === 'agent' ? <Markdown text={it.text} /> : it.text}
-          </div>
-        ))}
-        {pending.map((p) => (
-          <div key={p.id} className="approval">
-            <div className="approval-head">
-              ⛔ {p.title || `Cần duyệt: ${p.toolName}`}
+        {items.map((it, idx) => {
+          // Dòng tool cuối cùng khi agent đang chạy = tool ĐANG thực thi → gắn class
+          // `running` để CSS hiện spinner quay + chấm nhấp nháy, phân biệt với dòng đã xong.
+          const isLastToolRunning =
+            running &&
+            it.kind === 'tool' &&
+            pending.length === 0 &&
+            questions.length === 0 &&
+            !items.slice(idx + 1).some((n) => n.kind === 'tool');
+          return (
+            <div
+              key={it.id}
+              data-id={it.id}
+              className={`bubble ${it.kind}${isLastToolRunning ? ' running' : ''}`}
+            >
+              {it.kind === 'agent' ? <Markdown text={it.text} /> : it.text}
             </div>
-            <div className="approval-body-custom">
-              {p.description && <div className="approval-desc">{p.description}</div>}
-              {p.blockedPath && (
-                <div className="approval-path">
-                  ⚠️ Đường dẫn bị chặn: <code>{p.blockedPath}</code>
-                </div>
-              )}
-              {p.decisionReason && (
-                <div className="approval-reason">💡 Lý do: {p.decisionReason}</div>
-              )}
-
-              {p.toolName === 'Bash' && typeof p.input.command === 'string' ? (
-                <div className="approval-code-block">
-                  <div className="block-title">Lệnh chạy:</div>
-                  <pre>
-                    <code>{p.input.command}</code>
-                  </pre>
-                </div>
-              ) : p.toolName === 'write_file' || p.toolName === 'write_to_file' ? (
-                <div className="approval-code-block">
-                  <div className="block-title">
-                    Ghi tệp:{' '}
-                    <code>{String(p.input.path || p.input.TargetFile || '')}</code>
-                  </div>
-                  {typeof (p.input.content || p.input.CodeContent) === 'string' && (
-                    <pre>
-                      <code>
-                        {String(p.input.content || p.input.CodeContent).slice(0, 1000)}
-                      </code>
-                    </pre>
-                  )}
-                </div>
-              ) : p.toolName === 'edit_file' || p.toolName === 'replace_file_content' ? (
-                <div className="approval-code-block">
-                  <div className="block-title">
-                    Chỉnh sửa tệp:{' '}
-                    <code>{String(p.input.path || p.input.TargetFile || '')}</code>
-                  </div>
-                  {typeof p.input.TargetContent === 'string' && p.input.TargetContent && (
-                    <>
-                      <div className="diff-label deletion">- Tìm kiếm (cũ):</div>
-                      <pre className="diff-del">
-                        <code>{p.input.TargetContent}</code>
-                      </pre>
-                    </>
-                  )}
-                  {typeof p.input.ReplacementContent === 'string' && p.input.ReplacementContent && (
-                    <>
-                      <div className="diff-label addition">+ Thay thế (mới):</div>
-                      <pre className="diff-add">
-                        <code>{p.input.ReplacementContent}</code>
-                      </pre>
-                    </>
-                  )}
-                </div>
-              ) : (
-                <pre>
-                  <code>{JSON.stringify(p.input, null, 2).slice(0, 1200)}</code>
-                </pre>
-              )}
-            </div>
-            <div className="approval-actions">
-              <button className="btn allow" onClick={() => decide(p, true)}>
-                Cho phép
-              </button>
-              <button className="btn deny" onClick={() => decide(p, false)}>
-                Từ chối
-              </button>
-            </div>
-          </div>
-        ))}
-        {questions.map((q) => (
-          <QuestionCard
-            key={q.id}
-            pending={q}
-            onSubmit={(answers) => answerQuestion(q, answers)}
-            onCancel={() => answerQuestion(q, null)}
-          />
-        ))}
+          );
+        })}
         {running && pending.length === 0 && questions.length === 0 && (
-          <div className="thinking">⏳ Agent đang làm việc…</div>
+          <div className="thinking">
+            Agent đang làm việc
+            <span className="thinking-dots"><i></i><i></i><i></i></span>
+          </div>
         )}
       </div>
+
+      {/* Bến neo hành động — khung duyệt / câu hỏi ghim ngay trên composer, LUÔN
+          hiển thị (không nằm trong vùng cuộn) nên nút bấm không bao giờ bị khuất. */}
+      {(pending.length > 0 || questions.length > 0) && (
+        <div className="chat-action-dock">
+          {pending.map((p) => (
+            <div key={p.id} className="approval">
+              <div className="approval-head">
+                <Icon name="block" size={16} /> {p.title || `Cần duyệt: ${p.toolName}`}
+              </div>
+              <div className="approval-body-custom">
+                {p.description && <div className="approval-desc">{p.description}</div>}
+                {p.blockedPath && (
+                  <div className="approval-path">
+                    <Icon name="warning" size={14} /> Đường dẫn bị chặn: <code>{p.blockedPath}</code>
+                  </div>
+                )}
+                {p.decisionReason && (
+                  <div className="approval-reason"><Icon name="info" size={14} /> Lý do: {p.decisionReason}</div>
+                )}
+
+                {p.toolName === 'Bash' && typeof p.input?.command === 'string' ? (
+                  <div className="approval-code-block">
+                    <div className="block-title">Lệnh chạy:</div>
+                    <pre>
+                      <code>{p.input.command}</code>
+                    </pre>
+                  </div>
+                ) : p.toolName === 'write_file' || p.toolName === 'write_to_file' ? (
+                  <div className="approval-code-block">
+                    <div className="block-title">
+                      Ghi tệp:{' '}
+                      <code>{String(p.input?.path || p.input?.TargetFile || '')}</code>
+                    </div>
+                    {typeof (p.input?.content || p.input?.CodeContent) === 'string' && (
+                      <pre>
+                        <code>
+                          {String(p.input.content || p.input.CodeContent).slice(0, 1000)}
+                        </code>
+                      </pre>
+                    )}
+                  </div>
+                ) : p.toolName === 'edit_file' || p.toolName === 'replace_file_content' ? (
+                  <div className="approval-code-block">
+                    <div className="block-title">
+                      Chỉnh sửa tệp:{' '}
+                      <code>{String(p.input?.path || p.input?.TargetFile || '')}</code>
+                    </div>
+                    {typeof p.input?.TargetContent === 'string' && p.input.TargetContent && (
+                      <>
+                        <div className="diff-label deletion">- Tìm kiếm (cũ):</div>
+                        <pre className="diff-del">
+                          <code>{p.input.TargetContent}</code>
+                        </pre>
+                      </>
+                    )}
+                    {typeof p.input?.ReplacementContent === 'string' && p.input.ReplacementContent && (
+                      <>
+                        <div className="diff-label addition">+ Thay thế (mới):</div>
+                        <pre className="diff-add">
+                          <code>{p.input.ReplacementContent}</code>
+                        </pre>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <pre>
+                    <code>{JSON.stringify(p.input ?? {}, null, 2).slice(0, 1200)}</code>
+                  </pre>
+                )}
+              </div>
+              <div className="approval-actions">
+                <button className="btn allow" onClick={() => decide(p, true)}>
+                  Cho phép
+                </button>
+                <button className="btn deny" onClick={() => decide(p, false)}>
+                  Từ chối
+                </button>
+              </div>
+            </div>
+          ))}
+          {questions.map((q) => (
+            <QuestionCard
+              key={q.id}
+              pending={q}
+              onSubmit={(answers) => answerQuestion(q, answers)}
+              onCancel={() => answerQuestion(q, null)}
+            />
+          ))}
+        </div>
+      )}
 
       <div
         className="composer"
@@ -1172,18 +1388,29 @@ export function App() {
         }}
       >
         <div className="controls">
-          <label>
+          <div className="field">
             Chế độ:
-            <PixelSelect
-              value={mode}
-              onChange={(v) => setMode(v as Mode)}
-              disabled={running}
-              options={[
-                { value: 'plan', label: 'KẾ HOẠCH' },
-                { value: 'execute', label: 'THỰC THI' },
-              ]}
-            />
-          </label>
+            <div className="mode-segment" role="group" aria-label="Chế độ chạy">
+              <button
+                type="button"
+                className={`seg${mode === 'plan' ? ' active' : ''}`}
+                disabled={running}
+                onClick={() => setMode('plan')}
+                title="An toàn — chỉ đọc & lập kế hoạch, không sửa file"
+              >
+                Kế hoạch
+              </button>
+              <button
+                type="button"
+                className={`seg seg-exec${mode === 'execute' ? ' active' : ''}`}
+                disabled={running}
+                onClick={() => setMode('execute')}
+                title="Thực thi thật — mọi thao tác ghi đều hỏi duyệt"
+              >
+                Thực thi
+              </button>
+            </div>
+          </div>
           <label>
             Model:
             <PixelSelect
@@ -1191,9 +1418,9 @@ export function App() {
               onChange={setSelectedModel}
               disabled={running}
               options={[
-                { value: 'claude-opus-4-8', label: 'OPUS 4.8' },
-                { value: 'claude-sonnet-5', label: 'SONNET 5' },
-                { value: 'claude-haiku-4-5-20251001', label: 'HAIKU 4.5' },
+                { value: 'claude-opus-4-8', label: 'Opus 4.8' },
+                { value: 'claude-sonnet-5', label: 'Sonnet 5' },
+                { value: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
               ]}
             />
           </label>
@@ -1204,8 +1431,8 @@ export function App() {
               onChange={setProfile}
               disabled={running}
               options={[
-                { value: 'auto', label: 'AUTO' },
-                { value: 'none', label: 'NONE' },
+                { value: 'auto', label: 'Auto' },
+                { value: 'none', label: 'None' },
               ]}
             />
           </label>
@@ -1216,20 +1443,19 @@ export function App() {
               onChange={setEffort}
               disabled={running}
               options={[
-                { value: 'low', label: 'LOW' },
-                { value: 'medium', label: 'MEDIUM' },
-                { value: 'high', label: 'HIGH' },
-                { value: 'xhigh', label: 'XHIGH' },
-                { value: 'max', label: 'MAX' },
+                { value: 'low', label: 'Low' },
+                { value: 'medium', label: 'Medium' },
+                { value: 'high', label: 'High' },
+                { value: 'xhigh', label: 'Xhigh' },
+                { value: 'max', label: 'Max' },
               ]}
             />
           </label>
-
         </div>
 
         {detected && (
           <div className="detected">
-            🔎 {detected.summary}
+            <Icon name="search" size={14} /> {detected.summary}
             {profile === 'auto' && detected.profile !== 'none' && ` → profile: ${detected.profile}`}
             {detected.profile === 'none' && !detected.empty && (
               <button className="btn genprof" disabled={running} onClick={genProfile}>
@@ -1257,7 +1483,7 @@ export function App() {
               title="Chọn thư mục"
               style={{ padding: '0 12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
             >
-              📁
+              <Icon name="folder" size={18} />
             </button>
           </div>
         </div>
@@ -1266,19 +1492,19 @@ export function App() {
           <div className="attachments">
             {docs.map((d, i) => (
               <span key={`d${i}`} className="chip">
-                📄 {d.name}
+                <Icon name="doc" size={14} /> {d.name}
                 <button onClick={() => setDocs((p) => p.filter((_, j) => j !== i))}>×</button>
               </span>
             ))}
             {pdfs.map((p, i) => (
               <span key={`p${i}`} className="chip">
-                📕 {p.name}
+                <Icon name="pdf" size={14} /> {p.name}
                 <button onClick={() => setPdfs((prev) => prev.filter((_, j) => j !== i))}>×</button>
               </span>
             ))}
             {images.map((im, i) => (
               <span key={`i${i}`} className="chip">
-                🖼 {im.name}
+                <Icon name="image" size={14} /> {im.name}
                 <button onClick={() => setImages((p) => p.filter((_, j) => j !== i))}>×</button>
               </span>
             ))}
@@ -1295,17 +1521,17 @@ export function App() {
                 onClick={() => applyQuickPrompt(qp)}
                 title={qp.text}
               >
-                {qp.label}
+                <Icon name={qp.icon} size={15} /> {qp.label}
               </button>
             ))}
           </div>
         )}
 
-        <div className="row">
+        <div className="composer-input">
           <textarea
             ref={taskRef}
             className="task"
-            placeholder="Mô tả task / đề tài… (Ctrl+Enter để chạy · kéo-thả file/ảnh vào ô này)"
+            placeholder="Mô tả task / đề tài…  ·  Ctrl+Enter để chạy  ·  kéo-thả file/ảnh vào đây"
             value={task}
             onChange={(e) => setTask(e.target.value)}
             onKeyDown={(e) => {
@@ -1314,9 +1540,9 @@ export function App() {
             disabled={running}
             rows={3}
           />
-          <div className="actions">
-            <label className="btn attach">
-              📎
+          <div className="composer-bar">
+            <label className="btn attach" title="Đính kèm tài liệu / ảnh (hoặc kéo-thả vào ô nhập)">
+              <Icon name="attach" size={18} />
               <input
                 type="file"
                 multiple
@@ -1325,6 +1551,15 @@ export function App() {
                 disabled={running}
               />
             </label>
+            <span className="composer-spacer" />
+            <button
+              className="btn clear-chat"
+              onClick={clearChat}
+              disabled={!running && !items.length}
+              title="Xóa lịch sử chat & bắt đầu hội thoại mới (dừng agent nếu đang chạy)"
+            >
+              Xóa chat
+            </button>
             {running ? (
               <button className="btn stop" onClick={stop}>
                 Dừng
@@ -1334,14 +1569,6 @@ export function App() {
                 Chạy
               </button>
             )}
-            <button
-              className="btn clear-chat"
-              onClick={clearChat}
-              disabled={!running && !items.length}
-              title="Xóa lịch sử chat & bắt đầu hội thoại mới (dừng agent nếu đang chạy)"
-            >
-              Xóa chat
-            </button>
           </div>
         </div>
         </div>
@@ -1352,8 +1579,8 @@ export function App() {
         <div className="modal-overlay" onClick={() => setPickerOpen(false)}>
           <div className="modal-content pixel-panel" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <span>📁 Chọn thư mục làm việc</span>
-              <button className="close-btn" onClick={() => setPickerOpen(false)}>×</button>
+              <span className="modal-title"><Icon name="folder" size={16} /> Chọn thư mục làm việc</span>
+              <button className="close-btn" onClick={() => setPickerOpen(false)}><Icon name="close" size={16} /></button>
             </div>
             <div className="modal-body">
               <div className="picker-path-input-row" style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
@@ -1370,12 +1597,12 @@ export function App() {
                 <button className="btn" style={{ padding: '0 16px' }} onClick={() => fetchDirs(pickerPath)}>Đi</button>
               </div>
 
-              {pickerError && <div className="picker-error" style={{ color: 'var(--red)', marginBottom: '10px' }}>⚠️ {pickerError}</div>}
+              {pickerError && <div className="picker-error" style={{ color: 'var(--red)', marginBottom: '10px' }}><Icon name="warning" size={14} /> {pickerError}</div>}
 
               <div className="dirs-list" style={{ maxHeight: '250px', overflowY: 'auto', border: 'var(--bd-thin) solid var(--outline)', padding: '6px', background: 'var(--inset)' }}>
                 {pickerParent !== null && (
                   <div className="dir-item parent-dir" style={{ padding: '6px 8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }} onClick={() => fetchDirs(pickerParent)}>
-                    📁 <span style={{ fontFamily: 'monospace' }}>[..] (Thư mục cha)</span>
+                    <Icon name="folder" size={16} /> <span style={{ fontFamily: 'monospace' }}>[..] (Thư mục cha)</span>
                   </div>
                 )}
                 {pickerDirs.map((dir) => (
@@ -1385,7 +1612,7 @@ export function App() {
                     style={{ padding: '6px 8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
                     onClick={() => fetchDirs(pickerPath + (pickerPath.endsWith('/') || pickerPath.endsWith('\\') ? '' : pickerPath.includes('\\') ? '\\' : '/') + dir)}
                   >
-                    📁 <span style={{ fontFamily: 'monospace' }}>{dir}</span>
+                    <Icon name="folder" size={16} /> <span style={{ fontFamily: 'monospace' }}>{dir}</span>
                   </div>
                 ))}
                 {pickerDirs.length === 0 && <div className="no-subdirs" style={{ padding: '12px', textAlign: 'center', color: 'var(--muted)' }}>Không có thư mục con</div>}
@@ -1417,16 +1644,16 @@ export function App() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="modal-header">
-              <span>🔌 Quản lý MCP server</span>
-              <button className="close-btn" onClick={() => setMcpPanelOpen(false)}>×</button>
+              <span className="modal-title"><Icon name="mcp" size={16} /> Quản lý MCP server</span>
+              <button className="close-btn" onClick={() => setMcpPanelOpen(false)}><Icon name="close" size={16} /></button>
             </div>
             <div className="modal-body">
               {mcpError && (
-                <div className="picker-error" style={{ color: 'var(--red)', marginBottom: '10px' }}>⚠️ {mcpError}</div>
+                <div className="picker-error" style={{ color: 'var(--red)', marginBottom: '10px' }}><Icon name="warning" size={14} /> {mcpError}</div>
               )}
 
               {/* Danh sách MCP hiện có */}
-              <div className="mcp-list-title" style={{ fontSize: '10px', fontFamily: '"Press Start 2P"', color: 'var(--text-2)', marginBottom: '8px' }}>
+              <div className="mcp-list-title" style={{ marginBottom: '8px' }}>
                 ĐÃ CẤU HÌNH ({mcpList.length})
               </div>
               <div className="mcp-list" style={{ maxHeight: '180px', overflowY: 'auto', border: 'var(--bd-thin) solid var(--outline)', padding: '6px', background: 'var(--inset)', marginBottom: '16px' }}>
@@ -1460,7 +1687,7 @@ export function App() {
               </div>
 
               {/* Form thêm mới */}
-              <div className="mcp-list-title" style={{ fontSize: '10px', fontFamily: '"Press Start 2P"', color: 'var(--text-2)', marginBottom: '8px' }}>
+              <div className="mcp-list-title" style={{ marginBottom: '8px' }}>
                 THÊM MCP MỚI (stdio)
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -1512,14 +1739,14 @@ export function App() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="modal-header">
-              <span>🗑 Xóa lịch sử chat</span>
-              <button className="close-btn" onClick={() => setConfirmClearOpen(false)}>×</button>
+              <span className="modal-title"><Icon name="trash" size={16} /> Xóa lịch sử chat</span>
+              <button className="close-btn" onClick={() => setConfirmClearOpen(false)}><Icon name="close" size={16} /></button>
             </div>
             <div className="modal-body">
               <p style={{ margin: 0, lineHeight: 1.6 }}>
                 {running && (
                   <>
-                    ⏹ Agent đang chạy sẽ bị <strong>dừng</strong>.
+                    <Icon name="stopCircle" size={14} /> Agent đang chạy sẽ bị <strong>dừng</strong>.
                     <br />
                   </>
                 )}
