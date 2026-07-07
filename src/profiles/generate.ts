@@ -50,7 +50,7 @@ export async function generateProfile(
   onEvent?: (msg: string) => void,
 ): Promise<GenerateResult> {
   if (!config.hasAuth) {
-    throw new Error('Chưa có auth Claude — điền ANTHROPIC_API_KEY vào .env hoặc login Claude CLI (`claude` → /login).');
+    throw new Error('Chưa đăng nhập Claude CLI — chạy `claude` rồi /login.');
   }
 
   const options: Options = {
@@ -62,19 +62,27 @@ export async function generateProfile(
     settingSources: ['project'],
   };
 
-  let knowledge = '';
+  // Ở permissionMode 'plan', nội dung mô tả repo nằm trong các text block của agent,
+  // KHÔNG phải message.result (result chỉ là câu kết thúc, vd "bạn có muốn lưu không?").
+  // Nên ta GOM các text block; result chỉ dùng làm dự phòng nếu không có text nào.
+  const textChunks: string[] = [];
+  let resultText = '';
   for await (const message of query({ prompt: SCAN_PROMPT, options })) {
     if (message.type === 'assistant') {
       for (const block of message.message.content) {
         if (block.type === 'text' && block.text.trim()) {
-          onEvent?.(block.text.trim());
+          const t = block.text.trim();
+          textChunks.push(t);
+          onEvent?.(t);
         }
       }
     } else if (message.type === 'result' && message.subtype === 'success') {
-      knowledge = message.result.trim();
+      resultText = message.result.trim();
     }
   }
 
+  // Gom text block làm nội dung profile; nếu rỗng thì mới dùng result.
+  const knowledge = textChunks.length ? textChunks.join('\n\n') : resultText;
   if (!knowledge) throw new Error('Agent không sinh được kiến thức từ repo.');
 
   const name = profileNameFromCwd(cwd);

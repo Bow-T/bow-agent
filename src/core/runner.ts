@@ -11,21 +11,11 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from '../config/env.js';
 import { BOW_AGENT_APPEND } from './systemPrompt.js';
-import {
-  loadGenome,
-  expressGenome,
-  expressedIds,
-  recordTaskOutcome,
-  applySelection,
-  saveGenome,
-} from './genome.js';
-import { reflectAndMutate } from './reflect.js';
-import { buildJiraServer, JIRA_READ_TOOLS } from '../tools/jira.js';
 import { loadClaudeCodeMcp, mcpReadToolPatterns, describeTool } from '../tools/mcp.js';
 import { loadPromptSkills } from '../skills/index.js';
-import { buildSkillsServer, BOW_SKILLS_READ_TOOLS } from '../skills/code.js';
 import { loadMonorepoContext } from '../skills/monorepo.js';
 import { buildMonorepoHooks } from '../skills/hooks.js';
+import { buildSubagents } from './subagents.js';
 
 /** Sự kiện tiến độ agent phát ra — CLI/web tự quyết cách hiển thị. */
 export type AgentEvent =
@@ -34,8 +24,6 @@ export type AgentEvent =
   // thẳng chuỗi này nên không cần lặp lại logic mô tả ở frontend.
   | { type: 'tool'; name: string; describe: string }
   | { type: 'result'; text: string; turns: number; outputTokens: number; costUsd: number }
-  // Genome vừa học thêm `added` gen mới về repo sau task (bước phản tư).
-  | { type: 'learned'; added: number }
   | { type: 'error'; subtype: string };
 
 export interface ApprovalMeta {
@@ -52,6 +40,29 @@ export type ApprovalRequest = (
   meta?: ApprovalMeta,
 ) => Promise<boolean>;
 
+/** Một lựa chọn của câu hỏi AskUserQuestion. */
+export interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+/** Một câu hỏi agent gửi qua tool AskUserQuestion. */
+export interface Question {
+  question: string;
+  header: string;
+  multiSelect?: boolean;
+  options: QuestionOption[];
+}
+
+/**
+ * Agent hỏi người dùng (tool AskUserQuestion). Trả về map câu-hỏi → câu-trả-lời
+ * (đúng shape mà harness kỳ vọng: key là text câu hỏi, value là (các) label đã
+ * chọn nối bằng ', '). Trả null = người dùng hủy → tool bị deny.
+ */
+export type QuestionRequest = (
+  questions: Question[],
+) => Promise<Record<string, string> | null>;
+
 export interface RunOptions {
   /** Task brief đã chuẩn hóa (từ input layer). */
   brief: string;
@@ -65,6 +76,11 @@ export interface RunOptions {
   mode: 'plan' | 'execute';
   /** Mức reasoning effort. 'high' hợp cho hầu hết coding/agentic. */
   effort?: Options['effort'];
+  /**
+   * Ngôn ngữ agent dùng để TRẢ LỜI người dùng (không ảnh hưởng code/comment).
+   * 'vi' = Tiếng Việt (mặc định), 'en' = English. Chèn chỉ thị vào system prompt.
+   */
+  language?: 'vi' | 'en';
   /**
    * Kiến thức dự án (project profile) nhồi vào system prompt — giúp agent viết
    * code khớp pattern của repo. Rỗng = agent tổng quát (chỉ dựa CLAUDE.md của repo).
@@ -81,14 +97,6 @@ export interface RunOptions {
    * Rỗng = không dùng MCP.
    */
   mcpServers?: string[];
-  /**
-   * Nạp + tiến hóa "genome" (tri thức đã học về repo này qua các lần chạy trước).
-   * MẶC ĐỊNH TẮT (opt-in): với repo nhỏ/task rõ, genome là chi phí thừa vì model tự
-   * làm đúng. Chỉ đáng bật cho repo LỚN thật, nơi tri thức cross-cutting/cạm-bẫy không
-   * nằm gọn trong một file (vd monorepo: "thêm service phải sửa 3 nơi", "regen .gr.dart").
-   * Xem DESIGN.md §Bật/tắt để biết bằng chứng A/B.
-   */
-  useGenome?: boolean;
   /** Nhận sự kiện tiến độ. CLI in ra terminal; web đẩy qua SSE. */
   onEvent: (event: AgentEvent) => void;
   /**
@@ -97,10 +105,37 @@ export interface RunOptions {
    * (KHÔNG khuyến nghị — chỉ dùng khi caller cố ý bỏ cổng).
    */
   onApproval?: ApprovalRequest;
+  /**
+   * Agent hỏi người dùng (tool AskUserQuestion) — hoạt động ở MỌI mode (kể cả
+   * plan). Web render UI câu hỏi rồi trả lựa chọn; rỗng = không xử lý, để SDK
+   * áp hành vi mặc định (thường là hủy).
+   */
+  onQuestion?: QuestionRequest;
   /** Tín hiệu hủy (dừng agent giữa chừng). */
   abortSignal?: AbortSignal;
   /** Model sử dụng cho agent. */
   model?: string;
+  /** ID phiên chạy cũ cần khôi phục lịch sử chat. */
+  resumeSessionId?: string;
+  /**
+   * Nhận session_id THẬT mà SDK dùng để lưu lịch sử (.jsonl) — phát ra từ message
+   * `system/init` ngay đầu mỗi lượt query. Caller LƯU id này để lượt sau truyền lại
+   * qua resumeSessionId, nhờ đó agent nhớ được toàn bộ hội thoại trước. KHÔNG tự sinh
+   * id rồi ép cho SDK — SDK có thể bỏ qua, khiến resume trỏ vào phiên không tồn tại.
+   */
+  onSessionId?: (sessionId: string) => void;
+  /**
+   * Bật multi-agent: nhồi bộ subagent chuẩn (reviewer/verifier/impact-scout) vào
+   * options.agents để agent chính giao việc qua tool `Agent`. MẶC ĐỊNH TẮT (opt-in):
+   * tắt thì runner giữ nguyên single-agent, hành vi không đổi. Subagent đều read-only
+   * / chỉ chạy lệnh kiểm chứng — mọi thay đổi thật vẫn do agent chính làm & qua onApproval.
+   */
+  useSubagents?: boolean;
+  /**
+   * Subagent riêng của profile (gộp với bộ chuẩn, profile ghi đè nếu trùng tên).
+   * Chỉ có tác dụng khi useSubagents = true. Rỗng = chỉ dùng bộ chuẩn.
+   */
+  profileSubagents?: Record<string, AgentDefinition>;
 }
 /** Tìm đường dẫn tuyệt đối của binary claude để bypass lỗi spawn của SDK trong môi trường ESM/tsx. */
 function findClaudeCodeExecutable(workspaceRoot: string): string | undefined {
@@ -139,12 +174,10 @@ function findClaudeCodeExecutable(workspaceRoot: string): string | undefined {
  * hiển thị (onEvent) và cách duyệt (onApproval).
  */
 export async function runAgent(opts: RunOptions): Promise<string | null> {
-  // Cần auth: hoặc ANTHROPIC_API_KEY, hoặc đã login Claude Code CLI (~/.claude).
+  // Cần auth: đã login Claude Code CLI (~/.claude). Agent SDK spawn `claude` dùng login đó.
   if (!config.hasAuth) {
     throw new Error(
-      'Chưa có cách xác thực Claude. Chọn 1 trong 2:\n' +
-        '  • Điền ANTHROPIC_API_KEY vào .env (console.anthropic.com), HOẶC\n' +
-        '  • Đăng nhập Claude CLI: chạy `claude` rồi /login (dùng gói Claude sẵn có, không cần API key).',
+      'Chưa đăng nhập Claude CLI. Chạy `claude` rồi /login (dùng gói Claude sẵn có, không cần API key).',
     );
   }
 
@@ -155,32 +188,37 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   const cc = opts.mcpServers && opts.mcpServers.length > 0
     ? loadClaudeCodeMcp(opts.mcpServers)
     : { servers: {}, names: [] as string[] };
-  // (2) Jira REST server riêng của bow-agent — chỉ dùng nếu người dùng chọn 'jira'
-  //     nhưng Claude Code CHƯA có MCP jira và JIRA_* đã cấu hình trong .env.
-  const hasCcJira = cc.names.some((n) => n.includes('jira'));
-  const wantJira = opts.mcpServers && opts.mcpServers.includes('jira');
-  const jiraServer = wantJira && !hasCcJira ? buildJiraServer() : null;
 
-  const mcpServers = {
-    ...cc.servers,
-    ...(jiraServer ? { jira: jiraServer } : {}),
-    // Skill kèm code của bow-agent — server nội bộ, luôn có mặt cho mọi repo.
-    'bow-skills': buildSkillsServer(),
-  };
+  const mcpServers = { ...cc.servers };
   const hasMcp = Object.keys(mcpServers).length > 0;
 
-  // Tool đọc tự cho phép; tool ghi/side-effect mặc định hỏi.
+  // Tool đọc tự cho phép; tool ghi/side-effect mặc định hỏi. Để chạy test/kiểm chứng,
+  // agent dùng Bash — đã có cổng SAFE_COMMANDS bên dưới (npm test, flutter test...).
+  // Multi-agent (opt-in): bộ subagent chuẩn + subagent riêng profile. Chỉ dựng khi bật.
+  const subagents = opts.useSubagents ? buildSubagents(opts.profileSubagents) : undefined;
+
+  // Lưu ý: KHÔNG đưa AskUserQuestion vào allowedTools — entry "trần" trong
+  // allowedTools auto-approve tool TRƯỚC khi tới canUseTool, khiến câu hỏi không
+  // bao giờ tới UI. Để nó rơi vào canUseTool (xử lý bên dưới) để render UI.
   const allowedTools = [
     'Read',
     'Grep',
     'Glob',
-    ...(jiraServer ? JIRA_READ_TOOLS : []),
+    // Cho agent chính spawn subagent không kẹt cổng duyệt — subagent đều read-only /
+    // chỉ chạy lệnh kiểm chứng nên an toàn. Chỉ mở khi bật multi-agent.
+    ...(subagents ? ['Agent'] : []),
     ...mcpReadToolPatterns(cc.names), // read tools của MCP Claude Code (write phải duyệt)
-    ...BOW_SKILLS_READ_TOOLS, // skill kèm code chỉ-đọc/kiểm-chứng (vd run_tests)
   ];
 
-  // System prompt = quy trình chung + skill dùng chung + (nếu có) kiến thức dự án + genome.
+  // System prompt = quy trình chung + skill dùng chung + (nếu có) kiến thức dự án.
   let appendText = BOW_AGENT_APPEND;
+  // Ngôn ngữ trả lời người dùng (mặc định Tiếng Việt). Đặt SỚM để ưu tiên cao.
+  // Chỉ áp cho văn bản trò chuyện — KHÔNG dịch code, comment, hay tên định danh.
+  const langInstruction =
+    opts.language === 'en'
+      ? '# Response language\n\nAlways respond to the user in English. This applies to your conversational replies only — do not translate code, code comments, or identifiers.'
+      : '# Ngôn ngữ trả lời\n\nLuôn trả lời người dùng bằng tiếng Việt. Chỉ áp dụng cho phần trò chuyện — KHÔNG dịch code, comment trong code, hay tên định danh.';
+  appendText = `${langInstruction}\n\n---\n\n${appendText}`;
   // Skill prompt-only của bow-agent (skills/prompt/*.md) — áp cho mọi repo.
   const promptSkills = loadPromptSkills();
   if (promptSkills) {
@@ -194,24 +232,17 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   if (opts.projectProfile) {
     appendText += `\n\n---\n\n# Kiến thức dự án hiện tại\n\n${opts.projectProfile}`;
   }
-  // Genome: tri thức ĐỘNG đúc kết qua các lần chạy trước trên chính repo này.
-  // Khác projectProfile (tĩnh, sinh 1 lần) — genome tiến hóa theo từng task.
-  // Ghi lại gen ĐÃ biểu hiện để sau task gán công/tội (chọn lọc fitness).
-  let usedGeneIds: string[] = [];
-  if (opts.useGenome === true) {
-    const genome = loadGenome(opts.cwd);
-    const genomeText = expressGenome(genome);
-    if (genomeText) {
-      appendText += `\n\n---\n\n${genomeText}`;
-      usedGeneIds = expressedIds(genome);
-    }
-  }
 
   const SAFE_COMMANDS = [
     /^fvm flutter analyze/,
     /^fvm flutter test/,
+    /^flutter analyze/,
+    /^flutter test/,
     /^bun test/,
     /^npm test/,
+    /^npm run test/,
+    /^(pnpm|yarn) test/,
+    /^(pnpm|yarn) run test/,
     /^tsc --noEmit/,
     /^git status/,
     /^git diff/,
@@ -229,6 +260,11 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     // Bật Agent Skills: SDK tự nạp .claude/skills/* của repo đích (nhờ settingSources
     // 'project' bên dưới) và mở tool 'Skill'. Agent tự chọn skill theo mô tả.
     skills: 'all',
+    // Khôi phục phiên chạy cũ nếu có (agent nhớ hội thoại trước). Lượt đầu KHÔNG ép
+    // sessionId — để SDK tự sinh id đáng tin, ta bắt lại qua message system/init bên dưới.
+    ...(opts.resumeSessionId ? { resume: opts.resumeSessionId } : {}),
+    // Multi-agent (opt-in): định nghĩa subagent để agent chính giao việc qua tool Agent.
+    ...(subagents ? { agents: subagents } : {}),
     ...(monorepoHooks ? { hooks: monorepoHooks } : {}),
     pathToClaudeCodeExecutable: findClaudeCodeExecutable(opts.cwd || process.cwd()),
     ...(opts.abortSignal ? { abortController: toController(opts.abortSignal) } : {}),
@@ -236,10 +272,33 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     // Giữ system prompt gốc của Claude Code + nạp CLAUDE.md của repo, rồi append quy trình + profile.
     systemPrompt: { type: 'preset', preset: 'claude_code', append: appendText },
     settingSources: ['project'],
-    // Ở chế độ execute: mọi tool ghi/side-effect phải qua cổng duyệt (nếu có onApproval).
-    ...(opts.mode === 'execute' && opts.onApproval
+    // Gắn canUseTool khi cần xử lý câu hỏi (mọi mode) hoặc cổng duyệt (execute).
+    // AskUserQuestion được xử lý riêng ở MỌI mode; các tool ghi chỉ qua cổng ở execute.
+    ...(opts.onQuestion || (opts.mode === 'execute' && opts.onApproval)
       ? {
           canUseTool: async (toolName, input, sdkOpts) => {
+            // AskUserQuestion: render UI câu hỏi, gắn câu trả lời vào input trả cho agent.
+            if (toolName === 'AskUserQuestion' && opts.onQuestion) {
+              const questions = Array.isArray((input as { questions?: unknown }).questions)
+                ? ((input as { questions: Question[] }).questions)
+                : [];
+              const answers = await opts.onQuestion(questions);
+              if (answers === null) {
+                return {
+                  behavior: 'deny' as const,
+                  message: 'Người dùng đã huỷ câu hỏi. Hãy hỏi lại theo hướng khác hoặc tiếp tục.',
+                };
+              }
+              // Chèn answers vào input — harness đọc field này để dựng tool_result.
+              return { behavior: 'allow' as const, updatedInput: { ...input, answers } };
+            }
+
+            // Không ở chế độ duyệt (vd plan mode): mọi tool tới đây đều cho phép.
+            // (Plan mode đã tự chặn tool ghi trước khi tới canUseTool.)
+            if (!(opts.mode === 'execute' && opts.onApproval)) {
+              return { behavior: 'allow' as const, updatedInput: input };
+            }
+
             // Tự động duyệt các lệnh bash kiểm tra/test an toàn
             if (toolName === 'Bash' && typeof input.command === 'string') {
               const cmd = input.command.trim();
@@ -280,18 +339,27 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
       : promptText;
 
   let finalText: string | null = null;
-  // Gom dữ liệu để phản tư SAU khi vòng query đóng (tránh spawn query lồng nhau
-  // giữa lúc đang lặp). Chỉ đặt khi execute + genome bật.
-  let reflectInput: { success: boolean } | null = null;
 
   for await (const message of query({ prompt, options })) {
     switch (message.type) {
+      case 'system': {
+        // system/init phát ngay đầu mỗi lượt, mang session_id THẬT mà SDK dùng để lưu
+        // lịch sử. Báo ra ngoài để caller lưu → lượt sau resume đúng phiên (agent nhớ).
+        if (message.subtype === 'init') {
+          opts.onSessionId?.(message.session_id);
+        }
+        break;
+      }
       case 'assistant': {
         for (const block of message.message.content) {
           if (block.type === 'text' && block.text.trim()) {
             opts.onEvent({ type: 'text', text: block.text.trim() });
           } else if (block.type === 'tool_use') {
-            opts.onEvent({ type: 'tool', name: block.name, describe: describeTool(block.name) });
+            let describe = describeTool(block.name);
+            if (block.name === 'Agent' && block.input && typeof block.input === 'object' && 'agent' in block.input) {
+              describe = `🤖 giao việc cho agent phụ: ${block.input.agent}…`;
+            }
+            opts.onEvent({ type: 'tool', name: block.name, describe });
           }
         }
         break;
@@ -310,53 +378,13 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
         } else {
           opts.onEvent({ type: 'error', subtype: message.subtype });
         }
-        // Ghi kết quả vào genome — chỉ với execute đã bật genome. Một lần
-        // chỉ-lập-kế-hoạch chưa tạo hệ quả đúng/sai nên không tính là một thế hệ.
-        // Ghi cả thất bại: chọn lọc cần biết gen nào dẫn tới hỏng, không chỉ gen tốt.
-        if (opts.mode === 'execute' && opts.useGenome === true) {
-          const outcome = { success, turns: message.num_turns };
-          recordTaskOutcome(opts.cwd, {
-            task: taskLabel(opts.brief),
-            success,
-            turns: message.num_turns,
-            outputTokens: message.usage.output_tokens,
-            expressedIds: usedGeneIds,
-          });
-          // CHỌN LỌC: kéo fitness các gen đã biểu hiện về phía reward, đào thải gen
-          // vừa yếu vừa già. recordTaskOutcome đã +1 thế hệ nên tuổi gen tính đúng.
-          const selected = applySelection(loadGenome(opts.cwd), usedGeneIds, outcome);
-          saveGenome(selected);
-          reflectInput = { success };
-        }
         break;
       }
       // Các message type khác (stream_event, system, ...) bỏ qua cho gọn.
     }
   }
 
-  // ĐỘT BIẾN: sau khi task xong, phản tư để genome học thêm gen mới về repo.
-  // Chạy ngoài vòng query trên; không ném lỗi (reflectAndMutate tự nuốt) nên
-  // không ảnh hưởng kết quả task. Chỉ khi có finalText để phản tư.
-  if (reflectInput && finalText) {
-    const added = await reflectAndMutate({
-      cwd: opts.cwd,
-      brief: opts.brief,
-      finalText,
-      success: reflectInput.success,
-    });
-    if (added > 0) opts.onEvent({ type: 'learned', added });
-  }
-
   return finalText;
-}
-
-/**
- * Rút nhãn task ngắn từ brief để ghi vào history (đọc-được, không dùng để tính).
- * Lấy dòng không rỗng đầu tiên, cắt còn 80 ký tự.
- */
-function taskLabel(brief: string): string {
-  const firstLine = brief.split('\n').map((l) => l.trim()).find((l) => l.length > 0) ?? '';
-  return firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine;
 }
 
 /** Bắc cầu AbortSignal → AbortController mà SDK nhận. */

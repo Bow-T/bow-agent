@@ -13,7 +13,6 @@ description: >
   up manually; check the Projects catalog first. Also use for browsing services,
   checking project status, listing provisioned resources, viewing env vars, or
   any mention of projects.dev or adding/provisioning/connecting a cloud service.
-allowed-tools:
   - Bash(stripe *)
   - Bash(which stripe)
   - Bash(brew install stripe/stripe-cli/stripe)
