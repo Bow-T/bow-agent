@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { PixelSelect } from './PixelSelect.js';
 import { NeuralBrain } from './NeuralBrain.js';
+import { Markdown } from './Markdown.js';
+import { QuestionCard } from './QuestionCard.js';
 import type {
   ChatItem,
   DetectedSource,
@@ -8,10 +10,11 @@ import type {
   ImageAttachment,
   Mode,
   PendingApproval,
+  PendingQuestion,
   WebEvent,
 } from './types.js';
 
-type Theme = 'light' | 'dark';
+type Theme = 'light' | 'dark' | 'simple';
 
 let seq = 0;
 const nextId = () => `${Date.now()}-${seq++}`;
@@ -93,8 +96,13 @@ export function App() {
     }
   });
   const [pending, setPending] = useState<PendingApproval[]>([]);
+  // Câu hỏi AskUserQuestion đang chờ người dùng chọn (thường chỉ có 1 tại một thời điểm).
+  const [questions, setQuestions] = useState<PendingQuestion[]>([]);
   const [running, setRunning] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [conversationId, setConversationId] = useState<string | null>(
+    () => localStorage.getItem('bow-conversation-id') || null
+  );
 
   // Đồng bộ hóa cấu hình composer vào localStorage
   useEffect(() => { localStorage.setItem('bow-task', task); }, [task]);
@@ -105,6 +113,13 @@ export function App() {
   useEffect(() => { localStorage.setItem('bow-effort', effort); }, [effort]);
   useEffect(() => { localStorage.setItem('bow-language', language); }, [language]);
   useEffect(() => { localStorage.setItem('bow-selectedMcps', JSON.stringify(selectedMcps)); }, [selectedMcps]);
+  useEffect(() => {
+    if (conversationId) {
+      localStorage.setItem('bow-conversation-id', conversationId);
+    } else {
+      localStorage.removeItem('bow-conversation-id');
+    }
+  }, [conversationId]);
 
   // Lưu lịch sử chat để giữ qua refresh. Chỉ giữ 300 item gần nhất để không vượt
   // quota localStorage (~5MB); chat rất dài thì tin cũ nhất bị lược, tránh crash.
@@ -258,7 +273,19 @@ export function App() {
   );
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [isScrolled, setIsScrolled] = useState(false);
+  const [activeQuery, setActiveQuery] = useState('');
+
+  useEffect(() => {
+    const lastQ = [...items].reverse().find((it) => it.kind === 'user')?.text || '';
+    setActiveQuery(lastQ);
+  }, [items]);
+
   const taskRef = useRef<HTMLTextAreaElement>(null);
+  // Kết nối SSE hiện tại. Giữ ở ref để đảm bảo mỗi lúc chỉ có ĐÚNG MỘT EventSource
+  // sống — nếu không, StrictMode (dev chạy effect 2 lần) hoặc reconnect chồng lấn sẽ
+  // mở 2 SSE cùng session, backend phát event cho cả hai → mọi tin bị nhân đôi.
+  const eventSourceRef = useRef<EventSource | null>(null);
 
   /** Bấm một gợi ý nhanh: điền sẵn task. */
   function applyQuickPrompt(qp: { text: string }) {
@@ -369,8 +396,9 @@ export function App() {
     const hasInput = task.trim() || docs.length || pdfs.length || images.length;
     if (!hasInput) return;
 
-    // Giữ lịch sử cũ — task mới nối tiếp bên dưới (chat liên tục). Chỉ dọn approval treo.
+    // Giữ lịch sử cũ — task mới nối tiếp bên dưới (chat liên tục). Chỉ dọn approval/câu hỏi treo.
     setPending([]);
+    setQuestions([]);
     setSelectedStepId(null); // bỏ chọn bước cũ khi bắt đầu task mới
     setRunning(true);
 
@@ -431,6 +459,7 @@ export function App() {
           language,
           cwd: cwd.trim() || undefined,
           model: selectedModel,
+          conversationId: conversationId || undefined,
         }),
       });
     } catch (err) {
@@ -448,6 +477,8 @@ export function App() {
 
     const { sessionId: sid } = await res.json();
     setSessionId(sid);
+    // conversationId THẬT đến qua event SSE 'conversation' (session_id của SDK), không
+    // phải từ response này — xử lý ở streamEvents. Lượt sau gửi lại để agent nhớ hội thoại.
     localStorage.setItem('bow-session-id', sid);
     // Mốc baseline = mọi item hiện có (gồm dòng 'user' vừa thêm). Session này sẽ
     // append event của nó SAU mốc này. Dùng updater để đọc độ dài items mới nhất.
@@ -460,12 +491,25 @@ export function App() {
   }
 
   function streamEvents(sid: string) {
+    // Đóng kết nối SSE cũ (nếu còn) TRƯỚC khi mở cái mới. Không có bước này thì
+    // StrictMode (dev) hay reconnect chồng lấn sẽ để 2 EventSource cùng session
+    // sống song song → mỗi event tới UI 2 lần → tin bị nhân đôi.
+    eventSourceRef.current?.close();
+
     // Backend replay toàn bộ history của session này từ đầu. Cắt items về mốc
     // baseline (số item trước khi session bắt đầu) để dựng lại sạch, không nhân
     // đôi, mà vẫn giữ nguyên lịch sử các task cũ nằm phía trên baseline.
     setItems((prev) => prev.slice(0, sessionBaselineRef.current));
     setPending([]);
+    setQuestions([]);
     const src = new EventSource(`/api/events/${sid}`);
+    eventSourceRef.current = src;
+    // Đóng SSE + xóa ref (chỉ khi ref vẫn trỏ chính src này, tránh xóa nhầm kết nối
+    // mới hơn đã thay chỗ).
+    const closeSrc = () => {
+      src.close();
+      if (eventSourceRef.current === src) eventSourceRef.current = null;
+    };
     src.onmessage = (msg) => {
       const ev = JSON.parse(msg.data) as WebEvent;
       switch (ev.type) {
@@ -499,22 +543,30 @@ export function App() {
             },
           ]);
           break;
+        case 'question-request':
+          setQuestions((prev) => [...prev, { id: ev.id, questions: ev.questions }]);
+          break;
+        case 'conversation':
+          // session_id THẬT của SDK. Lưu để lượt sau gửi lại làm conversationId →
+          // agent resume đúng phiên và nhớ toàn bộ hội thoại trước.
+          setConversationId(ev.conversationId);
+          break;
         case 'done':
           setRunning(false);
           localStorage.removeItem('bow-session-id');
-          src.close();
+          closeSrc();
           break;
         case 'fatal':
           addItem('error', ev.message);
           setRunning(false);
           localStorage.removeItem('bow-session-id');
-          src.close();
+          closeSrc();
           break;
       }
     };
     src.addEventListener('end', () => {
       setRunning(false);
-      src.close();
+      closeSrc();
     });
   }
 
@@ -528,6 +580,27 @@ export function App() {
     }).catch(() => {});
   }
 
+  /**
+   * Trả lời một câu hỏi AskUserQuestion. answers=null = huỷ (agent nhận deny).
+   * Ghi lại lựa chọn vào chat để có dấu vết, rồi gửi về backend giải Promise treo.
+   */
+  async function answerQuestion(q: PendingQuestion, answers: Record<string, string> | null) {
+    setQuestions((prev) => prev.filter((x) => x.id !== q.id));
+    if (answers) {
+      const summary = Object.entries(answers)
+        .map(([, val]) => `→ ${val}`)
+        .join('\n');
+      addItem('system', `💬 Bạn đã trả lời:\n${summary}`);
+    } else {
+      addItem('system', '⛔ Đã huỷ câu hỏi của agent.');
+    }
+    await fetch('/api/answer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, id: q.id, answers }),
+    }).catch(() => {});
+  }
+
   async function stop() {
     if (!sessionId) return;
     setRunning(false);
@@ -536,21 +609,43 @@ export function App() {
     await fetch(`/api/stop/${sessionId}`, { method: 'POST' }).catch(() => {});
   }
 
-  /** Xóa toàn bộ lịch sử chat (thủ công). Không đụng session đang chạy. */
-  /** Mở cửa sổ xác nhận xóa chat (không xóa ngay). */
+  /**
+   * Mở cửa sổ xác nhận xóa chat (không xóa ngay). Cho bấm CẢ KHI agent đang chạy —
+   * lúc đó xác nhận sẽ dừng phiên rồi mới xóa (xem confirmClearChat). Chỉ chặn khi
+   * chat hoàn toàn trống và không có gì đang chạy (không có gì để xóa).
+   */
   function clearChat() {
-    if (!items.length || running) return;
+    if (!items.length && !running) return;
     setConfirmClearOpen(true);
   }
 
-  /** Thực thi xóa sau khi người dùng xác nhận trong modal. */
-  function confirmClearChat() {
+  /**
+   * Thực thi xóa sau khi người dùng xác nhận. Nếu agent đang chạy thì DỪNG phiên
+   * (đóng SSE + gọi /api/stop) trước, rồi xóa sạch mọi trạng thái + localStorage →
+   * task tiếp theo là phiên hoàn toàn mới (agent không nhớ hội thoại cũ).
+   */
+  async function confirmClearChat() {
+    setConfirmClearOpen(false);
+    // Dừng phiên đang chạy trước khi xóa — tránh event của phiên cũ đổ về sau khi đã xóa.
+    if (running) {
+      eventSourceRef.current?.close();
+      eventSourceRef.current = null;
+      setRunning(false);
+      if (sessionId) {
+        await fetch(`/api/stop/${sessionId}`, { method: 'POST' }).catch(() => {});
+      }
+    }
     setItems([]);
     setPending([]);
+    setQuestions([]);
+    setSessionId(null);
+    setConversationId(null);
+    setSelectedStepId(null);
+    localStorage.removeItem('bow-conversation-id');
+    localStorage.removeItem('bow-session-id');
     sessionBaselineRef.current = 0;
     localStorage.removeItem('bow-chat-items');
     localStorage.removeItem('bow-session-baseline');
-    setConfirmClearOpen(false);
   }
 
   async function genProfile() {
@@ -591,39 +686,78 @@ export function App() {
       });
     }
 
+    // Bộ tích lũy các tool thông thường (đọc/tìm/sửa code...)
+    let tempToolsCount: Record<string, number> = {};
+    let tempToolsActive = false;
+    let tempToolsIds: string[] = [];
+
+    const flushTempTools = () => {
+      if (tempToolsIds.length > 0) {
+        const details = Object.entries(tempToolsCount)
+          .map(([txt, count]) => `• ${txt} (x${count})`)
+          .join('\n');
+        nodes.push({
+          id: 'grouped-' + tempToolsIds[0],
+          type: 'tool', // Hành tinh xanh lá đại diện cho nhóm
+          label: `⚙️ Xử lý mã nguồn (${tempToolsIds.length} thao tác)`,
+          detail: `Chi tiết các thao tác thực hiện:\n${details}`,
+          active: tempToolsActive,
+        });
+        tempToolsIds = [];
+        tempToolsActive = false;
+        tempToolsCount = {};
+      }
+    };
+
     items.forEach((it) => {
       if (it.kind === 'tool') {
-        // Gộp các lần dùng CÙNG một tool liên tiếp thành 1 dòng kèm số lần (×N),
-        // tránh 7 dòng "🔍 tìm công cụ…" giống hệt nhau gây rối.
-        const last = nodes[nodes.length - 1];
-        if (last && last.type === 'tool' && last.label.replace(/ ×\d+$/, '') === it.text) {
-          const n = (last.count ?? 1) + 1;
-          last.count = n;
-          last.label = `${it.text} ×${n}`;
-        } else {
+        const isAgentCall = it.text.includes('agent phụ:');
+        
+        if (isAgentCall) {
+          // Dồn các tool thường tích lũy trước đó trước khi gọi agent phụ
+          flushTempTools();
+          
+          const match = it.text.match(/agent phụ:\s*([a-zA-Z0-9_-]+)/i);
+          const agentName = match ? match[1] : 'Subagent';
+          
           nodes.push({
             id: it.id,
-            type: 'tool',
-            label: it.text,
-            count: 1,
+            type: 'thinking', // Sao xung tím
+            label: `🤖 Gọi Agent phụ: ${agentName}`,
+            detail: it.text,
+            active: false,
+          });
+        } else {
+          // Tích lũy các tool đọc, tìm, sửa, chạy lệnh... vào nhóm
+          const cleanText = it.text.replace(/ ×\d+$/, '');
+          const countMatch = it.text.match(/×(\d+)$/);
+          const increment = countMatch ? parseInt(countMatch[1], 10) : 1;
+          
+          tempToolsCount[cleanText] = (tempToolsCount[cleanText] || 0) + increment;
+          tempToolsIds.push(it.id);
+        }
+      } else {
+        flushTempTools();
+        
+        if (it.kind === 'result') {
+          nodes.push({
+            id: it.id,
+            type: 'result',
+            label: 'Hoàn thành',
+            detail: it.text,
+          });
+        } else if (it.kind === 'error') {
+          nodes.push({
+            id: it.id,
+            type: 'error',
+            label: 'Lỗi',
+            detail: it.text,
           });
         }
-      } else if (it.kind === 'result') {
-        nodes.push({
-          id: it.id,
-          type: 'result',
-          label: 'Hoàn thành',
-          detail: it.text,
-        });
-      } else if (it.kind === 'error') {
-        nodes.push({
-          id: it.id,
-          type: 'error',
-          label: 'Lỗi',
-          detail: it.text,
-        });
       }
     });
+
+    flushTempTools();
 
     pending.forEach((p) => {
       nodes.push({
@@ -648,6 +782,120 @@ export function App() {
   };
 
   const pipelineNodes = buildActivityNodes();
+
+  const buildAgentNodes = () => {
+    const rawNodes = pipelineNodes;
+    const agentsMap = new Map<string, { id: string; label: string; type: string; detail: string; active: boolean }>();
+
+    // Luôn hiển thị 4 default agents cốt lõi từ đầu
+    agentsMap.set('main', {
+      id: 'main',
+      label: 'Bow Agent (Main)',
+      type: 'approval', // Thái dương vàng
+      detail: 'Agent chính điều phối và thực thi thay đổi.',
+      active: false,
+    });
+    agentsMap.set('reviewer', {
+      id: 'reviewer',
+      label: 'Reviewer Agent',
+      type: 'thinking', // Sao xung tím
+      detail: 'Chưa hoạt động. Tự động kích hoạt khi có yêu cầu rà soát mã nguồn.',
+      active: false,
+    });
+    agentsMap.set('verifier', {
+      id: 'verifier',
+      label: 'Verifier Agent',
+      type: 'tool', // Hành tinh xanh lá
+      detail: 'Chưa hoạt động. Tự động kích hoạt khi cần kiểm thử và xác minh thay đổi.',
+      active: false,
+    });
+    agentsMap.set('impact-scout', {
+      id: 'impact-scout',
+      label: 'Impact Scout Agent',
+      type: 'start', // Sao xanh lam khổng lồ
+      detail: 'Chưa hoạt động. Tự động kích hoạt khi cần khảo sát tác động dự án.',
+      active: false,
+    });
+
+    // Quét qua các node hoạt động để phát hiện các subagent
+    rawNodes.forEach(node => {
+      const lbl = node.label || '';
+      // Tìm mẫu: "giao việc cho agent phụ: [tên]…"
+      const match = lbl.match(/agent phụ:\s*([a-zA-Z0-9_-]+)/i);
+      if (match && match[1]) {
+        const agentName = match[1];
+        const agentKey = agentName.toLowerCase();
+        
+        let type = 'thinking'; // Mặc định: sao xung tím
+        if (agentKey === 'verifier') type = 'tool'; // Hành tinh xanh lá
+        if (agentKey === 'impact-scout' || agentKey === 'scout') type = 'start'; // Sao xanh lam khổng lồ
+        
+        const isThisActive = !!node.active;
+        const detail = isThisActive
+          ? `ĐANG HOẠT ĐỘNG:\n${node.label}${node.detail ? `\n\nChi tiết: ${node.detail}` : ''}`
+          : `Hoạt động gần nhất:\n${node.label}${node.detail ? `\n\nChi tiết: ${node.detail}` : ''}`;
+
+        const existing = agentsMap.get(agentKey);
+        if (existing) {
+          if (isThisActive) {
+            existing.active = true;
+            existing.detail = detail;
+          } else if (!existing.active) {
+            existing.detail = detail;
+          }
+        } else {
+          // Viết hoa chữ cái đầu
+          const formattedLabel = agentName.charAt(0).toUpperCase() + agentName.slice(1) + ' Agent';
+          agentsMap.set(agentKey, {
+            id: agentKey,
+            label: formattedLabel,
+            type,
+            detail,
+            active: isThisActive,
+          });
+        }
+      } else {
+        // Cập nhật hoạt động cho Main Agent
+        const main = agentsMap.get('main')!;
+        const isThisActive = !!node.active;
+        const detail = isThisActive
+          ? `ĐANG HOẠT ĐỘNG:\n${node.label}${node.detail ? `\n\nChi tiết: ${node.detail}` : ''}`
+          : `Hoạt động gần nhất:\n${node.label}${node.detail ? `\n\nChi tiết: ${node.detail}` : ''}`;
+
+        if (isThisActive) {
+          main.active = true;
+          main.detail = detail;
+        } else if (!main.active && node.type !== 'start') {
+          main.detail = detail;
+        }
+      }
+    });
+
+    // Nếu chạy mà chưa có subagent nào hoạt động, thì kích hoạt Main Agent
+    const hasActiveSub = Array.from(agentsMap.values()).some(a => a.id !== 'main' && a.active);
+    if (running) {
+      const main = agentsMap.get('main')!;
+      main.active = !hasActiveSub;
+    } else {
+      agentsMap.get('main')!.active = false;
+    }
+
+    return Array.from(agentsMap.values());
+  };
+
+  const agentNodes = buildAgentNodes();
+  const lastUserQuery = [...items].reverse().find((it) => it.kind === 'user')?.text;
+
+  const itemToQueryMap = new Map<string, string>();
+  let currentQueryText = '';
+  for (const it of items) {
+    if (it.kind === 'user') {
+      currentQueryText = it.text;
+    }
+    if (currentQueryText) {
+      itemToQueryMap.set(it.id, currentQueryText);
+    }
+  }
 
   return (
     <div className="app">
@@ -679,34 +927,34 @@ export function App() {
           </button>
           <button
             className="theme-btn"
-            title={theme === 'light' ? 'Chuyển Dark' : 'Chuyển Light'}
-            onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
+            title={theme === 'light' ? 'Chuyển Dark' : theme === 'dark' ? 'Chuyển Simple' : 'Chuyển Light'}
+            onClick={() => setTheme(theme === 'light' ? 'dark' : theme === 'dark' ? 'simple' : 'light')}
           >
-            {theme === 'light' ? '🌙' : '☀'}
+            {theme === 'light' ? '🌙' : theme === 'dark' ? '✦' : '☀'}
           </button>
         </div>
       </header>
 
       <div className="main-layout">
         <aside className="sidebar-pipeline">
-          <div className="sidebar-pipeline-title">◈ MẠNG NƠ-RON HOẠT ĐỘNG</div>
-
+          <div className="sidebar-pipeline-title">◈ BẢN ĐỒ VŨ TRỤ HOẠT ĐỘNG</div>
           <div className="neural-net-container">
             <NeuralBrain
               active={running}
-              steps={pipelineNodes}
+              steps={agentNodes}
               selectedId={selectedStepId}
               onSelect={(s) => setSelectedStepId((prev) => (prev === s.id ? null : s.id))}
+              theme={theme}
             />
           </div>
 
-          {/* Chi tiết bước được bấm trên não — "đang làm gì ở bước đó". */}
+          {/* Chi tiết bước được bấm trên bản đồ vũ trụ — "đang làm gì ở bước đó". */}
           {(() => {
-            const sel = selectedStepId ? pipelineNodes.find((n) => n.id === selectedStepId) : null;
+            const sel = selectedStepId ? agentNodes.find((n) => n.id === selectedStepId) : null;
             if (!sel) {
               return (
                 <div className="step-detail step-detail-empty">
-                  Bấm vào một điểm trên não để xem bước đó đang làm gì.
+                  Bấm vào một thiên thể hoặc chòm sao để xem chi tiết bước hoạt động.
                 </div>
               );
             }
@@ -724,12 +972,7 @@ export function App() {
                     ✕
                   </button>
                 </div>
-                {sel.detail && <div className="step-detail-body">{sel.detail}</div>}
-                {!sel.detail && (
-                  <div className="step-detail-body step-detail-muted">
-                    {sel.active ? 'Đang thực hiện…' : 'Đã hoàn tất bước này.'}
-                  </div>
-                )}
+                {sel.detail && <div className="step-detail-body" style={{ whiteSpace: 'pre-wrap' }}>{sel.detail}</div>}
               </div>
             );
           })()}
@@ -777,7 +1020,47 @@ export function App() {
         </aside>
 
         <div className="chat-container">
-          <div className="chat" ref={scrollRef}>
+          {isScrolled && activeQuery && (
+            <div className="chat-pinned-query" key={activeQuery} title={activeQuery}>
+              <span className="pinned-icon">📌</span>
+              <span className="pinned-text">{activeQuery.replace(/\s+/g, ' ')}</span>
+            </div>
+          )}
+          <div
+            className="chat"
+            ref={scrollRef}
+            onScroll={(e) => {
+              const container = e.currentTarget;
+              const scrollTop = container.scrollTop;
+              setIsScrolled(scrollTop > 60);
+
+              const children = Array.from(container.children) as HTMLElement[];
+              const threshold = scrollTop + 24;
+              let currentActiveId = '';
+
+              for (const child of children) {
+                const childBottom = child.offsetTop + child.offsetHeight;
+                if (childBottom > threshold) {
+                  const id = child.getAttribute('data-id');
+                  if (id) {
+                    currentActiveId = id;
+                    break;
+                  }
+                }
+              }
+
+              if (currentActiveId) {
+                const q = itemToQueryMap.get(currentActiveId);
+                if (q) {
+                  setActiveQuery(q);
+                  return;
+                }
+              }
+
+              const lastQ = [...items].reverse().find((it) => it.kind === 'user')?.text || '';
+              setActiveQuery(lastQ);
+            }}
+          >
         {items.length === 0 && !running && (
           <div className="empty">
             Nhập đề tài / task, dán Jira ticket hoặc URL board, kéo-thả tài liệu &amp; ảnh
@@ -787,8 +1070,8 @@ export function App() {
           </div>
         )}
         {items.map((it) => (
-          <div key={it.id} className={`bubble ${it.kind}`}>
-            {it.text}
+          <div key={it.id} data-id={it.id} className={`bubble ${it.kind}`}>
+            {it.kind === 'agent' ? <Markdown text={it.text} /> : it.text}
           </div>
         ))}
         {pending.map((p) => (
@@ -867,7 +1150,17 @@ export function App() {
             </div>
           </div>
         ))}
-        {running && pending.length === 0 && <div className="thinking">⏳ Agent đang làm việc…</div>}
+        {questions.map((q) => (
+          <QuestionCard
+            key={q.id}
+            pending={q}
+            onSubmit={(answers) => answerQuestion(q, answers)}
+            onCancel={() => answerQuestion(q, null)}
+          />
+        ))}
+        {running && pending.length === 0 && questions.length === 0 && (
+          <div className="thinking">⏳ Agent đang làm việc…</div>
+        )}
       </div>
 
       <div
@@ -1044,8 +1337,8 @@ export function App() {
             <button
               className="btn clear-chat"
               onClick={clearChat}
-              disabled={running || !items.length}
-              title="Xóa toàn bộ lịch sử chat"
+              disabled={!running && !items.length}
+              title="Xóa lịch sử chat & bắt đầu hội thoại mới (dừng agent nếu đang chạy)"
             >
               Xóa chat
             </button>
@@ -1224,7 +1517,13 @@ export function App() {
             </div>
             <div className="modal-body">
               <p style={{ margin: 0, lineHeight: 1.6 }}>
-                Xóa toàn bộ <strong>{items.length}</strong> tin nhắn trong cửa sổ này?
+                {running && (
+                  <>
+                    ⏹ Agent đang chạy sẽ bị <strong>dừng</strong>.
+                    <br />
+                  </>
+                )}
+                Xóa toàn bộ <strong>{items.length}</strong> tin nhắn và bắt đầu hội thoại mới?
                 <br />
                 Thao tác này không thể hoàn tác.
               </p>

@@ -40,6 +40,29 @@ export type ApprovalRequest = (
   meta?: ApprovalMeta,
 ) => Promise<boolean>;
 
+/** Một lựa chọn của câu hỏi AskUserQuestion. */
+export interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+/** Một câu hỏi agent gửi qua tool AskUserQuestion. */
+export interface Question {
+  question: string;
+  header: string;
+  multiSelect?: boolean;
+  options: QuestionOption[];
+}
+
+/**
+ * Agent hỏi người dùng (tool AskUserQuestion). Trả về map câu-hỏi → câu-trả-lời
+ * (đúng shape mà harness kỳ vọng: key là text câu hỏi, value là (các) label đã
+ * chọn nối bằng ', '). Trả null = người dùng hủy → tool bị deny.
+ */
+export type QuestionRequest = (
+  questions: Question[],
+) => Promise<Record<string, string> | null>;
+
 export interface RunOptions {
   /** Task brief đã chuẩn hóa (từ input layer). */
   brief: string;
@@ -82,10 +105,25 @@ export interface RunOptions {
    * (KHÔNG khuyến nghị — chỉ dùng khi caller cố ý bỏ cổng).
    */
   onApproval?: ApprovalRequest;
+  /**
+   * Agent hỏi người dùng (tool AskUserQuestion) — hoạt động ở MỌI mode (kể cả
+   * plan). Web render UI câu hỏi rồi trả lựa chọn; rỗng = không xử lý, để SDK
+   * áp hành vi mặc định (thường là hủy).
+   */
+  onQuestion?: QuestionRequest;
   /** Tín hiệu hủy (dừng agent giữa chừng). */
   abortSignal?: AbortSignal;
   /** Model sử dụng cho agent. */
   model?: string;
+  /** ID phiên chạy cũ cần khôi phục lịch sử chat. */
+  resumeSessionId?: string;
+  /**
+   * Nhận session_id THẬT mà SDK dùng để lưu lịch sử (.jsonl) — phát ra từ message
+   * `system/init` ngay đầu mỗi lượt query. Caller LƯU id này để lượt sau truyền lại
+   * qua resumeSessionId, nhờ đó agent nhớ được toàn bộ hội thoại trước. KHÔNG tự sinh
+   * id rồi ép cho SDK — SDK có thể bỏ qua, khiến resume trỏ vào phiên không tồn tại.
+   */
+  onSessionId?: (sessionId: string) => void;
   /**
    * Bật multi-agent: nhồi bộ subagent chuẩn (reviewer/verifier/impact-scout) vào
    * options.agents để agent chính giao việc qua tool `Agent`. MẶC ĐỊNH TẮT (opt-in):
@@ -159,6 +197,9 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   // Multi-agent (opt-in): bộ subagent chuẩn + subagent riêng profile. Chỉ dựng khi bật.
   const subagents = opts.useSubagents ? buildSubagents(opts.profileSubagents) : undefined;
 
+  // Lưu ý: KHÔNG đưa AskUserQuestion vào allowedTools — entry "trần" trong
+  // allowedTools auto-approve tool TRƯỚC khi tới canUseTool, khiến câu hỏi không
+  // bao giờ tới UI. Để nó rơi vào canUseTool (xử lý bên dưới) để render UI.
   const allowedTools = [
     'Read',
     'Grep',
@@ -219,6 +260,9 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     // Bật Agent Skills: SDK tự nạp .claude/skills/* của repo đích (nhờ settingSources
     // 'project' bên dưới) và mở tool 'Skill'. Agent tự chọn skill theo mô tả.
     skills: 'all',
+    // Khôi phục phiên chạy cũ nếu có (agent nhớ hội thoại trước). Lượt đầu KHÔNG ép
+    // sessionId — để SDK tự sinh id đáng tin, ta bắt lại qua message system/init bên dưới.
+    ...(opts.resumeSessionId ? { resume: opts.resumeSessionId } : {}),
     // Multi-agent (opt-in): định nghĩa subagent để agent chính giao việc qua tool Agent.
     ...(subagents ? { agents: subagents } : {}),
     ...(monorepoHooks ? { hooks: monorepoHooks } : {}),
@@ -228,10 +272,33 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     // Giữ system prompt gốc của Claude Code + nạp CLAUDE.md của repo, rồi append quy trình + profile.
     systemPrompt: { type: 'preset', preset: 'claude_code', append: appendText },
     settingSources: ['project'],
-    // Ở chế độ execute: mọi tool ghi/side-effect phải qua cổng duyệt (nếu có onApproval).
-    ...(opts.mode === 'execute' && opts.onApproval
+    // Gắn canUseTool khi cần xử lý câu hỏi (mọi mode) hoặc cổng duyệt (execute).
+    // AskUserQuestion được xử lý riêng ở MỌI mode; các tool ghi chỉ qua cổng ở execute.
+    ...(opts.onQuestion || (opts.mode === 'execute' && opts.onApproval)
       ? {
           canUseTool: async (toolName, input, sdkOpts) => {
+            // AskUserQuestion: render UI câu hỏi, gắn câu trả lời vào input trả cho agent.
+            if (toolName === 'AskUserQuestion' && opts.onQuestion) {
+              const questions = Array.isArray((input as { questions?: unknown }).questions)
+                ? ((input as { questions: Question[] }).questions)
+                : [];
+              const answers = await opts.onQuestion(questions);
+              if (answers === null) {
+                return {
+                  behavior: 'deny' as const,
+                  message: 'Người dùng đã huỷ câu hỏi. Hãy hỏi lại theo hướng khác hoặc tiếp tục.',
+                };
+              }
+              // Chèn answers vào input — harness đọc field này để dựng tool_result.
+              return { behavior: 'allow' as const, updatedInput: { ...input, answers } };
+            }
+
+            // Không ở chế độ duyệt (vd plan mode): mọi tool tới đây đều cho phép.
+            // (Plan mode đã tự chặn tool ghi trước khi tới canUseTool.)
+            if (!(opts.mode === 'execute' && opts.onApproval)) {
+              return { behavior: 'allow' as const, updatedInput: input };
+            }
+
             // Tự động duyệt các lệnh bash kiểm tra/test an toàn
             if (toolName === 'Bash' && typeof input.command === 'string') {
               const cmd = input.command.trim();
@@ -275,12 +342,24 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
 
   for await (const message of query({ prompt, options })) {
     switch (message.type) {
+      case 'system': {
+        // system/init phát ngay đầu mỗi lượt, mang session_id THẬT mà SDK dùng để lưu
+        // lịch sử. Báo ra ngoài để caller lưu → lượt sau resume đúng phiên (agent nhớ).
+        if (message.subtype === 'init') {
+          opts.onSessionId?.(message.session_id);
+        }
+        break;
+      }
       case 'assistant': {
         for (const block of message.message.content) {
           if (block.type === 'text' && block.text.trim()) {
             opts.onEvent({ type: 'text', text: block.text.trim() });
           } else if (block.type === 'tool_use') {
-            opts.onEvent({ type: 'tool', name: block.name, describe: describeTool(block.name) });
+            let describe = describeTool(block.name);
+            if (block.name === 'Agent' && block.input && typeof block.input === 'object' && 'agent' in block.input) {
+              describe = `🤖 giao việc cho agent phụ: ${block.input.agent}…`;
+            }
+            opts.onEvent({ type: 'tool', name: block.name, describe });
           }
         }
         break;

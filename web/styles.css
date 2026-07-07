@@ -37,6 +37,559 @@
   --menu-bg: #243524;
 }
 
+/* ── Simple Mode (Premium Minimal) ──────────────────────────── */
+[data-theme='simple'] {
+  --bg: #fafafa;
+  --panel: #ffffff;
+  --inset: #ffffff;
+  --outline: rgba(0, 0, 0, 0.08);
+  --shadow: transparent;
+  --text: #171717;
+  --text-2: #525252;
+  --muted: #a3a3a3;
+  --scan: transparent;
+  --menu-bg: #ffffff;
+
+  --grass: #10b981;
+  --grass-dark: #059669;
+  --leaf: #10b981;
+  --gold: #f59e0b;
+  --red: #ef4444;
+  --teal: #06b6d4;
+  --wood: #a3a3a3;
+
+  --bd-thin: 1px;
+  --bd-thick: 1px;
+  --sh: 0px;
+
+  --accent: #2563eb;
+  --accent-soft: rgba(37, 99, 235, 0.08);
+  --surface-raised: #ffffff;
+  --surface-hover: #f5f5f5;
+  --border-subtle: rgba(0, 0, 0, 0.06);
+  --border-medium: rgba(0, 0, 0, 0.1);
+}
+
+/* ── Simple: Base typography & body ─────────────────────────── */
+[data-theme='simple'] body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background-image: none;
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+[data-theme='simple'] .brand,
+[data-theme='simple'] .btn,
+[data-theme='simple'] .approval-head,
+[data-theme='simple'] .controls label,
+[data-theme='simple'] .px-select-btn,
+[data-theme='simple'] .px-select-item,
+[data-theme='simple'] select {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  font-smooth: always;
+}
+[data-theme='simple'] .pipeline-content {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* ── Simple: App container ──────────────────────────────────── */
+[data-theme='simple'] .app {
+  max-width: 1400px;
+  gap: 12px;
+}
+
+/* ── Simple: Top bar ────────────────────────────────────────── */
+[data-theme='simple'] .topbar {
+  border: none;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 0 0 1px var(--border-subtle);
+  padding: 10px 20px;
+}
+[data-theme='simple'] .brand {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.3px;
+}
+[data-theme='simple'] .meta {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* ── Simple: Theme / MCP buttons ────────────────────────────── */
+[data-theme='simple'] .theme-btn {
+  border: 1px solid var(--border-medium);
+  border-radius: 10px;
+  box-shadow: none;
+  width: 36px;
+  height: 36px;
+  font-size: 16px;
+  background: var(--surface-raised);
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+[data-theme='simple'] .theme-btn:hover {
+  background: var(--surface-hover);
+  border-color: rgba(0,0,0,0.15);
+}
+[data-theme='simple'] .theme-btn:active {
+  transform: scale(0.94);
+  box-shadow: none;
+}
+
+/* ── Simple: Sidebar ────────────────────────────────────────── */
+[data-theme='simple'] .sidebar-pipeline {
+  border: none;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 0 0 1px var(--border-subtle);
+  padding: 16px;
+}
+[data-theme='simple'] .sidebar-pipeline-title {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: 12px;
+  margin-bottom: 16px;
+}
+
+/* ── Simple: Chat area ──────────────────────────────────────── */
+[data-theme='simple'] .chat {
+  border: none;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.5);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 0 0 1px var(--border-subtle);
+  gap: 16px;
+  padding: 20px;
+}
+
+/* ── Simple: Chat bubbles ───────────────────────────────────── */
+[data-theme='simple'] .bubble {
+  border: none;
+  box-shadow: none;
+  font-size: 14px;
+  line-height: 1.6;
+  padding: 12px 16px;
+}
+[data-theme='simple'] .bubble.user {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 20px 20px 6px 20px;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25);
+}
+[data-theme='simple'] .bubble.agent {
+  background: #f5f5f5;
+  border: 1px solid var(--border-subtle);
+  border-radius: 20px 20px 20px 6px;
+}
+[data-theme='simple'] .bubble.tool {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+[data-theme='simple'] .bubble.result {
+  background: linear-gradient(135deg, #ecfdf5, #f0fdf4);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  border-radius: 16px;
+  color: #065f46;
+}
+[data-theme='simple'] .bubble.error {
+  background: #fef2f2;
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: 16px;
+}
+
+/* ── Simple: Empty state ─────────────────────────────────────── */
+[data-theme='simple'] .empty {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+/* ── Simple: Controls bar ────────────────────────────────────── */
+[data-theme='simple'] .controls {
+  border: none;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.72);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 0 0 1px var(--border-subtle);
+  padding: 10px 14px;
+}
+[data-theme='simple'] .controls label {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Simple: Input / Textarea ────────────────────────────────── */
+[data-theme='simple'] input,
+[data-theme='simple'] textarea {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border-medium);
+  padding: 10px 14px;
+  background: var(--surface-raised);
+  transition: border-color 0.2s, box-shadow 0.2s;
+  color: var(--text);
+}
+[data-theme='simple'] input:focus,
+[data-theme='simple'] textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+[data-theme='simple'] input::placeholder,
+[data-theme='simple'] textarea::placeholder {
+  color: var(--muted);
+}
+
+/* ── Simple: Dropdown PixelSelect ────────────────────────────── */
+[data-theme='simple'] .px-select-btn {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 8px;
+  border: 1px solid var(--border-medium);
+  box-shadow: none;
+  padding: 6px 10px;
+  background: var(--surface-raised);
+  -webkit-font-smoothing: antialiased;
+  transition: border-color 0.15s;
+}
+[data-theme='simple'] .px-select-btn:hover {
+  border-color: rgba(0,0,0,0.2);
+}
+[data-theme='simple'] .px-select-menu {
+  border-radius: 12px;
+  border: 1px solid var(--border-medium);
+  box-shadow: 0 8px 30px rgba(0,0,0,0.12), 0 0 0 1px var(--border-subtle);
+  overflow: hidden;
+  background: var(--surface-raised);
+}
+[data-theme='simple'] .px-select-item {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  -webkit-font-smoothing: antialiased;
+  transition: background 0.1s;
+}
+[data-theme='simple'] .px-select-item:hover {
+  background: var(--accent);
+  color: #fff;
+}
+[data-theme='simple'] .px-select-caret {
+  color: var(--muted);
+}
+
+/* ── Simple: Quick prompt chips ──────────────────────────────── */
+[data-theme='simple'] .quick-prompt-chip {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 100px;
+  padding: 7px 16px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-medium);
+  color: var(--text-2);
+  -webkit-font-smoothing: antialiased;
+  transition: all 0.15s;
+}
+[data-theme='simple'] .quick-prompt-chip:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.2);
+  transform: translateY(-1px);
+}
+[data-theme='simple'] .quick-prompt-chip:active {
+  transform: translateY(0);
+}
+
+/* ── Simple: Buttons ─────────────────────────────────────────── */
+[data-theme='simple'] .btn {
+  border: none;
+  border-radius: 12px;
+  padding: 10px 22px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  letter-spacing: -0.1px;
+  text-transform: none;
+  box-shadow: none;
+  transition: all 0.15s;
+  -webkit-font-smoothing: antialiased;
+  cursor: pointer;
+}
+[data-theme='simple'] .btn:hover {
+  filter: none;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+[data-theme='simple'] .btn:active {
+  transform: translateY(0);
+  box-shadow: none;
+}
+[data-theme='simple'] .btn.run,
+[data-theme='simple'] .btn.allow {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
+}
+[data-theme='simple'] .btn.run:hover,
+[data-theme='simple'] .btn.allow:hover {
+  box-shadow: 0 6px 20px rgba(37, 99, 235, 0.35);
+}
+[data-theme='simple'] .btn.stop,
+[data-theme='simple'] .btn.deny {
+  background: #ef4444;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.25);
+}
+[data-theme='simple'] .btn.attach {
+  background: var(--surface-raised);
+  color: var(--text-2);
+  border: 1px solid var(--border-medium);
+  padding: 10px 14px;
+  box-shadow: none;
+}
+[data-theme='simple'] .btn.attach:hover {
+  background: var(--surface-hover);
+  box-shadow: none;
+  transform: none;
+}
+[data-theme='simple'] .btn.genprof {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  padding: 6px 14px;
+  font-size: 12px;
+  box-shadow: none;
+  border-radius: 8px;
+}
+[data-theme='simple'] .btn.clear-chat {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border-medium);
+}
+[data-theme='simple'] .btn.clear-chat:hover {
+  background: #fef2f2;
+  border-color: rgba(239,68,68,0.3);
+  color: #ef4444;
+  box-shadow: none;
+  transform: none;
+}
+[data-theme='simple'] .btn.clear-chat:disabled {
+  opacity: 0.35;
+  box-shadow: none;
+}
+
+/* ── Simple: Attachment chips ────────────────────────────────── */
+[data-theme='simple'] .chip {
+  border-radius: 100px;
+  font-size: 13px;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  border: 1px solid var(--border-medium);
+  background: var(--surface-raised);
+  padding: 4px 14px;
+}
+[data-theme='simple'] .chip button {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--muted);
+}
+[data-theme='simple'] .chip button:hover {
+  color: #ef4444;
+}
+
+/* ── Simple: Pixel checkbox ──────────────────────────────────── */
+[data-theme='simple'] .px-box {
+  border-radius: 6px;
+  border: 1.5px solid var(--border-medium);
+  transition: all 0.15s;
+}
+[data-theme='simple'] .px-check input:checked + .px-box {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* ── Simple: Detected source panel ───────────────────────────── */
+[data-theme='simple'] .detected {
+  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
+  background: linear-gradient(135deg, #faf5ff, #f5f3ff);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+}
+
+/* ── Simple: Approval / thinking cards ───────────────────────── */
+[data-theme='simple'] .approval-head {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  border-radius: 14px 14px 0 0;
+  font-size: 12px;
+  -webkit-font-smoothing: antialiased;
+}
+[data-theme='simple'] .thinking {
+  border-radius: 14px;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* ── Simple: Step detail ─────────────────────────────────────── */
+[data-theme='simple'] .step-detail {
+  border-radius: 12px;
+  font-size: 13px;
+  border: 1px solid var(--border-subtle);
+  border-left-width: 3px;
+  background: var(--surface-raised);
+}
+[data-theme='simple'] .step-detail-empty {
+  border-left-color: var(--border-medium);
+}
+
+/* ── Simple: Pipeline items (history) ────────────────────────── */
+[data-theme='simple'] .pipeline-item {
+  padding-bottom: 16px;
+}
+[data-theme='simple'] .pipeline-item::after {
+  border-left-style: solid;
+  border-left-color: var(--border-subtle);
+  border-left-width: 1.5px;
+}
+[data-theme='simple'] .pipeline-dot {
+  width: 20px;
+  height: 20px;
+  font-size: 10px;
+  border: 1.5px solid var(--border-medium);
+  border-radius: 50%;
+  background: var(--surface-raised);
+}
+[data-theme='simple'] .pipeline-dot.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+[data-theme='simple'] .pipeline-dot.success {
+  background: #10b981;
+  border-color: #10b981;
+  color: #fff;
+}
+[data-theme='simple'] .pipeline-dot.error {
+  background: #ef4444;
+  border-color: #ef4444;
+  color: #fff;
+}
+[data-theme='simple'] .pipeline-label {
+  font-size: 13px;
+  font-weight: 500;
+}
+[data-theme='simple'] .pipeline-detail {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* ── Simple: Scrollbar mỏng ──────────────────────────────────── */
+[data-theme='simple'] ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+[data-theme='simple'] ::-webkit-scrollbar-track {
+  background: transparent;
+}
+[data-theme='simple'] ::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,0.12);
+  border-radius: 3px;
+}
+[data-theme='simple'] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0,0,0,0.2);
+}
+
+/* ── Simple: Agent status bar (thay thế galaxy canvas) ──────── */
+.simple-status-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+.simple-agent-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+.simple-agent-chip:hover {
+  border-color: var(--border-medium);
+  background: var(--surface-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+.simple-agent-chip.active {
+  background: linear-gradient(135deg, #eff6ff, #eef2ff);
+  border-color: rgba(37, 99, 235, 0.25);
+  color: #1e40af;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.06);
+}
+.simple-agent-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+.simple-agent-chip.active .simple-agent-dot {
+  background: var(--accent);
+  box-shadow: 0 0 8px rgba(37, 99, 235, 0.5);
+  animation: simple-pulse 1.8s ease-in-out infinite;
+}
+@keyframes simple-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.85); }
+}
+/* cleaned */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 /* Thematic (chung cả 2 theme) */
 :root {
   --grass: #5da130;
@@ -229,6 +782,84 @@ img {
   font-size: 17px;
 }
 
+/* ── Markdown đã render trong bubble agent ── */
+/* Bubble đặt white-space: pre-wrap cho plain text; với HTML đã render thì
+   trả về normal để các block không bị giãn bởi khoảng trắng thừa. */
+.bubble.agent .md {
+  white-space: normal;
+}
+/* Gộp margin của block đầu/cuối để bubble không dư khoảng trống trên/dưới. */
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md h1, .md h2, .md h3, .md h4 {
+  margin: 0.9em 0 0.4em;
+  line-height: 1.25;
+  font-weight: 700;
+}
+.md h1 { font-size: 1.35em; }
+.md h2 { font-size: 1.2em; }
+.md h3 { font-size: 1.08em; }
+.md h4 { font-size: 1em; }
+.md p { margin: 0.5em 0; }
+.md ul, .md ol { margin: 0.5em 0; padding-left: 1.5em; }
+.md li { margin: 0.2em 0; }
+.md li > ul, .md li > ol { margin: 0.2em 0; }
+.md a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.md strong { font-weight: 700; }
+.md em { font-style: italic; }
+.md hr {
+  border: none;
+  border-top: var(--bd-thin) solid var(--outline);
+  margin: 0.9em 0;
+}
+.md blockquote {
+  margin: 0.5em 0;
+  padding: 0.1em 0.9em;
+  border-left: 3px solid var(--outline);
+  color: var(--text-2);
+}
+/* Code: inline nền nhạt; block cuộn ngang, không tràn bubble. */
+.md code {
+  font-family: 'SFMono-Regular', ui-monospace, Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  background: var(--inset);
+  border: var(--bd-thin) solid var(--outline);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+.md pre {
+  margin: 0.6em 0;
+  padding: 0.7em 0.9em;
+  background: var(--inset);
+  border: var(--bd-thin) solid var(--outline);
+  border-radius: 4px;
+  overflow-x: auto;
+}
+.md pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.85em;
+}
+/* Table GFM: cuộn ngang khi rộng để không phá vỡ layout. */
+.md table {
+  border-collapse: collapse;
+  margin: 0.6em 0;
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+.md th, .md td {
+  border: var(--bd-thin) solid var(--outline);
+  padding: 0.35em 0.6em;
+  text-align: left;
+}
+.md th { background: var(--inset); font-weight: 700; }
+.md img { max-width: 100%; height: auto; }
+
 .thinking {
   align-self: center;
   color: var(--wood);
@@ -283,6 +914,137 @@ img {
   gap: 12px;
   padding: 12px 14px;
   border-top: var(--bd-thin) solid var(--outline);
+}
+
+/* ── Question card (AskUserQuestion) ─────────────────────── */
+.question-card {
+  align-self: stretch;
+  background: var(--panel);
+  border: var(--bd-thick) solid var(--gold);
+  box-shadow: var(--sh) var(--sh) 0 var(--shadow);
+}
+.question-card-head {
+  padding: 10px 14px;
+  font-size: 10px;
+  color: var(--wood);
+  background: rgba(155, 107, 63, 0.16);
+  border-bottom: var(--bd-thin) solid var(--outline);
+  letter-spacing: 0.3px;
+}
+[data-theme='dark'] .question-card-head {
+  color: var(--gold);
+}
+.question-block {
+  padding: 12px 14px;
+  border-bottom: var(--bd-thin) solid var(--outline);
+}
+.question-header-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.question-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--panel);
+  background: var(--grass-dark);
+  border: var(--bd-thin) solid var(--outline);
+  letter-spacing: 0.3px;
+}
+.question-multi-hint {
+  font-size: 13px;
+  color: var(--muted);
+  font-style: italic;
+}
+.question-text {
+  font-size: 18px;
+  line-height: 1.35;
+  color: var(--text);
+  margin-bottom: 10px;
+}
+.question-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* Một option: nút full-width, viền + nền inset; khi chọn thì viền/nền theo accent. */
+.question-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+  cursor: pointer;
+  background: var(--inset);
+  border: var(--bd-thin) solid var(--outline);
+  color: var(--text);
+  transition: none;
+}
+.question-option:hover {
+  border-color: var(--grass-dark);
+}
+.question-option.selected {
+  border-color: var(--grass-dark);
+  background: var(--accent-soft, rgba(16, 185, 129, 0.12));
+  box-shadow: inset 3px 0 0 var(--grass-dark);
+}
+.question-option-mark {
+  font-size: 18px;
+  line-height: 1.2;
+  color: var(--grass-dark);
+  flex-shrink: 0;
+}
+.question-option-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.question-option-label {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+.question-option-desc {
+  font-size: 14px;
+  line-height: 1.35;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.question-other-input {
+  width: 100%;
+  padding: 9px 12px;
+  font-size: 16px;
+  background: var(--inset);
+  border: var(--bd-thin) solid var(--grass-dark);
+  color: var(--text);
+}
+.question-actions {
+  display: flex;
+  gap: 12px;
+  padding: 12px 14px;
+}
+.question-actions .btn.allow:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Theme 'simple': bỏ bo-viền pixel, dùng nét mảnh/tròn hiện đại. */
+[data-theme='simple'] .question-card {
+  border: 1px solid var(--outline);
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+[data-theme='simple'] .question-option {
+  border-radius: 8px;
+}
+[data-theme='simple'] .question-chip {
+  border-radius: 6px;
+  color: #fff;
 }
 
 /* ── Composer ────────────────────────────────────────────── */
@@ -773,6 +1535,49 @@ textarea:disabled {
   flex: 1;
   min-height: 0;
 }
+.chat-pinned-query {
+  background: var(--panel);
+  border: var(--bd-thick) solid var(--outline);
+  padding: 12px 16px;
+  font-size: 16px;
+  color: var(--text-2);
+  box-shadow: var(--sh) var(--sh) 0 var(--shadow);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  animation: chatPinnedQuerySlideDown 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  flex-shrink: 0;
+}
+.chat-pinned-query .pinned-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+.chat-pinned-query .pinned-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: bold;
+}
+@keyframes chatPinnedQuerySlideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+[data-theme='simple'] .chat-pinned-query {
+  border: none !important;
+  border-radius: 16px !important;
+  background: rgba(255, 255, 255, 0.8) !important;
+  backdrop-filter: blur(20px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 0 0 1px var(--border-subtle) !important;
+  padding: 10px 16px !important;
+  font-size: 14px !important;
+}
 .sidebar-pipeline {
   width: 280px;
   background: var(--panel);
@@ -902,6 +1707,24 @@ textarea:disabled {
     0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
+/* Light theme: galaxy container sáng ấm trên nền nông trại */
+[data-theme='light'] .neural-net-container {
+  background: #f5f5f4;
+  border: 2px solid rgba(120, 113, 108, 0.25);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    0 4px 12px rgba(120, 113, 108, 0.2);
+}
+
+/* Dark theme: galaxy container hòa vào nền rừng tối */
+[data-theme='dark'] .neural-net-container {
+  background: #04091a;
+  border: 2px solid rgba(34, 197, 94, 0.18);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    0 6px 20px rgba(0, 0, 0, 0.5);
+}
+
 /* Panel chi tiết bước đang chọn trên não neuron. */
 .step-detail {
   margin: -6px 0 12px;
@@ -959,3 +1782,570 @@ textarea:disabled {
 .step-error { border-left-color: #f87171; }
 .step-approval { border-left-color: #fbbf24; }
 .step-thinking { border-left-color: #a78bfa; }
+
+/* ── Simple Mode (Premium Minimal Overrides) ────────────────── */
+[data-theme='simple'] {
+  --bg: #fafafa;
+  --panel: #ffffff;
+  --inset: #ffffff;
+  --outline: rgba(0, 0, 0, 0.08);
+  --shadow: transparent;
+  --text: #171717;
+  --text-2: #525252;
+  --muted: #a3a3a3;
+  --scan: transparent;
+  --menu-bg: #ffffff;
+
+  --grass: #10b981;
+  --grass-dark: #059669;
+  --leaf: #10b981;
+  --gold: #f59e0b;
+  --red: #ef4444;
+  --teal: #06b6d4;
+  --wood: #a3a3a3;
+
+  --bd-thin: 1px;
+  --bd-thick: 1px;
+  --sh: 0px;
+
+  --accent: #2563eb;
+  --accent-soft: rgba(37, 99, 235, 0.08);
+  --surface-raised: #ffffff;
+  --surface-hover: #f5f5f5;
+  --border-subtle: rgba(0, 0, 0, 0.06);
+  --border-medium: rgba(0, 0, 0, 0.1);
+}
+
+/* Simple: Base typography & body */
+[data-theme='simple'] body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  background-image: none !important;
+  font-size: 14px !important;
+  line-height: 1.6 !important;
+  -webkit-font-smoothing: antialiased !important;
+}
+[data-theme='simple'] .brand,
+[data-theme='simple'] .btn,
+[data-theme='simple'] .approval-head,
+[data-theme='simple'] .controls label,
+[data-theme='simple'] .px-select-btn,
+[data-theme='simple'] .px-select-item,
+[data-theme='simple'] select,
+[data-theme='simple'] textarea,
+[data-theme='simple'] input {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  -webkit-font-smoothing: antialiased !important;
+}
+[data-theme='simple'] .pipeline-content {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+}
+
+/* Simple: App container width */
+[data-theme='simple'] .app {
+  max-width: 1400px !important;
+  gap: 12px !important;
+}
+
+/* Simple: Top bar design */
+[data-theme='simple'] .topbar {
+  border: none !important;
+  border-radius: 16px !important;
+  background: rgba(255, 255, 255, 0.72) !important;
+  backdrop-filter: blur(20px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 0 0 1px var(--border-subtle) !important;
+  padding: 10px 20px !important;
+}
+[data-theme='simple'] .brand {
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  color: var(--text) !important;
+  letter-spacing: -0.3px !important;
+}
+[data-theme='simple'] .meta {
+  font-size: 13px !important;
+  color: var(--muted) !important;
+}
+
+/* Simple: Theme buttons */
+[data-theme='simple'] .theme-btn {
+  border: 1px solid var(--border-medium) !important;
+  border-radius: 10px !important;
+  box-shadow: none !important;
+  width: 36px !important;
+  height: 36px !important;
+  font-size: 16px !important;
+  background: var(--surface-raised) !important;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s !important;
+}
+[data-theme='simple'] .theme-btn:hover {
+  background: var(--surface-hover) !important;
+  border-color: rgba(0,0,0,0.15) !important;
+}
+[data-theme='simple'] .theme-btn:active {
+  transform: scale(0.94) !important;
+  box-shadow: none !important;
+}
+
+/* Simple: Sidebar Layout */
+[data-theme='simple'] .sidebar-pipeline {
+  border: none !important;
+  border-radius: 16px !important;
+  background: rgba(255, 255, 255, 0.72) !important;
+  backdrop-filter: blur(20px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 0 0 1px var(--border-subtle) !important;
+  padding: 16px !important;
+  width: 280px !important;
+}
+[data-theme='simple'] .sidebar-pipeline-title {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 1px !important;
+  color: var(--muted) !important;
+  border-bottom: 1px solid var(--border-subtle) !important;
+  padding-bottom: 12px !important;
+  margin-bottom: 16px !important;
+}
+
+/* Simple: Chat Panel */
+[data-theme='simple'] .chat {
+  border: none !important;
+  border-radius: 16px !important;
+  background: rgba(255, 255, 255, 0.5) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 0 0 1px var(--border-subtle) !important;
+  gap: 16px !important;
+  padding: 20px !important;
+}
+
+/* Simple: Message Bubbles */
+[data-theme='simple'] .bubble {
+  border: none !important;
+  box-shadow: none !important;
+  font-size: 14px !important;
+  line-height: 1.6 !important;
+  padding: 12px 16px !important;
+}
+[data-theme='simple'] .bubble.user {
+  background: var(--accent) !important;
+  color: #fff !important;
+  border-radius: 20px 20px 6px 20px !important;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25) !important;
+}
+[data-theme='simple'] .bubble.agent {
+  background: #f5f5f5 !important;
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: 20px 20px 20px 6px !important;
+}
+[data-theme='simple'] .bubble.tool {
+  background: transparent !important;
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: 12px !important;
+  font-size: 13px !important;
+  color: var(--text-2) !important;
+}
+[data-theme='simple'] .bubble.result {
+  background: linear-gradient(135deg, #ecfdf5, #f0fdf4) !important;
+  border: 1px solid rgba(16, 185, 129, 0.2) !important;
+  border-radius: 16px !important;
+  color: #065f46 !important;
+}
+[data-theme='simple'] .bubble.error {
+  background: #fef2f2 !important;
+  border: 1px solid rgba(239, 68, 68, 0.2) !important;
+  border-radius: 16px !important;
+}
+
+/* Simple: Empty chat state */
+[data-theme='simple'] .empty {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-size: 14px !important;
+  color: var(--muted) !important;
+  line-height: 1.7 !important;
+}
+
+/* Simple: Toolbar Controls */
+[data-theme='simple'] .controls {
+  border: none !important;
+  border-radius: 14px !important;
+  background: rgba(255,255,255,0.72) !important;
+  backdrop-filter: blur(16px) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 0 0 1px var(--border-subtle) !important;
+  padding: 10px 14px !important;
+}
+[data-theme='simple'] .controls label {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  color: var(--muted) !important;
+}
+
+/* Simple: Text Inputs & Textareas */
+[data-theme='simple'] input,
+[data-theme='simple'] textarea {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-size: 14px !important;
+  border-radius: 12px !important;
+  border: 1px solid var(--border-medium) !important;
+  padding: 10px 14px !important;
+  background: var(--surface-raised) !important;
+  transition: border-color 0.2s, box-shadow 0.2s !important;
+  color: var(--text) !important;
+  box-shadow: none !important;
+}
+[data-theme='simple'] input:focus,
+[data-theme='simple'] textarea:focus {
+  outline: none !important;
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px var(--accent-soft) !important;
+}
+[data-theme='simple'] input::placeholder,
+[data-theme='simple'] textarea::placeholder {
+  color: var(--muted) !important;
+}
+
+/* Simple: CWD folder picker specific */
+[data-theme='simple'] .cwd-container .folder-picker-btn {
+  background: var(--surface-raised) !important;
+  border: 1px solid var(--border-medium) !important;
+  box-shadow: none !important;
+  border-radius: 10px !important;
+  transform: none !important;
+  transition: background 0.15s, border-color 0.15s !important;
+}
+[data-theme='simple'] .cwd-container .folder-picker-btn:hover {
+  background: var(--surface-hover) !important;
+  border-color: rgba(0,0,0,0.15) !important;
+  filter: none !important;
+}
+[data-theme='simple'] .cwd-container .folder-picker-btn:active {
+  transform: scale(0.95) !important;
+  box-shadow: none !important;
+}
+
+/* Simple: Dropdown PixelSelect Overrides */
+[data-theme='simple'] .px-select-btn {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  border-radius: 8px !important;
+  border: 1px solid var(--border-medium) !important;
+  box-shadow: none !important;
+  padding: 6px 10px !important;
+  background: var(--surface-raised) !important;
+  transition: border-color 0.15s !important;
+}
+[data-theme='simple'] .px-select-btn:hover {
+  border-color: rgba(0,0,0,0.2) !important;
+}
+[data-theme='simple'] .px-select-menu {
+  border-radius: 12px !important;
+  border: 1px solid var(--border-medium) !important;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.12), 0 0 0 1px var(--border-subtle) !important;
+  overflow: hidden !important;
+  background: var(--surface-raised) !important;
+}
+[data-theme='simple'] .px-select-item {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-size: 13px !important;
+  padding: 8px 14px !important;
+  border-bottom: 1px solid var(--border-subtle) !important;
+  transition: background 0.1s !important;
+}
+[data-theme='simple'] .px-select-item:hover {
+  background: var(--accent) !important;
+  color: #fff !important;
+}
+[data-theme='simple'] .px-select-caret {
+  color: var(--muted) !important;
+}
+[data-theme='simple'] .px-led {
+  display: none !important; /* Ẩn hộp led vuông */
+}
+
+/* Simple: Quick prompt chips */
+[data-theme='simple'] .quick-prompt-chip {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  border-radius: 100px !important;
+  padding: 7px 16px !important;
+  background: var(--surface-raised) !important;
+  border: 1px solid var(--border-medium) !important;
+  color: var(--text-2) !important;
+  transition: all 0.15s !important;
+  box-shadow: none !important;
+}
+[data-theme='simple'] .quick-prompt-chip:hover {
+  background: var(--accent) !important;
+  color: #fff !important;
+  border-color: var(--accent) !important;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.2) !important;
+  transform: translateY(-1px) !important;
+}
+[data-theme='simple'] .quick-prompt-chip:active {
+  transform: translateY(0) !important;
+}
+
+/* Simple: Buttons Overrides */
+[data-theme='simple'] .btn {
+  border: none !important;
+  border-radius: 12px !important;
+  padding: 10px 22px !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  letter-spacing: -0.1px !important;
+  text-transform: none !important;
+  box-shadow: none !important;
+  transition: all 0.15s !important;
+  cursor: pointer !important;
+}
+[data-theme='simple'] .btn:hover {
+  filter: none !important;
+  transform: translateY(-1px) !important;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1) !important;
+}
+[data-theme='simple'] .btn:active {
+  transform: translateY(0) !important;
+  box-shadow: none !important;
+}
+[data-theme='simple'] .btn.run,
+[data-theme='simple'] .btn.allow {
+  background: var(--accent) !important;
+  color: #fff !important;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3) !important;
+}
+[data-theme='simple'] .btn.run:hover,
+[data-theme='simple'] .btn.allow:hover {
+  box-shadow: 0 6px 20px rgba(37, 99, 235, 0.35) !important;
+}
+[data-theme='simple'] .btn.stop,
+[data-theme='simple'] .btn.deny {
+  background: #ef4444;
+  color: #fff !important;
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.25) !important;
+}
+[data-theme='simple'] .btn.attach {
+  background: var(--surface-raised) !important;
+  color: var(--text-2) !important;
+  border: 1px solid var(--border-medium) !important;
+  padding: 10px 14px !important;
+  box-shadow: none !important;
+}
+[data-theme='simple'] .btn.attach:hover {
+  background: var(--surface-hover) !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+[data-theme='simple'] .btn.genprof {
+  background: var(--accent) !important;
+  color: #fff !important;
+  border: none !important;
+  padding: 6px 14px !important;
+  font-size: 12px !important;
+  box-shadow: none !important;
+  border-radius: 8px !important;
+}
+[data-theme='simple'] .btn.clear-chat {
+  background: transparent;
+  color: var(--muted) !important;
+  border: 1px solid var(--border-medium) !important;
+}
+[data-theme='simple'] .btn.clear-chat:hover {
+  background: #fef2f2 !important;
+  border-color: rgba(239,68,68,0.3) !important;
+  color: #ef4444 !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+[data-theme='simple'] .btn.clear-chat:disabled {
+  opacity: 0.35 !important;
+  box-shadow: none !important;
+}
+
+/* Simple: Attachment chips */
+[data-theme='simple'] .chip {
+  border-radius: 100px !important;
+  font-size: 13px !important;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  border: 1px solid var(--border-medium) !important;
+  background: var(--surface-raised) !important;
+  padding: 4px 14px !important;
+}
+[data-theme='simple'] .chip button {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  color: var(--muted) !important;
+}
+[data-theme='simple'] .chip button:hover {
+  color: #ef4444 !important;
+}
+
+/* Simple: Checkboxes */
+[data-theme='simple'] .px-box {
+  border-radius: 6px !important;
+  border: 1.5px solid var(--border-medium) !important;
+  transition: all 0.15s !important;
+}
+[data-theme='simple'] .px-check input:checked + .px-box {
+  background: var(--accent) !important;
+  border-color: var(--accent) !important;
+  color: #fff !important;
+}
+
+/* Simple: Detected profiles panel */
+[data-theme='simple'] .detected {
+  border-radius: 12px !important;
+  border: 1px solid var(--border-subtle) !important;
+  background: linear-gradient(135deg, #faf5ff, #f5f3ff) !important;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-size: 13px !important;
+  box-shadow: none !important;
+}
+
+/* Simple: Approval components */
+[data-theme='simple'] .approval-head {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  border-radius: 14px 14px 0 0 !important;
+  font-size: 12px !important;
+}
+[data-theme='simple'] .thinking {
+  border-radius: 14px;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+}
+
+/* Simple: Step detail card */
+[data-theme='simple'] .step-detail {
+  border-radius: 12px !important;
+  font-size: 13px !important;
+  border: 1px solid var(--border-subtle) !important;
+  border-left-width: 3px !important;
+  background: var(--surface-raised) !important;
+}
+[data-theme='simple'] .step-detail-empty {
+  border-left-color: var(--border-medium) !important;
+}
+
+/* Simple: Pipeline items */
+[data-theme='simple'] .pipeline-item {
+  padding-bottom: 16px !important;
+}
+[data-theme='simple'] .pipeline-item::after {
+  border-left-style: solid !important;
+  border-left-color: var(--border-subtle) !important;
+  border-left-width: 1.5px !important;
+}
+[data-theme='simple'] .pipeline-dot {
+  width: 20px !important;
+  height: 20px !important;
+  font-size: 10px !important;
+  border: 1.5px solid var(--border-medium) !important;
+  border-radius: 50% !important;
+  background: var(--surface-raised) !important;
+}
+[data-theme='simple'] .pipeline-dot.active {
+  background: var(--accent) !important;
+  border-color: var(--accent) !important;
+  color: #fff !important;
+  box-shadow: 0 0 0 3px var(--accent-soft) !important;
+}
+[data-theme='simple'] .pipeline-dot.success {
+  background: #10b981 !important;
+  border-color: #10b981 !important;
+  color: #fff !important;
+}
+[data-theme='simple'] .pipeline-dot.error {
+  background: #ef4444;
+  border-color: #ef4444;
+  color: #fff !important;
+}
+[data-theme='simple'] .pipeline-label {
+  font-size: 13px !important;
+  font-weight: 500 !important;
+}
+[data-theme='simple'] .pipeline-detail {
+  font-size: 12px !important;
+  color: var(--muted) !important;
+  line-height: 1.5 !important;
+}
+
+/* Simple: Scrollbars */
+[data-theme='simple'] ::-webkit-scrollbar {
+  width: 6px !important;
+  height: 6px !important;
+}
+[data-theme='simple'] ::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+[data-theme='simple'] ::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,0.12) !important;
+  border-radius: 3px !important;
+}
+[data-theme='simple'] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0,0,0,0.2) !important;
+}
+
+/* Simple: Agent status bar */
+.simple-status-bar {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 6px !important;
+  margin-bottom: 16px !important;
+}
+.simple-agent-chip {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  padding: 10px 14px !important;
+  border-radius: 12px !important;
+  background: var(--surface-raised) !important;
+  border: 1px solid var(--border-subtle) !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  color: var(--text) !important;
+  cursor: pointer !important;
+  transition: all 0.15s !important;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  box-shadow: none !important;
+}
+.simple-agent-chip:hover {
+  border-color: var(--border-medium) !important;
+  background: var(--surface-hover) !important;
+  transform: translateY(-1px) !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06) !important;
+}
+.simple-agent-chip.active {
+  background: linear-gradient(135deg, #eff6ff, #eef2ff) !important;
+  border-color: rgba(37, 99, 235, 0.25) !important;
+  color: #1e40af !important;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.06) !important;
+}
+.simple-agent-dot {
+  width: 8px !important;
+  height: 8px !important;
+  border-radius: 50% !important;
+  background: var(--muted) !important;
+  flex-shrink: 0 !important;
+  transition: all 0.2s !important;
+}
+.simple-agent-chip.active .simple-agent-dot {
+  background: var(--accent) !important;
+  box-shadow: 0 0 8px rgba(37, 99, 235, 0.5) !important;
+  animation: simple-pulse 1.8s ease-in-out infinite !important;
+}
+@keyframes simple-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.85); }
+}
+
+/* Simple theme: galaxy container sáng trắng tối giản */
+[data-theme='simple'] .neural-net-container {
+  background: #ffffff !important;
+  border: 1px solid rgba(0, 0, 0, 0.08) !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02), 0 0 0 1px rgba(0, 0, 0, 0.04) !important;
+}

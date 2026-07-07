@@ -44,6 +44,7 @@ app.post('/api/run', async (req, res) => {
       language,
       cwd,
       model,
+      conversationId,
     } = req.body ?? {};
 
     const workdir = cwd || process.cwd();
@@ -108,7 +109,13 @@ app.post('/api/run', async (req, res) => {
     }
 
     const session = createSession();
+    // sessionId (lớp web/SSE) trả ngay để client mở stream. conversationId THẬT của SDK
+    // đến sau qua event 'conversation' (bắt từ system/init) — client lưu để resume lượt sau.
     res.json({ sessionId: session.id });
+
+    // Nếu client gửi kèm conversationId (đang tiếp nối phiên cũ) thì resume phiên đó.
+    const resumeSessionId =
+      typeof conversationId === 'string' && conversationId ? conversationId : undefined;
 
     const runMode: 'plan' | 'execute' = mode === 'execute' ? 'execute' : 'plan';
 
@@ -128,7 +135,12 @@ app.post('/api/run', async (req, res) => {
         runMode === 'execute'
           ? (toolName, input, meta) => session.requestApproval(toolName, input, meta)
           : undefined,
+      // AskUserQuestion hoạt động ở mọi mode (kể cả plan) để agent làm rõ yêu cầu.
+      onQuestion: (questions) => session.requestQuestion(questions),
       model,
+      resumeSessionId,
+      // Bắt session_id THẬT của SDK → đẩy lên client để lưu, lượt sau resume đúng phiên.
+      onSessionId: (conversationId) => session.push({ type: 'conversation', conversationId }),
     })
       .then((result) => session.push({ type: 'done', result }))
       .catch((err: unknown) => session.push({ type: 'fatal', message: (err as Error).message }))
@@ -184,6 +196,24 @@ app.post('/api/approve', (req, res) => {
     return;
   }
   const ok = session.resolveApproval(id, Boolean(approved));
+  res.json({ ok });
+});
+
+/**
+ * POST /api/answer — trả lời một câu hỏi AskUserQuestion.
+ * body: { sessionId, id, answers } — answers là map câu-hỏi → câu-trả-lời,
+ * hoặc null/thiếu = người dùng huỷ (tool bị deny).
+ */
+app.post('/api/answer', (req, res) => {
+  const { sessionId, id, answers } = req.body ?? {};
+  const session = getSession(sessionId);
+  if (!session) {
+    res.status(404).json({ error: 'Phiên không tồn tại.' });
+    return;
+  }
+  const normalized =
+    answers && typeof answers === 'object' ? (answers as Record<string, string>) : null;
+  const ok = session.resolveQuestion(id, normalized);
   res.json({ ok });
 });
 

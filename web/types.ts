@@ -1,3 +1,17 @@
+/** Một lựa chọn của câu hỏi AskUserQuestion. */
+export interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+/** Một câu hỏi agent gửi qua tool AskUserQuestion. */
+export interface Question {
+  question: string;
+  header: string;
+  multiSelect?: boolean;
+  options: QuestionOption[];
+}
+
 /** Sự kiện từ backend qua SSE — phải khớp WebEvent ở src/web/session.ts. */
 export type WebEvent =
   | { type: 'text'; text: string }
@@ -14,6 +28,8 @@ export type WebEvent =
       blockedPath?: string;
       decisionReason?: string;
     }
+  | { type: 'question-request'; id: string; questions: Question[] }
+  | { type: 'conversation'; conversationId: string }
   | { type: 'done'; result: string | null }
   | { type: 'fatal'; message: string };
 
@@ -33,6 +49,12 @@ export interface PendingApproval {
   description?: string;
   blockedPath?: string;
   decisionReason?: string;
+}
+
+/** Câu hỏi (AskUserQuestion) đang chờ người dùng chọn. */
+export interface PendingQuestion {
+  id: string;
+  questions: Question[];
 }
 
 export type Mode = 'plan' | 'execute';
