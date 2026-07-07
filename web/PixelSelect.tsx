@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Icon } from './Icon.js';
 
 /**
  * Dropdown pixel-art tự vẽ — thay cho <select> native (element mặc định của
@@ -16,9 +17,11 @@ interface Props {
   onChange: (value: string) => void;
   disabled?: boolean;
   width?: number;
+  /** Hướng bung menu: 'up' (mặc định — hợp composer ở đáy) hoặc 'down' (hợp header trên cùng). */
+  direction?: 'up' | 'down';
 }
 
-export function PixelSelect({ value, options, onChange, disabled, width }: Props) {
+export function PixelSelect({ value, options, onChange, disabled, width, direction = 'up' }: Props) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -43,10 +46,10 @@ export function PixelSelect({ value, options, onChange, disabled, width }: Props
         onClick={() => setOpen((o) => !o)}
       >
         <span>{current?.label ?? value}</span>
-        <span className="px-select-caret">{open ? '▲' : '▼'}</span>
+        <span className="px-select-caret"><Icon name={open ? 'caretUp' : 'caretDown'} size={13} /></span>
       </button>
       {open && !disabled && (
-        <div className="px-select-menu">
+        <div className={`px-select-menu ${direction}`}>
           {options.map((o) => (
             <button
               type="button"

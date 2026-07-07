@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { PixelSelect } from './PixelSelect.js';
+import { ModeSelect, modeDef } from './ModeSelect.js';
 import { NeuralBrain } from './NeuralBrain.js';
 import { Markdown } from './Markdown.js';
 import { QuestionCard } from './QuestionCard.js';
@@ -13,6 +14,7 @@ import type {
   PendingApproval,
   PendingQuestion,
   ToolDetail,
+  UsageSnapshot,
   WebEvent,
 } from './types.js';
 
@@ -80,10 +82,63 @@ const QUICK_PROMPTS: { icon: IconName; label: string; text: string }[] = [
   },
 ];
 
+/** "trong 2h", "trong 1d"… từ ISO reset time. Rỗng nếu không có/đã qua. */
+function formatResetIn(iso: string | null): string {
+  if (!iso) return '';
+  const ms = new Date(iso).getTime() - Date.now();
+  if (!Number.isFinite(ms) || ms <= 0) return '';
+  const mins = Math.round(ms / 60000);
+  if (mins < 60) return `Còn ${mins}m`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `Còn ${hours}h`;
+  return `Còn ${Math.round(hours / 24)}d`;
+}
+
+/** Gọn số token: 21592 → "21.6k", 1000000 → "1M". */
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}k`;
+  return String(n);
+}
+
+/** Một thanh usage: nhãn + % + bar. severity đổi màu khi gần đầy. */
+function UsageBar({
+  label,
+  percent,
+  sub,
+  value,
+}: {
+  label: string;
+  percent: number | null;
+  sub?: string;
+  value?: string;
+}) {
+  const pct = percent == null ? null : Math.max(0, Math.min(100, percent));
+  const level = pct == null ? '' : pct >= 90 ? ' danger' : pct >= 70 ? ' warn' : '';
+  return (
+    <div className="usage-bar">
+      <div className="usage-bar-head">
+        <span className="usage-bar-label">{label}</span>
+        <span className="usage-bar-val">{value ?? (pct == null ? '—' : `${Math.round(pct)}%`)}</span>
+      </div>
+      <div className="usage-track">
+        <div className={`usage-fill${level}`} style={{ width: `${pct ?? 0}%` }} />
+      </div>
+      {sub && <div className="usage-bar-sub">{sub}</div>}
+    </div>
+  );
+}
+
 export function App() {
   const [task, setTask] = useState(() => localStorage.getItem('bow-task') || '');
   const [cwd, setCwd] = useState(() => localStorage.getItem('bow-cwd') || '');
-  const [mode, setMode] = useState<Mode>(() => (localStorage.getItem('bow-mode') as Mode) || 'plan');
+  const [mode, setMode] = useState<Mode>(() => {
+    // Migrate giá trị cũ: 'execute' (2-mode trước đây) → 'manual'. Giá trị lạ → 'plan'.
+    const saved = localStorage.getItem('bow-mode');
+    if (saved === 'execute') return 'manual';
+    const valid: Mode[] = ['plan', 'manual', 'edit-auto', 'auto'];
+    return (valid as string[]).includes(saved ?? '') ? (saved as Mode) : 'plan';
+  });
   const [profile, setProfile] = useState(() => localStorage.getItem('bow-profile') || 'auto');
   const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem('bow-selectedModel') || 'claude-opus-4-8');
   const [effort, setEffort] = useState(() => localStorage.getItem('bow-effort') || 'high');
@@ -101,6 +156,10 @@ export function App() {
     }
   });
   const [accumulatedCost, setAccumulatedCost] = useState(0);
+  // Snapshot hạn mức gói + context window (đến từ event 'usage' trong lượt chạy, hoặc
+  // /api/usage khi mở trang). null = chưa có dữ liệu.
+  const [usage, setUsage] = useState<UsageSnapshot | null>(null);
+  const [usageLoading, setUsageLoading] = useState(false);
 
   const [docs, setDocs] = useState<DocAttachment[]>([]);
   const [pdfs, setPdfs] = useState<{ name: string; base64: string }[]>([]);
@@ -167,6 +226,27 @@ export function App() {
   const [mcpForm, setMcpForm] = useState({ name: '', command: '', args: '', env: '' });
   const [mcpError, setMcpError] = useState('');
   const [mcpBusy, setMcpBusy] = useState(false);
+
+  /**
+   * Làm mới snapshot hạn mức gói qua /api/usage (độc lập lượt chạy). Chỉ cập nhật phần
+   * rateLimits/subscription; GIỮ context window cũ (đến từ event 'usage' trong lượt chạy
+   * — /api/usage đọc từ phiên trống nên context không phản ánh hội thoại thật).
+   */
+  const refreshUsage = () => {
+    setUsageLoading(true);
+    fetch(`/api/usage?model=${encodeURIComponent(selectedModel)}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((d: { usage: UsageSnapshot }) => {
+        setUsage((prev) => ({
+          ...d.usage,
+          contextTokens: prev?.contextTokens ?? d.usage.contextTokens,
+          contextMaxTokens: prev?.contextMaxTokens ?? d.usage.contextMaxTokens,
+          contextPercentage: prev?.contextPercentage ?? d.usage.contextPercentage,
+        }));
+      })
+      .catch(() => {})
+      .finally(() => setUsageLoading(false));
+  };
 
   /** Tải danh sách MCP từ backend (che token). */
   const loadMcpList = () => {
@@ -358,6 +438,8 @@ export function App() {
         }
       })
       .catch(() => {});
+    // Nạp hạn mức gói ngay khi mở trang (trước khi chạy task nào).
+    refreshUsage();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -581,6 +663,10 @@ export function App() {
             `Xong · ${ev.turns} lượt · ${ev.outputTokens} tokens · $${ev.costUsd.toFixed(4)}`,
           );
           setAccumulatedCost((prev) => prev + ev.costUsd);
+          break;
+        case 'usage':
+          // Snapshot đầy đủ trong lượt chạy: hạn mức + context window THẬT của hội thoại.
+          setUsage(ev.usage);
           break;
         case 'error':
           addItem('error', `Kết thúc bất thường: ${ev.subtype}`);
@@ -1005,10 +1091,10 @@ export function App() {
               ${accumulatedCost.toFixed(4)}
             </span>
           </span>
-          <span className="readout" title={mode === 'plan' ? 'Chế độ an toàn — chỉ lập kế hoạch' : 'Chế độ thực thi — hỏi duyệt mọi thao tác ghi'}>
+          <span className="readout" title={modeDef(mode).desc}>
             <span className="rl">Mode</span>
-            <span className={`rv ${mode === 'plan' ? 'mode-plan' : 'mode-exec'}`}>
-              {mode === 'plan' ? 'PLAN' : 'EXEC'}
+            <span className={`rv mode-${mode}`}>
+              {modeDef(mode).short}
             </span>
           </span>
         </div>
@@ -1044,6 +1130,47 @@ export function App() {
 
       <div className="main-layout">
         <aside className="sidebar-pipeline">
+          {/* ── USAGE: hạn mức gói + context window của hội thoại hiện tại ── */}
+          <div className="usage-panel">
+            <div className="usage-panel-head">
+              <span className="usage-panel-title">Usage</span>
+              <button
+                className="usage-refresh"
+                title="Làm mới hạn mức"
+                onClick={refreshUsage}
+                disabled={usageLoading}
+              >
+                <Icon name="pending" size={14} className={usageLoading ? 'step-detail-spin' : undefined} />
+              </button>
+            </div>
+
+            {usage && usage.rateLimits.length > 0 ? (
+              usage.rateLimits.map((w) => (
+                <UsageBar
+                  key={w.label}
+                  label={w.label}
+                  percent={w.utilization}
+                  sub={formatResetIn(w.resetsAt)}
+                />
+              ))
+            ) : (
+              <div className="usage-empty">
+                {usageLoading ? 'Đang tải hạn mức…' : usage ? 'Không có hạn mức gói (dùng API key/3P).' : 'Chưa có dữ liệu usage.'}
+              </div>
+            )}
+
+            {/* Context window: token đã dùng trong cửa sổ hội thoại hiện tại. */}
+            <div className="usage-context-title">Context window</div>
+            {usage && usage.contextTokens != null && usage.contextMaxTokens ? (
+              <UsageBar
+                label={`${formatTokens(usage.contextTokens)} / ${formatTokens(usage.contextMaxTokens)}`}
+                percent={usage.contextPercentage}
+              />
+            ) : (
+              <div className="usage-empty">Chạy một task để đo context đã dùng.</div>
+            )}
+          </div>
+
           <div className="sidebar-pipeline-title">Star Chart</div>
           <div className="neural-net-container">
             <NeuralBrain
@@ -1390,26 +1517,7 @@ export function App() {
         <div className="controls">
           <div className="field">
             Chế độ:
-            <div className="mode-segment" role="group" aria-label="Chế độ chạy">
-              <button
-                type="button"
-                className={`seg${mode === 'plan' ? ' active' : ''}`}
-                disabled={running}
-                onClick={() => setMode('plan')}
-                title="An toàn — chỉ đọc & lập kế hoạch, không sửa file"
-              >
-                Kế hoạch
-              </button>
-              <button
-                type="button"
-                className={`seg seg-exec${mode === 'execute' ? ' active' : ''}`}
-                disabled={running}
-                onClick={() => setMode('execute')}
-                title="Thực thi thật — mọi thao tác ghi đều hỏi duyệt"
-              >
-                Thực thi
-              </button>
-            </div>
+            <ModeSelect value={mode} onChange={setMode} disabled={running} />
           </div>
           <label>
             Model:
