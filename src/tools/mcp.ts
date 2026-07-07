@@ -97,6 +97,75 @@ export function describeTool(name: string): string {
   return FRIENDLY[name] ?? `dùng tool: ${name}`;
 }
 
+/** Cắt ngắn 1 chuỗi để hiển thị an toàn (không dump content file/secret dài). */
+function clip(value: unknown, max = 160): string {
+  const s = typeof value === 'string' ? value : JSON.stringify(value);
+  if (!s) return '';
+  const oneLine = s.replace(/\s+/g, ' ').trim();
+  return oneLine.length > max ? oneLine.slice(0, max) + '…' : oneLine;
+}
+
+/**
+ * Rút gọn INPUT của một tool thành 1 chuỗi ngắn "đã làm gì cụ thể" để hiển thị chi
+ * tiết ở Activity Log (vd `npm run build`, `src/core/runner.ts`, `"describeTool" in src/`).
+ * Chỉ lấy tham số cốt lõi — KHÔNG lấy content file/patch dài để tránh dump & lộ secret.
+ */
+export function summarizeToolInput(name: string, input: unknown): string {
+  if (!input || typeof input !== 'object') return '';
+  const arg = input as Record<string, unknown>;
+  switch (name) {
+    case 'Bash':
+      return clip(arg.command);
+    case 'Read':
+    case 'Write':
+      return clip(arg.file_path ?? arg.path);
+    case 'Edit':
+      return clip(arg.file_path ?? arg.path);
+    case 'Grep': {
+      const where = arg.path ? ` in ${clip(arg.path, 60)}` : '';
+      return `${clip(arg.pattern, 80)}${where}`;
+    }
+    case 'Glob':
+      return clip(arg.pattern);
+    case 'WebFetch':
+    case 'WebSearch':
+      return clip(arg.url ?? arg.query);
+    case 'Agent':
+      return clip(arg.description ?? arg.agent);
+    case 'Skill':
+      return clip(arg.command ?? arg.name);
+    case 'TodoWrite':
+      return Array.isArray(arg.todos) ? `${arg.todos.length} việc` : '';
+    default: {
+      // MCP tool hoặc tool lạ: lấy vài trường ngắn đầu tiên làm gợi ý.
+      const parts: string[] = [];
+      for (const [k, v] of Object.entries(arg)) {
+        if (typeof v === 'string' || typeof v === 'number') {
+          parts.push(`${k}=${clip(v, 40)}`);
+          if (parts.length >= 3) break;
+        }
+      }
+      return parts.join(', ');
+    }
+  }
+}
+
+/** Rút gọn KẾT QUẢ tool (chuỗi text trong tool_result) để hiển thị "→ ...". */
+export function summarizeToolResult(content: unknown): { text: string; isError: boolean } {
+  // content có thể là string, hoặc mảng block { type:'text', text }.
+  let text = '';
+  if (typeof content === 'string') {
+    text = content;
+  } else if (Array.isArray(content)) {
+    text = content
+      .map((b) => (b && typeof b === 'object' && 'text' in b ? String((b as { text: unknown }).text) : ''))
+      .join('\n');
+  }
+  const trimmed = text.trim();
+  const isError = /^(error|Error|Tool ran|InputValidationError)/.test(trimmed) || /\berror\b/i.test(trimmed.slice(0, 40));
+  return { text: clip(trimmed, 240), isError };
+}
+
 /**
  * Sinh danh sách tool ĐỌC an toàn để auto-allow, cho các MCP server đã nạp.
  * Dùng wildcard mcp__<server>__* cho các server chỉ-đọc quan trọng; server có thao

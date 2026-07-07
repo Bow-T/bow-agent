@@ -455,17 +455,17 @@ export function NeuralBrain({
       const st = stepsRef.current;
       const sel = selRef.current;
       const theme = themeRef.current;
-      const isLight = theme === 'light' || theme === 'simple';
+      const isLight = theme !== 'dark';
 
       ctx.clearRect(0, 0, W, H);
       
       // Deep space radial background — thích ứng theo theme
       const bg = ctx.createRadialGradient(W * 0.5, H * 0.5, 0, W * 0.5, H * 0.5, Math.max(W, H) * 0.7);
       if (isLight) {
-        // Light & Simple theme: nền sáng ấm/thanh lịch
-        bg.addColorStop(0, theme === 'simple' ? '#ffffff' : '#fefce8');  // Trắng hoặc Kem nhạt ở tâm
-        bg.addColorStop(0.5, theme === 'simple' ? '#fafafa' : '#f5f5f4'); // Off-white hoặc Stone 100
-        bg.addColorStop(1, theme === 'simple' ? '#f4f4f5' : '#e7e5e4');  // Zinc 100 hoặc Stone 200 ở rìa
+        // Light theme: nền GIẤY DA ấm, đồng bộ với vỏ observatory (bản đồ sao mực trên giấy).
+        bg.addColorStop(0, '#efe8d7');   // Giấy sáng ở tâm
+        bg.addColorStop(0.5, '#e4dcc7'); // Giấy da
+        bg.addColorStop(1, '#d7ceb4');   // Sạm dần ở rìa
       } else {
         // Dark theme: nền vũ trụ sâu thẳm
         bg.addColorStop(0, '#04091a');
@@ -641,10 +641,8 @@ export function NeuralBrain({
           // Vẽ nhãn của Hệ Mặt Trời nếu được phóng to đủ gần
           if (star.isSun && zoomRef.current > 1.25) {
             ctx.save();
-            ctx.font = theme === 'simple'
-              ? `500 ${8.5 * dpr * star.perspective}px 'Inter', sans-serif`
-              : `${8 * dpr * star.perspective}px ui-sans-serif, system-ui, sans-serif`;
-            ctx.fillStyle = theme === 'simple' ? 'rgba(37, 99, 235, 0.95)' : 'rgba(253, 186, 116, 0.9)';
+            ctx.font = `700 ${8.5 * dpr * star.perspective}px 'Space Mono', ui-monospace, monospace`;
+            ctx.fillStyle = isLight ? 'rgba(147, 95, 18, 0.95)' : 'rgba(214, 164, 65, 0.95)';
             ctx.textAlign = 'left';
             ctx.fillText('Hệ Mặt Trời ☀️', star.x + star.size + 3 * dpr, star.y + 2 * dpr);
             ctx.restore();
@@ -653,7 +651,8 @@ export function NeuralBrain({
       };
 
       // ── RENDER PASS 1: Vẽ các ngôi sao ở phía sau (Z3 > 0) ──
-      ctx.globalCompositeOperation = 'lighter';
+      // Light: vẽ mực đậm (source-over) để galaxy nét trên nền trắng; Dark: cộng sáng (lighter).
+      ctx.globalCompositeOperation = isLight ? 'source-over' : 'lighter';
       drawStarGroup(backStars);
 
       // ── RENDER PASS 2: Vẽ Nhân Thiên Hà 3D (Galactic Core) ──
@@ -769,9 +768,7 @@ export function NeuralBrain({
 
         // Draw agent name label — luôn hiển thị tên agent bên cạnh ngôi sao
         {
-          const labelFont = theme === 'simple'
-            ? `500 ${9 * dpr * p.perspective}px 'Inter', sans-serif`
-            : `${8.5 * dpr * p.perspective}px ui-sans-serif, system-ui, sans-serif`;
+          const labelFont = `700 ${9 * dpr * p.perspective}px 'Space Mono', ui-monospace, monospace`;
           ctx.font = labelFont;
           const labelAlpha = (isSel || p.s.active) ? 0.95 : 0.7;
           ctx.fillStyle = isLight
@@ -842,7 +839,6 @@ export function NeuralBrain({
         width: '100%',
         height: '100%',
         display: 'block',
-        borderRadius: '12px',
         cursor: hoverId ? 'pointer' : 'default',
       }}
       onClick={(e) => {

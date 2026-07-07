@@ -11,7 +11,13 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from '../config/env.js';
 import { BOW_AGENT_APPEND } from './systemPrompt.js';
-import { loadClaudeCodeMcp, mcpReadToolPatterns, describeTool } from '../tools/mcp.js';
+import {
+  loadClaudeCodeMcp,
+  mcpReadToolPatterns,
+  describeTool,
+  summarizeToolInput,
+  summarizeToolResult,
+} from '../tools/mcp.js';
 import { loadPromptSkills } from '../skills/index.js';
 import { loadMonorepoContext } from '../skills/monorepo.js';
 import { buildMonorepoHooks } from '../skills/hooks.js';
@@ -22,9 +28,43 @@ export type AgentEvent =
   | { type: 'text'; text: string }
   // `describe` = mô tả người-đọc-được (do backend sinh, xem describeTool). Web hiển thị
   // thẳng chuỗi này nên không cần lặp lại logic mô tả ở frontend.
-  | { type: 'tool'; name: string; describe: string }
+  // `id` = tool_use id để khớp với 'tool-result' sau đó. `summary` = tham số cốt lõi
+  // đã rút gọn (command/file/pattern...) để hiển thị "đã làm gì cụ thể" ở Activity Log.
+  | { type: 'tool'; id?: string; name: string; describe: string; summary?: string }
+  // Kết quả của một tool (khớp qua toolId) — hiển thị "→ exit 0 / 4 matches / lỗi...".
+  | { type: 'tool-result'; toolId: string; text: string; isError: boolean }
   | { type: 'result'; text: string; turns: number; outputTokens: number; costUsd: number }
+  // Snapshot hạn mức tài khoản + độ dùng context window của phiên hiện tại. Phát ra
+  // sau mỗi lượt `result` (đọc qua control request của SDK — xem readUsageSnapshot).
+  | { type: 'usage'; usage: UsageSnapshot }
   | { type: 'error'; subtype: string };
+
+/** Một cửa sổ hạn mức (5 giờ / 7 ngày / theo model) — % đã dùng + thời điểm reset. */
+export interface UsageWindow {
+  /** Nhãn hiển thị (vd 'Session (5hr)', 'Weekly (7 day)', 'Weekly Fable'). */
+  label: string;
+  /** % đã dùng của cửa sổ, 0-100 (null nếu không lấy được). */
+  utilization: number | null;
+  /** Thời điểm cửa sổ reset (ISO 8601), null nếu không có. */
+  resetsAt: string | null;
+}
+
+/**
+ * Snapshot dữ liệu /usage: hạn mức gói claude.ai + độ dùng context window hiện tại.
+ * `rateLimits` rỗng khi phiên dùng API key/Bedrock/Vertex (hạn mức gói không áp dụng).
+ */
+export interface UsageSnapshot {
+  /** Các cửa sổ hạn mức tài khoản (Session 5h, Weekly 7d, per-model). */
+  rateLimits: UsageWindow[];
+  /** Loại gói ('pro' | 'max' | 'team' | 'enterprise') hoặc null (API key/3P). */
+  subscriptionType: string | null;
+  /** Token đã dùng trong context window của HỘI THOẠI hiện tại (null nếu không đọc được). */
+  contextTokens: number | null;
+  /** Tổng token tối đa của context window (null nếu không đọc được). */
+  contextMaxTokens: number | null;
+  /** % context window đã dùng, 0-100 (null nếu không đọc được). */
+  contextPercentage: number | null;
+}
 
 export interface ApprovalMeta {
   title?: string;
@@ -69,11 +109,15 @@ export interface RunOptions {
   /** Thư mục làm việc — repo mà agent sẽ thao tác. Mặc định cwd hiện tại. */
   cwd: string;
   /**
-   * Chế độ quyền:
-   * - 'plan'   : chỉ lập kế hoạch, KHÔNG sửa file/chạy lệnh (mặc định — an toàn nhất).
-   * - 'execute': thực thi, nhưng mọi thao tác thay đổi đều hỏi duyệt.
+   * Chế độ quyền (lấy cảm hứng từ Modes của Claude Code):
+   * - 'plan'      : chỉ lập kế hoạch, KHÔNG sửa file/chạy lệnh (an toàn nhất). SDK tự chặn tool ghi.
+   * - 'manual'    : thực thi, nhưng MỌI thao tác thay đổi/ghi/bash (trừ lệnh test-build an toàn)
+   *                 đều hỏi duyệt. (Chính là 'execute' cũ — vẫn nhận 'execute' để tương thích.)
+   * - 'edit-auto' : tự duyệt việc SỬA/GHI file TRONG repo; bash & thao tác ngoài repo vẫn hỏi.
+   * - 'auto'      : tự duyệt mọi thao tác AN TOÀN (sửa file trong repo + bash không phá hoại),
+   *                 CHỈ dừng hỏi ở lệnh/thao tác RỦI RO (rm -rf, git push, ghi ngoài repo…).
    */
-  mode: 'plan' | 'execute';
+  mode: 'plan' | 'manual' | 'edit-auto' | 'auto' | 'execute';
   /** Mức reasoning effort. 'high' hợp cho hầu hết coding/agentic. */
   effort?: Options['effort'];
   /**
@@ -100,8 +144,8 @@ export interface RunOptions {
   /** Nhận sự kiện tiến độ. CLI in ra terminal; web đẩy qua SSE. */
   onEvent: (event: AgentEvent) => void;
   /**
-   * Hỏi duyệt một thao tác GHI (chỉ dùng ở mode 'execute'). CLI hỏi y/N trên
-   * terminal; web treo Promise chờ nút bấm. Rỗng ở execute = tự động cho phép
+   * Hỏi duyệt một thao tác GHI/RỦI RO (dùng ở mọi mode trừ 'plan'). CLI hỏi y/N trên
+   * terminal; web treo Promise chờ nút bấm. Rỗng ở các mode thực thi = tự động cho phép
    * (KHÔNG khuyến nghị — chỉ dùng khi caller cố ý bỏ cổng).
    */
   onApproval?: ApprovalRequest;
@@ -181,7 +225,12 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     );
   }
 
-  const permissionMode: PermissionMode = opts.mode === 'plan' ? 'plan' : 'default';
+  // Chuẩn hóa mode: 'execute' (tên cũ) → 'manual'. Từ đây chỉ còn 4 mode chuẩn.
+  const mode: 'plan' | 'manual' | 'edit-auto' | 'auto' =
+    opts.mode === 'execute' ? 'manual' : opts.mode;
+  const isExecuting = mode !== 'plan';
+
+  const permissionMode: PermissionMode = mode === 'plan' ? 'plan' : 'default';
 
   // MCP chỉ nạp các server nằm trong danh sách opts.mcpServers.
   // (1) MCP server từ Claude Code (~/.claude.json): supabase, jira, codemagic...
@@ -233,6 +282,8 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     appendText += `\n\n---\n\n# Kiến thức dự án hiện tại\n\n${opts.projectProfile}`;
   }
 
+  // Lệnh KIỂM CHỨNG an toàn: auto-allow ở MỌI mode thực thi (kể cả 'manual') để agent
+  // tự chạy test/analyze/xem trạng thái mà không làm phiền người dùng. Chỉ đọc/không đổi trạng thái.
   const SAFE_COMMANDS = [
     /^fvm flutter analyze/,
     /^fvm flutter test/,
@@ -247,6 +298,50 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     /^git status/,
     /^git diff/,
   ];
+
+  // Lệnh/mẫu RỦI RO: dù ở mode 'auto' cũng LUÔN hỏi duyệt. Đây là ranh giới an toàn của
+  // 'auto' — mọi thứ không khớp mẫu này (mà cũng không nằm ngoài repo) được coi là an toàn.
+  // Danh sách bao phủ: xóa dữ liệu, đẩy/viết lại lịch sử git, đổi quyền/chủ sở hữu,
+  // tải-rồi-chạy script từ mạng, ghi đè thiết bị, tắt máy, và sudo.
+  const RISKY_COMMANDS = [
+    /\brm\s+-[a-z]*[rf]/,           // rm -rf / rm -f / rm -r
+    /\brmdir\b/,
+    /\bgit\s+push\b/,
+    /\bgit\s+reset\s+--hard\b/,
+    /\bgit\s+clean\b/,
+    /\bgit\s+checkout\s+--\s/,       // vứt bỏ thay đổi file
+    /\bgit\s+restore\b/,
+    /\bgit\s+(rebase|filter-branch)\b/,
+    /\bgit\s+.*--force\b/,
+    /\bchmod\b/,
+    /\bchown\b/,
+    /\bsudo\b/,
+    /\bmkfs\b/,
+    /\bdd\s+if=/,
+    /[>|]\s*\/dev\/sd/,
+    /\b(shutdown|reboot|halt|poweroff)\b/,
+    /\b(curl|wget)\b[^\n]*\|\s*(sh|bash|zsh)\b/, // tải rồi chạy
+    /\bnpm\s+publish\b/,
+    /\byarn\s+publish\b/,
+    /\bkill\s+-9\b/,
+    /\bkillall\b/,
+    /:\s*\(\s*\)\s*\{.*\}\s*;/,      // fork bomb
+  ];
+
+  /** True nếu lệnh bash bị coi là rủi ro → luôn hỏi ngay cả ở mode 'auto'. */
+  const isRiskyCommand = (cmd: string): boolean =>
+    RISKY_COMMANDS.some((re) => re.test(cmd));
+
+  /** Tool sửa/ghi file (trong repo). Ở 'edit-auto'/'auto' được auto-allow nếu đường dẫn nằm trong cwd. */
+  const FILE_WRITE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+
+  const workdir = resolve(opts.cwd || process.cwd());
+  /** True nếu path (từ input tool ghi) nằm TRONG repo cwd — ngoài repo thì coi là rủi ro, phải hỏi. */
+  const isPathInRepo = (p: unknown): boolean => {
+    if (typeof p !== 'string' || !p) return false;
+    const abs = resolve(workdir, p);
+    return abs === workdir || abs.startsWith(workdir + '/');
+  };
 
   // Hook monorepo (guard-push/commit, self-verify, githooks) — chỉ khi cwd là monorepo.
   const monorepoHooks = buildMonorepoHooks(opts.cwd);
@@ -272,9 +367,9 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     // Giữ system prompt gốc của Claude Code + nạp CLAUDE.md của repo, rồi append quy trình + profile.
     systemPrompt: { type: 'preset', preset: 'claude_code', append: appendText },
     settingSources: ['project'],
-    // Gắn canUseTool khi cần xử lý câu hỏi (mọi mode) hoặc cổng duyệt (execute).
-    // AskUserQuestion được xử lý riêng ở MỌI mode; các tool ghi chỉ qua cổng ở execute.
-    ...(opts.onQuestion || (opts.mode === 'execute' && opts.onApproval)
+    // Gắn canUseTool khi cần xử lý câu hỏi (mọi mode) hoặc có cổng duyệt (mọi mode thực thi).
+    // AskUserQuestion xử lý riêng ở MỌI mode; tool ghi/bash qua cổng theo policy của từng mode.
+    ...(opts.onQuestion || (isExecuting && opts.onApproval)
       ? {
           canUseTool: async (toolName, input, sdkOpts) => {
             // AskUserQuestion: render UI câu hỏi, gắn câu trả lời vào input trả cho agent.
@@ -293,54 +388,116 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
               return { behavior: 'allow' as const, updatedInput: { ...input, answers } };
             }
 
-            // Không ở chế độ duyệt (vd plan mode): mọi tool tới đây đều cho phép.
-            // (Plan mode đã tự chặn tool ghi trước khi tới canUseTool.)
-            if (!(opts.mode === 'execute' && opts.onApproval)) {
-              return { behavior: 'allow' as const, updatedInput: input };
-            }
+            const allow = { behavior: 'allow' as const, updatedInput: input };
 
-            // Tự động duyệt các lệnh bash kiểm tra/test an toàn
+            // Không ở chế độ duyệt (vd plan mode, hoặc caller cố ý bỏ cổng): cho phép.
+            // (Plan mode đã tự chặn tool ghi trước khi tới canUseTool.)
+            if (!(isExecuting && opts.onApproval)) return allow;
+
+            // ── Phân loại thao tác theo mode ─────────────────────────────────
+            // Quy tắc chung: hỏi duyệt qua gate() nếu policy yêu cầu; ngược lại auto-allow.
+            const gate = async (meta?: {
+              title?: string;
+              description?: string;
+              blockedPath?: string;
+              decisionReason?: string;
+            }) => {
+              const approved = await opts.onApproval!(toolName, input, {
+                title: meta?.title ?? sdkOpts?.title,
+                description: meta?.description ?? sdkOpts?.description,
+                blockedPath: meta?.blockedPath ?? sdkOpts?.blockedPath,
+                decisionReason: meta?.decisionReason ?? sdkOpts?.decisionReason,
+              });
+              return approved
+                ? allow
+                : {
+                    behavior: 'deny' as const,
+                    message: 'Người dùng từ chối thao tác này. Dừng lại và hỏi hướng khác.',
+                  };
+            };
+
+            // Bash: lệnh kiểm chứng an toàn → auto-allow ở mọi mode. Lệnh rủi ro → luôn hỏi.
+            // Còn lại: 'auto' auto-allow, các mode khác hỏi.
             if (toolName === 'Bash' && typeof input.command === 'string') {
               const cmd = input.command.trim();
-              const isSafe = SAFE_COMMANDS.some((regex) => regex.test(cmd));
-              if (isSafe) {
-                return { behavior: 'allow' as const, updatedInput: input };
+              if (SAFE_COMMANDS.some((re) => re.test(cmd))) return allow;
+              if (isRiskyCommand(cmd)) {
+                return gate({ decisionReason: 'Lệnh có thể gây hại/không thể hoàn tác — cần bạn xác nhận.' });
               }
+              return mode === 'auto' ? allow : gate();
             }
 
-            // Tool đọc đã nằm trong allowedTools nên không tới đây; tới đây là tool ghi.
-            const approved = await opts.onApproval!(toolName, input, {
-              title: sdkOpts?.title,
-              description: sdkOpts?.description,
-              blockedPath: sdkOpts?.blockedPath,
-              decisionReason: sdkOpts?.decisionReason,
-            });
-            return approved
-              ? { behavior: 'allow' as const, updatedInput: input }
-              : {
-                  behavior: 'deny' as const,
-                  message: 'Người dùng từ chối thao tác này. Dừng lại và hỏi hướng khác.',
-                };
+            // Sửa/ghi file: 'edit-auto' & 'auto' tự duyệt NẾU file nằm TRONG repo.
+            // Ghi ra ngoài repo luôn phải hỏi (kể cả 'auto'). 'manual' luôn hỏi.
+            if (FILE_WRITE_TOOLS.has(toolName)) {
+              const target =
+                (input as Record<string, unknown>).file_path ??
+                (input as Record<string, unknown>).path ??
+                (input as Record<string, unknown>).notebook_path;
+              const inRepo = isPathInRepo(target);
+              if ((mode === 'edit-auto' || mode === 'auto') && inRepo) return allow;
+              if ((mode === 'edit-auto' || mode === 'auto') && !inRepo) {
+                return gate({ decisionReason: 'Ghi file NGOÀI thư mục repo — cần bạn xác nhận.' });
+              }
+              return gate(); // manual
+            }
+
+            // Mọi tool ghi/side-effect còn lại (MCP write, v.v.): 'auto' tự duyệt, khác thì hỏi.
+            return mode === 'auto' ? allow : gate();
           },
         }
       : {}),
   };
 
-  const promptText =
-    opts.mode === 'plan'
-      ? `${opts.brief}\n\n---\nHãy HIỂU và LẬP KẾ HOẠCH chi tiết cho task trên (không sửa file). Trình bày kế hoạch để tôi duyệt.`
-      : `${opts.brief}\n\n---\nHãy thực hiện task trên theo quy trình. Xin duyệt trước các thao tác thay đổi trạng thái.`;
+  const modeInstruction: Record<typeof mode, string> = {
+    plan: 'Hãy HIỂU và LẬP KẾ HOẠCH chi tiết cho task trên (không sửa file). Trình bày kế hoạch để tôi duyệt.',
+    manual:
+      'Hãy thực hiện task trên theo quy trình. Xin duyệt trước MỌI thao tác thay đổi trạng thái (sửa file, chạy lệnh).',
+    'edit-auto':
+      'Hãy thực hiện task trên theo quy trình. Bạn được tự sửa file trong repo mà không cần hỏi; nhưng xin duyệt trước khi chạy lệnh bash hoặc thao tác ngoài repo.',
+    auto:
+      'Hãy thực hiện task trên theo quy trình một cách tự chủ. Bạn được tự sửa file trong repo và chạy các lệnh an toàn; chỉ dừng hỏi trước thao tác rủi ro/không thể hoàn tác (xóa dữ liệu, git push, ghi ngoài repo…).',
+  };
+  const promptText = `${opts.brief}\n\n---\n${modeInstruction[mode]}`;
 
-  // Có ảnh → gửi prompt dạng message với content blocks (text + image) để agent nhìn.
-  // Không có ảnh → prompt string đơn giản.
-  const prompt =
+  // Nội dung message user đầu tiên: chỉ text, hoặc text + ảnh (wireframe/screenshot).
+  const firstContent: MessageParam['content'] =
     opts.images && opts.images.length > 0
-      ? imagePrompt(promptText, opts.images)
+      ? [
+          { type: 'text', text: promptText },
+          ...opts.images.map(
+            (img) =>
+              ({
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: img.mediaType as
+                    | 'image/png'
+                    | 'image/jpeg'
+                    | 'image/gif'
+                    | 'image/webp',
+                  data: img.base64,
+                },
+              }) as const,
+          ),
+        ]
       : promptText;
+
+  // Dùng streaming input (giữ mở đến khi query xong) THAY VÌ prompt string, vì các
+  // control request đọc hạn mức/context (query.getContextUsage / usage_EXPERIMENTAL…)
+  // CHỈ hoạt động ở chế độ streaming input. inputDone giải phóng generator khi ta đã
+  // đọc xong snapshot, để SDK đóng transport gọn gàng.
+  let releaseInput: () => void = () => {};
+  const inputDone = new Promise<void>((r) => {
+    releaseInput = r;
+  });
+  const prompt = streamingPrompt(firstContent, inputDone);
 
   let finalText: string | null = null;
 
-  for await (const message of query({ prompt, options })) {
+  const q = query({ prompt, options });
+  try {
+  for await (const message of q) {
     switch (message.type) {
       case 'system': {
         // system/init phát ngay đầu mỗi lượt, mang session_id THẬT mà SDK dùng để lưu
@@ -359,7 +516,34 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
             if (block.name === 'Agent' && block.input && typeof block.input === 'object' && 'agent' in block.input) {
               describe = `🤖 giao việc cho agent phụ: ${block.input.agent}…`;
             }
-            opts.onEvent({ type: 'tool', name: block.name, describe });
+            opts.onEvent({
+              type: 'tool',
+              id: block.id,
+              name: block.name,
+              describe,
+              summary: summarizeToolInput(block.name, block.input),
+            });
+          }
+        }
+        break;
+      }
+      case 'user': {
+        // Message 'user' do SDK sinh mang tool_result — khớp về tool đã gọi để hiển thị
+        // "→ kết quả". content có thể là chuỗi hoặc mảng block.
+        const content = message.message.content;
+        if (Array.isArray(content)) {
+          for (const block of content) {
+            if (block.type === 'tool_result') {
+              const { text, isError } = summarizeToolResult(block.content);
+              if (text) {
+                opts.onEvent({
+                  type: 'tool-result',
+                  toolId: block.tool_use_id,
+                  text,
+                  isError: isError || block.is_error === true,
+                });
+              }
+            }
           }
         }
         break;
@@ -378,13 +562,149 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
         } else {
           opts.onEvent({ type: 'error', subtype: message.subtype });
         }
+        // Đọc snapshot hạn mức + context ngay khi query CÒN SỐNG (control request cần
+        // transport chưa đóng). Lỗi/không hỗ trợ → bỏ qua, không chặn kết thúc lượt.
+        const usage = await readUsageSnapshot(q);
+        if (usage) opts.onEvent({ type: 'usage', usage });
+        // Giải phóng streaming input → SDK kết thúc query, vòng for..of thoát.
+        releaseInput();
         break;
       }
       // Các message type khác (stream_event, system, ...) bỏ qua cho gọn.
     }
   }
+  } finally {
+    // Luôn giải phóng streaming input (kể cả khi lỗi/abort giữa chừng, chưa tới
+    // 'result') để generator không treo vô hạn giữ query sống.
+    releaseInput();
+  }
 
   return finalText;
+}
+
+/**
+ * Streaming input tối giản: yield 1 message user rồi GIỮ MỞ đến khi `done` resolve.
+ * Giữ mở là điều kiện để các control request (getContextUsage / usage) chạy được —
+ * ở prompt string, transport đóng ngay nên control request báo lỗi "Query closed".
+ */
+async function* streamingPrompt(
+  content: MessageParam['content'],
+  done: Promise<void>,
+): AsyncIterable<SDKUserMessage> {
+  yield {
+    type: 'user',
+    message: { role: 'user', content },
+    parent_tool_use_id: null,
+    session_id: '',
+  } as SDKUserMessage;
+  await done;
+}
+
+/** Chuyển một cửa sổ rate-limit của SDK → UsageWindow (bỏ qua nếu thiếu). */
+function toWindow(
+  label: string,
+  win: { utilization: number | null; resets_at: string | null } | null | undefined,
+): UsageWindow | null {
+  if (!win) return null;
+  return { label, utilization: win.utilization, resetsAt: win.resets_at };
+}
+
+/**
+ * Đọc snapshot /usage từ query đang sống: hạn mức gói (5h / 7 ngày / theo model) +
+ * độ dùng context window của hội thoại hiện tại. Trả null nếu SDK không hỗ trợ hoặc
+ * lỗi (vd đã đóng) — caller chỉ đơn giản không phát event 'usage'.
+ */
+async function readUsageSnapshot(q: {
+  getContextUsage: () => Promise<{
+    totalTokens: number;
+    maxTokens: number;
+    percentage: number;
+  }>;
+  usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () => Promise<{
+    subscription_type: string | null;
+    rate_limits: {
+      five_hour?: { utilization: number | null; resets_at: string | null } | null;
+      seven_day?: { utilization: number | null; resets_at: string | null } | null;
+      model_scoped?: {
+        display_name: string;
+        utilization: number | null;
+        resets_at: string | null;
+      }[];
+    } | null;
+  }>;
+}): Promise<UsageSnapshot | null> {
+  try {
+    const [ctx, usage] = await Promise.all([
+      q.getContextUsage().catch(() => null),
+      q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET().catch(() => null),
+    ]);
+    if (!ctx && !usage) return null;
+
+    const rateLimits: UsageWindow[] = [];
+    const rl = usage?.rate_limits;
+    if (rl) {
+      const five = toWindow('Session (5hr)', rl.five_hour);
+      if (five) rateLimits.push(five);
+      const seven = toWindow('Weekly (7 day)', rl.seven_day);
+      if (seven) rateLimits.push(seven);
+      for (const m of rl.model_scoped ?? []) {
+        rateLimits.push({
+          label: `Weekly ${m.display_name}`,
+          utilization: m.utilization,
+          resetsAt: m.resets_at,
+        });
+      }
+    }
+
+    return {
+      rateLimits,
+      subscriptionType: usage?.subscription_type ?? null,
+      contextTokens: ctx?.totalTokens ?? null,
+      contextMaxTokens: ctx?.maxTokens ?? null,
+      contextPercentage: ctx?.percentage ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Đọc snapshot /usage ĐỘC LẬP (không gắn với lượt chạy agent nào) — dùng cho UI
+ * hiển thị hạn mức lúc mới mở trang / bấm làm mới. Mở một query streaming tối giản
+ * (không tốn token của model: chỉ cần transport sống để chạy control request), đọc
+ * snapshot rồi đóng. `contextTokens` ở đây phản ánh phiên trống này, KHÔNG phải hội
+ * thoại thực — UI chỉ nên lấy phần rateLimits từ đây; context lấy từ event trong lượt chạy.
+ */
+export async function fetchUsageSnapshot(model?: string): Promise<UsageSnapshot | null> {
+  if (!config.hasAuth) return null;
+  let release: () => void = () => {};
+  const done = new Promise<void>((r) => {
+    release = r;
+  });
+  // Prompt tối giản: chỉ để SDK khởi tạo session & mở transport. Ta KHÔNG chờ 'result'
+  // (tránh gọi model) — đọc snapshot ngay sau 'system/init' rồi đóng.
+  const q = query({
+    prompt: streamingPrompt('.', done),
+    options: {
+      model: model ?? config.model,
+      permissionMode: 'plan',
+      pathToClaudeCodeExecutable: findClaudeCodeExecutable(process.cwd()),
+    },
+  });
+  try {
+    for await (const message of q) {
+      if (message.type === 'system' && message.subtype === 'init') {
+        const snap = await readUsageSnapshot(q);
+        release();
+        return snap;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    release();
+  }
 }
 
 /** Bắc cầu AbortSignal → AbortController mà SDK nhận. */
@@ -393,34 +713,4 @@ function toController(signal: AbortSignal): AbortController {
   if (signal.aborted) controller.abort();
   else signal.addEventListener('abort', () => controller.abort(), { once: true });
   return controller;
-}
-
-/**
- * Tạo prompt dạng AsyncIterable<SDKUserMessage> với ảnh, để agent (model vision)
- * nhìn wireframe/screenshot cùng phần text.
- */
-async function* imagePrompt(
-  text: string,
-  images: { base64: string; mediaType: string }[],
-): AsyncIterable<SDKUserMessage> {
-  const content: MessageParam['content'] = [
-    { type: 'text', text },
-    ...images.map(
-      (img) =>
-        ({
-          type: 'image',
-          source: {
-            type: 'base64',
-            media_type: img.mediaType as 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp',
-            data: img.base64,
-          },
-        }) as const,
-    ),
-  ];
-  yield {
-    type: 'user',
-    message: { role: 'user', content },
-    parent_tool_use_id: null,
-    session_id: '',
-  } as SDKUserMessage;
 }
