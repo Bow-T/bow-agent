@@ -3,7 +3,7 @@ import cors from 'cors';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import fs from 'node:fs';
-import { runAgent } from '../core/runner.js';
+import { runAgent, fetchUsageSnapshot } from '../core/runner.js';
 import { buildTaskBrief } from '../input/task.js';
 import { pdfToText } from '../input/pdf.js';
 import { getProfile } from '../profiles/index.js';
@@ -58,15 +58,30 @@ app.post('/api/run', async (req, res) => {
     }
 
     // Jira đọc qua MCP (server jira của Claude Code), KHÔNG cần JIRA_* nữa.
-    // Chỉ chặn khi có Jira ref THUẦN (không kèm text/tài liệu khác) mà lại KHÔNG chọn
-    // MCP jira nào — vì lúc đó agent không có cách nào đọc ticket. Có text/tài liệu kèm
-    // thì vẫn chạy được (agent làm theo phần mô tả), nên không chặn.
-    const hasJiraMcp = Array.isArray(mcpServers) && mcpServers.some((n: string) => String(n).includes('jira'));
+    // Danh sách server client tick chọn ở panel.
+    const selectedMcp: string[] = Array.isArray(mcpServers) ? mcpServers.map((n) => String(n)) : [];
+    // Server jira ĐÃ CẤU HÌNH global trong ~/.claude.json (dù người dùng chưa tick).
+    const jiraInGlobal = listGlobalMcp()
+      .map((m) => m.name)
+      .filter((name) => name.toLowerCase().includes('jira'));
+    // Đã dùng được jira nếu: client tick chọn, HOẶC có sẵn trong ~/.claude.json.
+    const hasJiraSelected = selectedMcp.some((n) => n.toLowerCase().includes('jira'));
+    const hasJiraMcp = hasJiraSelected || jiraInGlobal.length > 0;
+
+    // Nếu có Jira ref mà jira đã cấu hình global nhưng client chưa tick → TỰ bật,
+    // để runner nạp được server jira. Tránh chặn oan khi ~/.claude.json đã có jira.
+    let effectiveMcp = selectedMcp;
+    if (activeJiraRef && !hasJiraSelected && jiraInGlobal.length > 0) {
+      effectiveMcp = [...new Set([...selectedMcp, ...jiraInGlobal])];
+    }
+
+    // Chỉ chặn khi có Jira ref THUẦN mà KHÔNG có jira ở BẤT KỲ đâu (cả tick lẫn global) —
+    // vì lúc đó agent không có cách nào đọc ticket. Có text/tài liệu kèm thì vẫn chạy được.
     if (activeJiraRef && !hasJiraMcp) {
       const isPureJiraRef = text ? text.trim() === activeJiraRef.trim() : true;
       if (isPureJiraRef || jiraRef) {
         res.status(400).json({
-          error: 'Có Jira ref nhưng chưa bật MCP jira. Chọn server "jira" ở panel MCP để agent đọc được ticket, hoặc mô tả task bằng text.',
+          error: 'Có Jira ref nhưng chưa cấu hình MCP jira. Thêm server "jira" ở panel MCP (hoặc trong ~/.claude.json) để agent đọc được ticket, hoặc mô tả task bằng text.',
         });
         return;
       }
@@ -117,7 +132,16 @@ app.post('/api/run', async (req, res) => {
     const resumeSessionId =
       typeof conversationId === 'string' && conversationId ? conversationId : undefined;
 
-    const runMode: 'plan' | 'execute' = mode === 'execute' ? 'execute' : 'plan';
+    // 4 mode kiểu Claude. Nhận cả tên cũ 'execute' (→ 'manual') để tương thích client cũ.
+    // Mọi mode ngoài 'plan' đều là "đang thực thi" (có cổng duyệt theo policy của runner).
+    const VALID_MODES = new Set(['plan', 'manual', 'edit-auto', 'auto']);
+    const runMode: 'plan' | 'manual' | 'edit-auto' | 'auto' =
+      mode === 'execute'
+        ? 'manual'
+        : VALID_MODES.has(mode)
+          ? (mode as 'plan' | 'manual' | 'edit-auto' | 'auto')
+          : 'plan';
+    const isExecuting = runMode !== 'plan';
 
     // Chạy agent nền; đẩy sự kiện vào session queue.
     runAgent({
@@ -128,13 +152,12 @@ app.post('/api/run', async (req, res) => {
       language: language === 'en' ? 'en' : 'vi',
       projectProfile,
       images: Array.isArray(images) ? images : undefined,
-      mcpServers: Array.isArray(mcpServers) ? mcpServers : undefined,
+      mcpServers: effectiveMcp.length > 0 ? effectiveMcp : undefined,
       abortSignal: session.abort.signal,
       onEvent: (ev) => session.push(ev),
-      onApproval:
-        runMode === 'execute'
-          ? (toolName, input, meta) => session.requestApproval(toolName, input, meta)
-          : undefined,
+      onApproval: isExecuting
+        ? (toolName, input, meta) => session.requestApproval(toolName, input, meta)
+        : undefined,
       // AskUserQuestion hoạt động ở mọi mode (kể cả plan) để agent làm rõ yêu cầu.
       onQuestion: (questions) => session.requestQuestion(questions),
       model,
@@ -234,6 +257,25 @@ app.get('/api/config', (_req, res) => {
     defaultCwd: process.cwd(),
     mcpServers: cc.names,
   });
+});
+
+/**
+ * GET /api/usage — snapshot hạn mức gói (Session 5h / Weekly 7d / theo model) để UI
+ * hiển thị lúc mở trang & khi bấm làm mới. Độc lập với lượt chạy agent; context window
+ * ở đây phản ánh phiên trống nên UI chỉ dùng phần rateLimits. Trả 503 nếu không đọc được.
+ */
+app.get('/api/usage', async (req, res) => {
+  const model = typeof req.query.model === 'string' ? req.query.model : undefined;
+  try {
+    const usage = await fetchUsageSnapshot(model);
+    if (!usage) {
+      res.status(503).json({ error: 'Không đọc được dữ liệu usage (chưa login Claude CLI hoặc SDK không hỗ trợ).' });
+      return;
+    }
+    res.json({ usage });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
 });
 
 /** GET /api/mcp — liệt kê MCP server đã cấu hình (che token, chỉ trả tên env key). */
