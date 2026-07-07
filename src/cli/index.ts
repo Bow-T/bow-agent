@@ -29,13 +29,14 @@ Cách dùng:
 
 Cờ:
   --execute                Thực thi thật (mặc định chỉ LẬP KẾ HOẠCH, không sửa file)
-  --mcp                    Bật MCP (xem DB Supabase / Jira / Codemagic từ Claude Code).
-                           MẶC ĐỊNH TẮT vì token bị lộ qua command-line khi bật.
-  --genome                 Bật "genome" — nhớ + tiến hóa tri thức về repo qua các lần
-                           chạy (lưu memory/genome/<repo>.json). MẶC ĐỊNH TẮT; chỉ đáng
-                           bật cho repo LỚN (vd monorepo), repo nhỏ thì là chi phí thừa.
+  --mcp [a,b]              MCP (Jira / Supabase / Figma... từ Claude Code). MẶC ĐỊNH BẬT
+                           tất cả (để agent đọc được Jira ticket). Kèm danh sách để chỉ
+                           nạp vài server: --mcp jira,supabase
+  --no-mcp                 Tắt hoàn toàn MCP (chạy offline, không đọc Jira/DB).
   --cwd <dir>              Thư mục repo agent làm việc (mặc định: thư mục hiện tại)
   --profile <name>         Kiến thức dự án: none | (các tên profile tự sinh) (mặc định: none)
+  --subagents              Bật multi-agent: agent chính giao việc cho subagent chuyên
+                           biệt (reviewer / verifier / impact-scout). MẶC ĐỊNH TẮT.
   --effort <low|medium|high|xhigh|max>   Mức reasoning (mặc định: high)
   -h, --help               In hướng dẫn này
 
@@ -58,9 +59,12 @@ interface ParsedArgs {
   cwd: string;
   effort: Effort;
   profile: string;
+  /** Bật multi-agent (subagent chuyên biệt). Mặc định tắt. */
+  subagents: boolean;
   mcpServers?: string[];
   useMcpAll?: boolean;
-  genome: boolean;
+  /** Tắt MCP (mặc định BẬT — tự nạp Jira/Supabase/... để agent đọc ticket được). */
+  noMcp?: boolean;
   help: boolean;
 }
 
@@ -70,7 +74,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     cwd: process.cwd(),
     effort: 'high',
     profile: 'none',
-    genome: false,
+    subagents: false,
     help: false,
   };
   const rest = [...argv];
@@ -90,9 +94,6 @@ function parseArgs(argv: string[]): ParsedArgs {
       case '--execute':
         out.execute = true;
         break;
-      case '--genome':
-        out.genome = true;
-        break;
       case '--mcp': {
         const next = rest[0];
         if (next && !next.startsWith('-')) {
@@ -102,6 +103,9 @@ function parseArgs(argv: string[]): ParsedArgs {
         }
         break;
       }
+      case '--no-mcp':
+        out.noMcp = true;
+        break;
       case '--wbs':
         out.wbsPath = requireValue('--wbs', rest.shift());
         break;
@@ -121,6 +125,9 @@ function parseArgs(argv: string[]): ParsedArgs {
       }
       case '--profile':
         out.profile = requireValue('--profile', rest.shift());
+        break;
+      case '--subagents':
+        out.subagents = true;
         break;
       default:
         // Đối số không cờ đầu tiên = Jira ticket key.
@@ -160,23 +167,19 @@ async function main(): Promise<void> {
     text: args.text,
   };
 
-  if (args.ticketKey && !config.jiraConfigured) {
-    process.stderr.write(
-      '⚠️  Bạn truyền Jira ticket/URL nhưng chưa cấu hình JIRA_* trong .env — ' +
-        'agent sẽ không đọc/ghi được Jira. Điền JIRA_BASE_URL/EMAIL/API_TOKEN hoặc ' +
-        'dùng --wbs / --text thay thế.\n',
-    );
-    process.exit(1);
-  }
+  // Ticket Jira được đọc qua MCP jira của Claude Code (không cần JIRA_* trong .env nữa).
+  // Chỉ cảnh báo nhẹ nếu vừa không có MCP jira vừa không có JIRA_* — không chặn.
 
-  // Chọn project profile (kiến thức). 'none' = agent tổng quát.
+  // Chọn project profile (kiến thức + subagent riêng). 'none' = agent tổng quát.
   let projectProfile: string | undefined;
+  let profileSubagents: NonNullable<ReturnType<typeof getProfile>>['subagents'] | undefined;
   if (args.profile !== 'none') {
     const prof = getProfile(args.profile);
     if (!prof) {
       fail(`--profile không hợp lệ: "${args.profile}". Chọn một trong: ${profileNames().join(', ')}`);
     }
     projectProfile = (prof as NonNullable<typeof prof>).knowledge;
+    profileSubagents = (prof as NonNullable<typeof prof>).subagents;
   }
 
   const brief = await buildTaskBrief(input);
@@ -186,24 +189,26 @@ async function main(): Promise<void> {
 
   const mode = args.execute ? 'execute' : 'plan';
   const profileLabel = args.profile === 'none' ? 'none' : args.profile;
-  const authLabel =
-    config.authSource === 'api-key'
-      ? 'API key'
-      : config.authSource === 'claude-cli'
-        ? 'Claude CLI login'
-        : 'CHƯA CÓ';
+  const authLabel = config.hasAuth ? 'Claude CLI login' : 'CHƯA ĐĂNG NHẬP';
+  // MCP MẶC ĐỊNH BẬT: tự nạp mọi server đã cấu hình trong Claude Code (Jira/Supabase/
+  // Figma...) để agent đọc được ticket Jira. Tùy chọn:
+  //   --mcp a,b   : chỉ nạp các server chỉ định
+  //   --no-mcp    : tắt hoàn toàn
+  //   (không cờ)  : nạp tất cả (mặc định)
   let mcpServers: string[] | undefined;
-  if (args.mcpServers) {
+  if (args.noMcp) {
+    mcpServers = undefined;
+  } else if (args.mcpServers) {
     mcpServers = args.mcpServers;
-  } else if (args.useMcpAll) {
+  } else {
     mcpServers = loadClaudeCodeMcp().names;
   }
 
   const mcpLabel = mcpServers && mcpServers.length > 0 ? mcpServers.join(',') : 'off';
-  const genomeLabel = args.genome ? 'on' : 'off';
+  const subagentsLabel = args.subagents ? 'on' : 'off';
 
   process.stdout.write(
-    `\n▶ bow-agent · model=${config.model} · auth=${authLabel} · mode=${mode} · effort=${args.effort} · profile=${profileLabel} · mcp=${mcpLabel} · genome=${genomeLabel} · cwd=${args.cwd}\n\n`,
+    `\n▶ bow-agent · model=${config.model} · auth=${authLabel} · mode=${mode} · effort=${args.effort} · profile=${profileLabel} · mcp=${mcpLabel} · subagents=${subagentsLabel} · cwd=${args.cwd}\n\n`,
   );
 
   const result = await runAgent({
@@ -213,7 +218,8 @@ async function main(): Promise<void> {
     effort: args.effort,
     projectProfile,
     mcpServers,
-    useGenome: args.genome,
+    useSubagents: args.subagents,
+    profileSubagents,
     onEvent: (ev) => {
       switch (ev.type) {
         case 'text':
@@ -226,9 +232,6 @@ async function main(): Promise<void> {
           process.stdout.write(
             `✅ Xong sau ${ev.turns} lượt · ${ev.outputTokens} output tokens · $${ev.costUsd.toFixed(4)}\n`,
           );
-          break;
-        case 'learned':
-          process.stdout.write(`🧬 Genome học thêm ${ev.added} gen mới về repo này.\n`);
           break;
         case 'error':
           process.stdout.write(`⚠️  Kết thúc bất thường: ${ev.subtype}\n`);

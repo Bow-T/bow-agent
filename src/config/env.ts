@@ -15,48 +15,28 @@ function optional(key: string): string | undefined {
 
 /**
  * Có credential Claude Code CLI đã login sẵn không (~/.claude tồn tại)?
- * Nếu có, Agent SDK dùng được login đó — KHÔNG cần ANTHROPIC_API_KEY.
+ * Agent SDK spawn tiến trình `claude`, tiến trình đó tự đọc login này — đây là
+ * cách xác thực DUY NHẤT của bow-agent (không dùng ANTHROPIC_API_KEY).
  */
 function hasClaudeCliLogin(): boolean {
   return existsSync(join(homedir(), '.claude'));
 }
 
 export const config = {
-  /** API key của Claude (tùy chọn). Rỗng = dựa vào login Claude CLI sẵn có. */
-  get anthropicApiKey(): string | undefined {
-    return optional('ANTHROPIC_API_KEY');
+  /** Agent có auth để chạy không? = đã login Claude CLI (`claude` → /login) chưa. */
+  get hasAuth(): boolean {
+    return hasClaudeCliLogin();
   },
 
   /**
-   * Agent có auth để chạy không? Đúng nếu (a) có ANTHROPIC_API_KEY, HOẶC
-   * (b) đã login Claude Code CLI (~/.claude). Sai = chưa có cách nào để gọi Claude.
+   * Model mặc định (CLI luôn dùng giá trị này). Opus 4.8 là bản mạnh nhất tier Opus
+   * cho agentic dài hơi. Web tự chọn model riêng (gửi qua opts.model, ghi đè giá trị này).
    */
-  get hasAuth(): boolean {
-    return Boolean(this.anthropicApiKey) || hasClaudeCliLogin();
-  },
+  model: 'claude-opus-4-8' as const,
 
-  /** Đang dùng nguồn auth nào (để báo cho người dùng). */
-  get authSource(): 'api-key' | 'claude-cli' | 'none' {
-    if (this.anthropicApiKey) return 'api-key';
-    if (hasClaudeCliLogin()) return 'claude-cli';
-    return 'none';
-  },
-
-  /** Model mặc định. Opus 4.8 là bản mạnh nhất tier Opus cho agentic dài hơi. */
-  model: optional('BOW_AGENT_MODEL') ?? 'claude-opus-4-8',
-
-  /** Cấu hình Jira — chỉ cần nếu dùng lệnh chạy theo ticket. */
-  jira: {
-    baseUrl: optional('JIRA_BASE_URL'),
-    email: optional('JIRA_EMAIL'),
-    apiToken: optional('JIRA_API_TOKEN'),
-  },
-
-  /** Jira đã cấu hình đủ để đọc/ghi chưa? */
-  get jiraConfigured(): boolean {
-    return Boolean(this.jira.baseUrl && this.jira.email && this.jira.apiToken);
-  },
-
-  /** Mã dự án mặc định (ví dụ: DEAR, PROJ), nếu không cấu hình sẽ tự động phát hiện từ git. */
+  /**
+   * Mã dự án mặc định (ví dụ: DEAR, PROJ). Không cấu hình → tự phát hiện từ git branch/commit.
+   * (Jira đọc qua MCP jira của Claude Code — không cần JIRA_BASE_URL/EMAIL/TOKEN nữa.)
+   */
   defaultProjectKey: optional('BOW_PROJECT_KEY') ?? optional('JIRA_PROJECT_KEY'),
 } as const;
