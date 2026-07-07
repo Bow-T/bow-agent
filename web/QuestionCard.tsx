@@ -1,5 +1,14 @@
 import { useState } from 'react';
 import type { PendingQuestion } from './types.js';
+import { Icon } from './Icon.js';
+
+/** Dấu chọn cho option: ô vuông (multi) hoặc tròn (single), đặc khi bật / rỗng khi tắt. */
+function OptionMark({ on, multi }: { on: boolean; multi: boolean }) {
+  if (multi) {
+    return <Icon name={on ? 'checkOn' : 'checkOff'} size={16} variant={on ? 'Bold' : 'Outline'} />;
+  }
+  return <Icon name={on ? 'radioOn' : 'radioOff'} size={16} variant={on ? 'Bold' : 'Outline'} />;
+}
 
 /**
  * UI cho tool AskUserQuestion: agent hỏi, người dùng bấm chọn thay vì đọc JSON thô.
@@ -68,7 +77,7 @@ export function QuestionCard({
 
   return (
     <div className="question-card">
-      <div className="question-card-head">🤖 Agent cần bạn quyết định</div>
+      <div className="question-card-head"><Icon name="agent" size={16} /> Agent cần bạn quyết định</div>
 
       {pending.questions.map((q, qi) => {
         const multi = !!q.multiSelect;
@@ -92,7 +101,7 @@ export function QuestionCard({
                     className={`question-option${on ? ' selected' : ''}`}
                     onClick={() => toggle(qi, opt.label, multi)}
                   >
-                    <span className="question-option-mark">{on ? (multi ? '☑' : '◉') : multi ? '☐' : '○'}</span>
+                    <span className="question-option-mark"><OptionMark on={on} multi={multi} /></span>
                     <span className="question-option-body">
                       <span className="question-option-label">{opt.label}</span>
                       {opt.description && (
@@ -109,7 +118,7 @@ export function QuestionCard({
                 className={`question-option${otherOn ? ' selected' : ''}`}
                 onClick={() => toggle(qi, OTHER, multi)}
               >
-                <span className="question-option-mark">{otherOn ? (multi ? '☑' : '◉') : multi ? '☐' : '○'}</span>
+                <span className="question-option-mark"><OptionMark on={otherOn} multi={multi} /></span>
                 <span className="question-option-body">
                   <span className="question-option-label">Khác…</span>
                   <span className="question-option-desc">Tự nhập câu trả lời của bạn.</span>
