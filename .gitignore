@@ -3,6 +3,7 @@ dist/
 dist-web/
 generated-profiles/
 workspaces/
+conversations/
 *.log
 .env
 .env.local
