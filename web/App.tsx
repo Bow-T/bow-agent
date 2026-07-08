@@ -217,6 +217,13 @@ export function App() {
   const [wsJournal, setWsJournal] = useState('');
   const [wsSharedDirty, setWsSharedDirty] = useState(false);
 
+  // ── Panel "Cấu trúc dự án" (header) — AI quét cwd rồi mô tả kiến trúc ──
+  const [structPanelOpen, setStructPanelOpen] = useState(false);
+  const [structBusy, setStructBusy] = useState(false);
+  const [structText, setStructText] = useState('');       // mô tả markdown AI trả về
+  const [structCwd, setStructCwd] = useState('');          // cwd đã phân tích (để biết đang xem repo nào)
+  const [structError, setStructError] = useState('');
+
   /**
    * Làm mới snapshot hạn mức gói qua /api/usage (độc lập lượt chạy). Chỉ cập nhật phần
    * rateLimits/subscription; GIỮ context window cũ (đến từ event 'usage' trong lượt chạy
@@ -435,6 +442,80 @@ export function App() {
       setWsError(`Lỗi gọi backend: ${(err as Error).message}`);
     } finally {
       setWsBusy(false);
+    }
+  };
+
+  // ── Cấu trúc dự án: mở panel + chạy AI phân tích cwd ──
+
+  /**
+   * Chạy AI quét cwd rồi hiện mô tả cấu trúc. Dùng SSE (KHÔNG treo HTTP request 60s —
+   * đó là nguyên nhân lỗi "Unexpected end of JSON input" khi proxy/browser cắt kết nối):
+   * POST trả sessionId ngay → mở EventSource nghe tiến độ + kết quả cuối ('done').
+   * SSE riêng cho panel, không đổ vào chat.
+   */
+  const runAnalyzeStructure = async () => {
+    const dir = cwd.trim();
+    if (!dir) { setStructError('Chưa có thư mục repo (cwd) để phân tích.'); return; }
+    setStructError('');
+    setStructBusy(true);
+    setStructText('');
+    try {
+      const res = await fetch('/api/analyze-structure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cwd: dir }),
+      });
+      // Lỗi sớm (vd thư mục không tồn tại) trả JSON {error} kèm status != 200.
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setStructError((data as { error?: string }).error ?? 'Phân tích thất bại.');
+        setStructBusy(false);
+        return;
+      }
+      const { sessionId: sid } = await res.json();
+      const src = new EventSource(`/api/events/${sid}`);
+      // Gom các text block tiến độ để hiện dần (agent vừa quét vừa mô tả).
+      let acc = '';
+      src.onmessage = (msg) => {
+        const ev = JSON.parse(msg.data) as
+          | { type: 'text'; text: string }
+          | { type: 'done'; result: string | null }
+          | { type: 'fatal'; message: string }
+          | { type: string };
+        if (ev.type === 'text') {
+          acc += (acc ? '\n\n' : '') + (ev as { text: string }).text;
+          setStructText(acc);
+        } else if (ev.type === 'done') {
+          // Kết quả cuối = mô tả đầy đủ (ưu tiên hơn bản gom dần).
+          const result = (ev as { result: string | null }).result;
+          if (result) setStructText(result);
+          setStructCwd(dir);
+          setStructBusy(false);
+          src.close();
+        } else if (ev.type === 'fatal') {
+          setStructError((ev as { message: string }).message || 'Phân tích thất bại.');
+          setStructBusy(false);
+          src.close();
+        }
+      };
+      src.onerror = () => {
+        // SSE đứt: nếu chưa có kết quả thì báo lỗi; có rồi thì coi như xong.
+        setStructBusy(false);
+        if (!acc) setStructError('Mất kết nối khi phân tích. Thử lại.');
+        src.close();
+      };
+    } catch (err) {
+      setStructError(`Lỗi gọi backend: ${(err as Error).message}`);
+      setStructBusy(false);
+    }
+  };
+
+  /** Mở panel cấu trúc; nếu chưa có kết quả cho cwd hiện tại thì tự chạy phân tích. */
+  const openStructPanel = () => {
+    setStructPanelOpen(true);
+    // Tự phân tích nếu chưa có kết quả, hoặc cwd đã đổi so với lần phân tích trước.
+    if (!structBusy && (!structText || structCwd !== cwd.trim())) {
+      runAnalyzeStructure();
     }
   };
 
@@ -1274,6 +1355,13 @@ export function App() {
             onClick={openWsPanel}
           >
             <Icon name="routing" size={18} />
+          </button>
+          <button
+            className="theme-btn"
+            title="Cấu trúc dự án — AI quét repo (cwd) rồi mô tả kiến trúc & cây thư mục"
+            onClick={openStructPanel}
+          >
+            <Icon name="structure" size={18} />
           </button>
           <button
             className="theme-btn"
@@ -2120,6 +2208,59 @@ export function App() {
               <button className="btn allow" disabled={wsBusy} onClick={submitWsRepo}>
                 {wsBusy ? 'Đang lưu…' : 'Gán repo'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {structPanelOpen && (
+        <div className="modal-overlay" onClick={() => setStructPanelOpen(false)}>
+          <div
+            className="modal-content pixel-panel"
+            style={{ maxWidth: '760px', width: '94%' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <span className="modal-title"><Icon name="structure" size={16} /> Cấu trúc dự án</span>
+              <button className="close-btn" onClick={() => setStructPanelOpen(false)}><Icon name="close" size={16} /></button>
+            </div>
+            <div className="modal-body">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '10px' }}>
+                <div style={{ fontSize: '12px', color: 'var(--muted)', overflowWrap: 'anywhere' }}>
+                  <Icon name="folder" size={13} /> {cwd.trim() || '(chưa chọn cwd)'}
+                </div>
+                <button
+                  className="btn"
+                  style={{ padding: '3px 12px', fontSize: '12px', whiteSpace: 'nowrap' }}
+                  disabled={structBusy || !cwd.trim()}
+                  onClick={runAnalyzeStructure}
+                  title="Phân tích lại (quét mới)"
+                >
+                  {structBusy ? 'Đang quét…' : structText ? 'Phân tích lại' : 'Phân tích'}
+                </button>
+              </div>
+
+              {structError && (
+                <div className="picker-error" style={{ color: 'var(--red)', marginBottom: '10px' }}><Icon name="warning" size={14} /> {structError}</div>
+              )}
+
+              <div style={{ maxHeight: '60vh', overflowY: 'auto', padding: '12px', background: 'var(--inset)', border: 'var(--bd-thin) solid var(--outline)' }}>
+                {structBusy && !structText && (
+                  <div style={{ textAlign: 'center', color: 'var(--muted)', padding: '24px' }}>
+                    <div style={{ marginBottom: '6px' }}>🔍 Agent đang đọc repo…</div>
+                    <div style={{ fontSize: '12px' }}>Quét chỉ-đọc, thường mất 30–60 giây. Không sửa gì trong repo.</div>
+                  </div>
+                )}
+                {!structBusy && !structText && !structError && (
+                  <div style={{ textAlign: 'center', color: 'var(--muted)', padding: '24px' }}>
+                    Bấm <b>Phân tích</b> để agent quét cấu trúc repo hiện tại.
+                  </div>
+                )}
+                {structText && <Markdown text={structText} />}
+              </div>
+            </div>
+            <div className="modal-footer" style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '16px' }}>
+              <button className="btn deny" onClick={() => setStructPanelOpen(false)}>Đóng</button>
             </div>
           </div>
         </div>
