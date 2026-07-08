@@ -8,47 +8,46 @@
  * Type: Space Grotesk (UI/heading) + Space Mono (nhãn/số liệu/mono).
  */
 
-/* ───────────────────────────  Tokens · Day chart (light)  ─────────────────────────── */
+/* ───────────────────────────  Tokens · Slate Prestige (light)  ─────────────────────────── */
 :root,
 [data-theme='light'] {
   color-scheme: light;
 
-  --bg: #e7e0cf;          /* giấy da */
-  --surface: #f1ebdb;     /* thẻ giấy sáng */
-  --surface-2: #e0d8c3;   /* inset */
-  --surface-3: #d5ccb2;
+  --bg: #f8fafc;          /* slate-50 */
+  --surface: #ffffff;     /* card */
+  --surface-2: #f1f5f9;   /* inset */
+  --surface-3: #e2e8f0;
 
-  --ink: #211c16;         /* mực nâu-đen */
-  --ink-2: #5c5241;       /* phụ */
-  --muted: #8c8168;       /* mờ */
+  --ink: #0f172a;         /* slate-900 */
+  --ink-2: #475569;       /* slate-600 */
+  --muted: #64748b;       /* slate-500 */
 
-  --brass: #935f12;       /* đồng thau — accent chính (đọc rõ trên giấy) */
-  --brass-bright: #b0791f;/* fill / hover */
-  --brass-soft: rgba(147, 95, 18, 0.1);
-  --on-brass: #f4eede;    /* chữ trên nền brass */
+  --brass: #6366f1;       /* indigo-500 (brand accent) */
+  --brass-bright: #4f46e5;/* indigo-600 */
+  --brass-soft: rgba(99, 102, 241, 0.08);
+  --on-brass: #ffffff;    /* text on brand */
 
-  --teal: #1b6b63;        /* trạng thái "live" */
-  --danger: #a5321d;      /* đỏ oxit */
-  --danger-soft: rgba(165, 50, 29, 0.1);
+  --teal: #06b6d4;        /* cyan-500 (live status) */
+  --danger: #f43f5e;      /* rose-500 (error/warning) */
+  --danger-soft: rgba(244, 63, 94, 0.08);
 
-  --hairline: rgba(33, 28, 22, 0.18);   /* kẻ chính */
-  --hairline-2: rgba(33, 28, 22, 0.1);  /* khung lồng */
-  --graticule: rgba(33, 28, 22, 0.07);  /* crosshair mờ */
+  --hairline: rgba(15, 23, 42, 0.08);   /* slate thin borders */
+  --hairline-2: rgba(15, 23, 42, 0.05);  /* inset thin borders */
+  --graticule: rgba(15, 23, 42, 0.03);
 
-  /* chiều sâu: lưới blueprint, quầng sáng môi trường, kính mờ, bóng */
-  --grid: rgba(33, 28, 22, 0.05);
-  --glow-a: rgba(147, 95, 18, 0.1);
-  --glow-b: rgba(27, 107, 99, 0.07);
-  --glass: 86%;
-  --highlight: rgba(255, 255, 255, 0.6);
-  --depth: 0 12px 44px -14px rgba(33, 28, 22, 0.2), 0 2px 8px -4px rgba(33, 28, 22, 0.12);
-  --viewport-bg: #e4dcc7;
-  --viewport-glow: 0 0 40px -18px rgba(147, 95, 18, 0.22);
+  /* depth: subtle shadows and ambient glow */
+  --grid: rgba(15, 23, 42, 0.02);
+  --glow-a: rgba(99, 102, 241, 0.06);
+  --glow-b: rgba(6, 182, 212, 0.04);
+  --glass: 88%;
+  --highlight: rgba(255, 255, 255, 0.8);
+  --depth: 0 10px 30px -10px rgba(15, 23, 42, 0.08), 0 1px 3px -1px rgba(15, 23, 42, 0.03);
+  --viewport-bg: #f8fafc;
+  --viewport-glow: 0 0 40px -18px rgba(99, 102, 241, 0.12);
 
-  /* hạt film — chấm đen alpha thấp trên giấy */
-  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.07 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  /* subtle film grain */
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.03 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 
-  /* back-compat cho style inline trong TSX */
   --outline: var(--hairline);
   --inset: var(--surface-2);
   --red: var(--danger);
@@ -56,55 +55,55 @@
   --text-2: var(--ink-2);
   --bd-thin: 1px;
 
-  --r: 2px;
-  --r-lg: 3px;
+  --r: 6px;
+  --r-lg: 12px;
 
-  --sans: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --mono: 'Space Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
-  --ease: cubic-bezier(0.3, 0.7, 0.4, 1);
-  --fast: 120ms var(--ease);
-  --med: 220ms var(--ease);
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --fast: 150ms var(--ease);
+  --med: 250ms var(--ease);
 }
 
-/* ───────────────────────────  Tokens · Night observatory (dark)  ─────────────────────────── */
+/* ───────────────────────────  Tokens · Obsidian Void (dark)  ─────────────────────────── */
 [data-theme='dark'] {
   color-scheme: dark;
 
-  --bg: #0b0e12;          /* mực đêm hơi ngả lam */
-  --surface: #12161c;
-  --surface-2: #171c23;
-  --surface-3: #1f252e;
+  --bg: #0b0f19;          /* obsidian background */
+  --surface: #111827;     /* slate-900 */
+  --surface-2: #1f2937;   /* slate-800 */
+  --surface-3: #374151;   /* slate-700 */
 
-  --ink: #e7dfcc;         /* chữ xương */
-  --ink-2: #a79e88;
-  --muted: #6e685a;
+  --ink: #f8fafc;         /* slate-50 */
+  --ink-2: #cbd5e1;       /* slate-300 */
+  --muted: #64748b;       /* slate-500 */
 
-  --brass: #d6a441;       /* đồng thau sáng trên nền tối */
-  --brass-bright: #e6b857;
-  --brass-soft: rgba(214, 164, 65, 0.14);
-  --on-brass: #14100a;
+  --brass: #818cf8;       /* indigo-400 */
+  --brass-bright: #6366f1;/* indigo-500 */
+  --brass-soft: rgba(129, 140, 248, 0.12);
+  --on-brass: #ffffff;
 
-  --teal: #45b3a6;
-  --danger: #d9603f;
-  --danger-soft: rgba(217, 96, 63, 0.14);
+  --teal: #22d3ee;        /* cyan-400 */
+  --danger: #fb7185;      /* rose-400 */
+  --danger-soft: rgba(251, 113, 133, 0.12);
 
-  --hairline: rgba(231, 223, 204, 0.13);
-  --hairline-2: rgba(231, 223, 204, 0.07);
-  --graticule: rgba(231, 223, 204, 0.06);
+  --hairline: rgba(248, 250, 252, 0.09);
+  --hairline-2: rgba(248, 250, 252, 0.05);
+  --graticule: rgba(248, 250, 252, 0.04);
 
-  /* chiều sâu (đêm): quầng sáng nebula, kính mờ sâu, bóng đổ mềm */
-  --grid: rgba(231, 223, 204, 0.045);
-  --glow-a: rgba(214, 164, 65, 0.15);
-  --glow-b: rgba(69, 179, 166, 0.13);
-  --glass: 78%;
-  --highlight: rgba(231, 223, 204, 0.07);
-  --depth: 0 24px 64px -18px rgba(0, 0, 0, 0.72), 0 4px 16px -8px rgba(0, 0, 0, 0.5);
-  --viewport-bg: #05070c;
-  --viewport-glow: 0 0 60px -12px rgba(69, 179, 166, 0.5);
+  /* depth: neon and ambient glow */
+  --grid: rgba(248, 250, 252, 0.03);
+  --glow-a: rgba(129, 140, 248, 0.12);
+  --glow-b: rgba(34, 211, 238, 0.08);
+  --glass: 80%;
+  --highlight: rgba(248, 250, 252, 0.05);
+  --depth: 0 20px 50px -12px rgba(0, 0, 0, 0.5), 0 4px 12px -4px rgba(0, 0, 0, 0.3);
+  --viewport-bg: #080b12;
+  --viewport-glow: 0 0 60px -12px rgba(129, 140, 248, 0.25);
 
-  /* hạt film — chấm sáng alpha thấp trên mực */
-  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  /* dark grain */
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.03 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
 /* ───────────────────────────  Base  ─────────────────────────── */
