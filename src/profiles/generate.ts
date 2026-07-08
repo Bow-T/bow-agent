@@ -42,13 +42,33 @@ export interface GenerateResult {
 }
 
 /**
- * Sinh profile cho repo ở `cwd`. Trả {name, file, knowledge}.
- * onEvent (tùy chọn) nhận log tiến độ.
+ * Prompt "xem cấu trúc dự án": thiên về CÂY THƯ MỤC + kiến trúc để NGƯỜI đọc hiểu
+ * nhanh layout repo (khác SCAN_PROMPT vốn để sinh knowledge cho agent). Chỉ đọc.
  */
-export async function generateProfile(
+const STRUCTURE_PROMPT = `
+Bạn đang mô tả CẤU TRÚC của một dự án cho người đọc muốn hiểu nhanh repo này.
+Hãy QUÉT (chỉ đọc, không sửa) và trả về markdown gồm:
+
+1. **Tổng quan**: một câu — đây là loại dự án gì (app/lib/service/monorepo…), stack chính.
+2. **Cây thư mục** (code block): các thư mục/file quan trọng ở vài cấp đầu, KÈM chú
+   thích ngắn mỗi mục làm gì. BỎ QUA node_modules, .git, dist, build, .dart_tool,
+   vendor, và file sinh tự động. Giữ gọn — không liệt kê mọi file.
+3. **Vai trò từng phần chính**: mỗi thư mục top-level quan trọng làm gì (1 dòng).
+4. **Điểm vào & luồng chính**: file khởi chạy / entrypoint, cách các phần nối nhau.
+
+Viết bằng tiếng Việt, dưới 250 dòng. KHÔNG bịa — chỉ ghi thứ bạn thực sự thấy.
+Bắt đầu ngay bằng phần mô tả, không lời mở đầu.
+`.trim();
+
+/**
+ * Quét repo (chỉ đọc) bằng agent → trả CHUỖI mô tả. KHÔNG lưu file. Dùng chung cho
+ * "sinh profile" (lưu) và "xem cấu trúc" (chỉ hiển thị). `prompt` chọn góc nhìn.
+ */
+export async function scanRepoKnowledge(
   cwd: string,
+  prompt: string = SCAN_PROMPT,
   onEvent?: (msg: string) => void,
-): Promise<GenerateResult> {
+): Promise<string> {
   if (!config.hasAuth) {
     throw new Error('Chưa đăng nhập Claude CLI — chạy `claude` rồi /login.');
   }
@@ -57,17 +77,17 @@ export async function generateProfile(
     model: config.model,
     effort: 'medium',
     cwd,
-    permissionMode: 'plan', // chỉ đọc — không sửa repo lạ.
+    permissionMode: 'plan', // chỉ đọc — không sửa repo.
     allowedTools: ['Read', 'Grep', 'Glob'],
     settingSources: ['project'],
   };
 
-  // Ở permissionMode 'plan', nội dung mô tả repo nằm trong các text block của agent,
-  // KHÔNG phải message.result (result chỉ là câu kết thúc, vd "bạn có muốn lưu không?").
-  // Nên ta GOM các text block; result chỉ dùng làm dự phòng nếu không có text nào.
+  // Ở permissionMode 'plan', nội dung mô tả nằm trong các text block của agent,
+  // KHÔNG phải message.result (result chỉ là câu kết thúc). Nên GOM các text block;
+  // result chỉ dùng làm dự phòng nếu không có text nào.
   const textChunks: string[] = [];
   let resultText = '';
-  for await (const message of query({ prompt: SCAN_PROMPT, options })) {
+  for await (const message of query({ prompt, options })) {
     if (message.type === 'assistant') {
       for (const block of message.message.content) {
         if (block.type === 'text' && block.text.trim()) {
@@ -81,9 +101,31 @@ export async function generateProfile(
     }
   }
 
-  // Gom text block làm nội dung profile; nếu rỗng thì mới dùng result.
   const knowledge = textChunks.length ? textChunks.join('\n\n') : resultText;
-  if (!knowledge) throw new Error('Agent không sinh được kiến thức từ repo.');
+  if (!knowledge) throw new Error('Agent không quét được thông tin từ repo.');
+  return knowledge;
+}
+
+/**
+ * Xem CẤU TRÚC dự án ở `cwd` (chỉ đọc, KHÔNG lưu file). Trả mô tả markdown để hiển thị.
+ * onEvent nhận log tiến độ. Khác generateProfile: không ghi generated-profiles/.
+ */
+export function analyzeStructure(
+  cwd: string,
+  onEvent?: (msg: string) => void,
+): Promise<string> {
+  return scanRepoKnowledge(cwd, STRUCTURE_PROMPT, onEvent);
+}
+
+/**
+ * Sinh profile cho repo ở `cwd`. Trả {name, file, knowledge}.
+ * onEvent (tùy chọn) nhận log tiến độ.
+ */
+export async function generateProfile(
+  cwd: string,
+  onEvent?: (msg: string) => void,
+): Promise<GenerateResult> {
+  const knowledge = await scanRepoKnowledge(cwd, SCAN_PROMPT, onEvent);
 
   const name = profileNameFromCwd(cwd);
   await mkdir(GENERATED_DIR, { recursive: true });
