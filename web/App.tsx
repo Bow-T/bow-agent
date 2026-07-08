@@ -115,6 +115,17 @@ function formatResetIn(iso: string | null): string {
   return `Còn ${Math.round(hours / 24)}d`;
 }
 
+/** Format thời lượng ms → chuỗi gọn kiểu "1g 23p 45s" / "3p 42s" / "58s". */
+function fmtDuration(ms: number): string {
+  const total = Math.round(ms / 1000);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}g ${m}p ${s}s`;
+  if (m > 0) return `${m}p ${s}s`;
+  return `${s}s`;
+}
+
 /** Gọn số token: 21592 → "21.6k", 1000000 → "1M". */
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`;
@@ -174,6 +185,11 @@ export function App() {
   // Câu hỏi AskUserQuestion đang chờ người dùng chọn (thường chỉ có 1 tại một thời điểm).
   const [questions, setQuestions] = useState<PendingQuestion[]>([]);
   const [running, setRunning] = useState(false);
+  // Đồng hồ phiên: mốc bắt đầu lượt chạy hiện tại + thời lượng lượt gần nhất (đo phía
+  // client — bao gồm cả thời gian chờ duyệt; dòng "Xong · …" trong chat dùng duration_ms
+  // chính xác của SDK). Render tick nhờ đồng hồ UTC đã setInterval 1s sẵn.
+  const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
+  const [lastRunMs, setLastRunMs] = useState<number | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(
     () => localStorage.getItem('bow-conversation-id') || null
@@ -871,6 +887,19 @@ export function App() {
     return () => clearInterval(id);
   }, []);
 
+  // Đồng hồ phiên: bấm giờ khi running bật, chốt thời lượng khi tắt (kể cả kết thúc
+  // bất thường/stop — nên đo phía client thay vì chỉ dựa event 'result'). runStartedAt
+  // đọc qua closure của render hiện tại, KHÔNG đưa vào deps (tránh vòng lặp tự kích).
+  useEffect(() => {
+    if (running) {
+      setRunStartedAt(Date.now());
+    } else if (runStartedAt != null) {
+      setLastRunMs(Date.now() - runStartedAt);
+      setRunStartedAt(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running]);
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const [isScrolled, setIsScrolled] = useState(false);
   const [activeQuery, setActiveQuery] = useState('');
@@ -1230,7 +1259,7 @@ export function App() {
         case 'result':
           addItem(
             'result',
-            `Xong · ${ev.turns} lượt · ${ev.outputTokens} tokens · $${ev.costUsd.toFixed(4)}`,
+            `Xong · ${fmtDuration(ev.durationMs)} · ${ev.turns} lượt · ${ev.outputTokens} tokens · $${ev.costUsd.toFixed(4)}`,
           );
           setAccumulatedCost((prev) => prev + ev.costUsd);
           break;
@@ -1709,6 +1738,25 @@ export function App() {
             <span className="rl">UTC</span>
             <span className="rv">{utc}</span>
           </span>
+          {/* Đồng hồ phiên: đang chạy → tick mỗi giây (nhờ interval UTC); xong → đứng ở
+              tổng thời lượng lượt gần nhất. Ẩn khi chưa chạy lượt nào. */}
+          {(running && runStartedAt != null) || lastRunMs != null ? (
+            <span
+              className="readout"
+              title={
+                running
+                  ? 'Thời gian lượt chạy hiện tại (tính cả lúc chờ duyệt)'
+                  : 'Thời lượng lượt chạy gần nhất'
+              }
+            >
+              <span className="rl">Time</span>
+              <span className="rv" style={{ color: running ? 'var(--brass)' : undefined }}>
+                {running && runStartedAt != null
+                  ? fmtDuration(Date.now() - runStartedAt)
+                  : fmtDuration(lastRunMs!)}
+              </span>
+            </span>
+          ) : null}
           {!safe && (
             <span className="readout" title="Chi phí tích lũy phiên này">
               <span className="rl">Cost</span>

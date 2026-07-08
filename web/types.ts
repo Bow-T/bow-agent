@@ -33,7 +33,7 @@ export type WebEvent =
   | { type: 'text'; text: string }
   | { type: 'tool'; id?: string; name: string; describe: string; summary?: string }
   | { type: 'tool-result'; toolId: string; text: string; isError: boolean }
-  | { type: 'result'; text: string; turns: number; outputTokens: number; costUsd: number }
+  | { type: 'result'; text: string; turns: number; outputTokens: number; costUsd: number; durationMs: number }
   | { type: 'usage'; usage: UsageSnapshot }
   | { type: 'error'; subtype: string }
   | {
