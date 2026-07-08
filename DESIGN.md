@@ -159,7 +159,134 @@ Mọi con đường tới một thao tác GHI đều qua đúng một cổng —
 5. **Subagent** (nếu bật) bị `permissionMode:'plan'` + `disallowedTools` khóa cứng, không
    chạm được cổng ghi.
 
-## 9. Hướng mở rộng (chưa làm)
+## 9. Workspace — nhóm nhiều repo + trí nhớ tích lũy (ĐỀ XUẤT, chưa làm)
+
+> **Trạng thái:** thiết kế đã chốt, chưa implement. Đây là tài liệu để duyệt trước khi code.
+> Quyết định người dùng: (a) ưu tiên **liên kết nhiều repo**, (b) trí nhớ ghi **tự động**,
+> (c) lưu **trong bow-agent, gitignore** (giống `generated-profiles/`), (d) agent được
+> **đọc chéo read-only** repo anh em.
+
+### 9.1. Vấn đề
+
+Ba nguồn tri thức ở §3 đều **tĩnh và gắn với một `cwd` đơn lẻ**. Thực tế của người dùng
+không vừa khuôn đó:
+
+- **Một "sản phẩm" trải trên nhiều repo ở nhiều thư mục**: BE một nơi, FE một nơi, có khi
+  thêm infra/monorepo. Profile đặt tên theo `basename(cwd)` (`generate.ts:29`) nên mỗi thư
+  mục là một hòn đảo — trỏ agent vào FE thì nó **không biết gì về contract API của BE**.
+- **Không có trí nhớ giữa các phiên**: `generateProfile` chỉ chụp *cấu trúc tĩnh* một lần.
+  Test agent với một repo, quay lại phiên sau → mọi quyết định/điều-học-được của phiên trước
+  bốc hơi. (`resumeSessionId` chỉ khôi phục *một* luồng hội thoại, không phải tri thức tích
+  lũy xuyên phiên/xuyên repo.)
+
+Kết quả: người dùng phải "dạy lại" ngữ cảnh mỗi lần, và không có cách nào nói với agent
+"FE này ăn với BE kia".
+
+### 9.2. Khái niệm: Workspace = 1 sản phẩm gồm nhiều repo
+
+Thêm **một lớp trên profile** (không thay thế). Workspace gom nhiều `cwd` (mỗi cái vẫn có
+profile riêng như cũ) vào một sản phẩm, kèm hai file tri thức dùng chung:
+
+```
+bow-agent/
+└── workspaces/                      ← gitignore, per-máy (như generated-profiles/)
+    ├── workspaces.json              ← đăng ký: workspace ⇄ các repo (cwd) + vai trò
+    └── app-giao-hang/
+        ├── shared.md                ← tri thức CHUNG sản phẩm (contract BE↔FE, quyết định KT)
+        └── journal.md               ← nhật ký TỰ ĐỘNG: mỗi phiên append 1 mục
+```
+
+`workspaces.json`:
+
+```jsonc
+{
+  "app-giao-hang": {
+    "repos": {
+      "/Users/tuannguyen/work/delivery-backend": "BE",
+      "/Users/tuannguyen/work/delivery-flutter":  "FE",
+      "/Users/tuannguyen/work/delivery-monorepo": "infra"
+    }
+  }
+}
+```
+
+Vì sao lưu ở đây: **mirror y hệt `generated-profiles/`** — cùng chỗ, cùng chính sách
+gitignore, cùng "runtime per-máy". Không thêm khái niệm lưu trữ mới, tái dùng nguyên tắc
+§3 đã có.
+
+### 9.3. Cơ chế 1 — Liên kết repo (ưu tiên làm trước)
+
+**Khi trỏ agent vào một `cwd`** (`runner.ts`, ngay chỗ ghép profile `runner.ts:281–283`):
+
+1. `resolveWorkspace(cwd)`: quét `workspaces.json`, khớp `cwd` theo **tiền tố đường dẫn**
+   (repo là con của một `cwd` đã đăng ký cũng tính) → trả workspace chứa nó, hoặc `null`.
+2. Nếu thuộc một workspace → append vào system prompt **một khối mới**, đặt *trước* project
+   profile (chung → riêng), gồm:
+   - **`shared.md`** — tri thức chung sản phẩm.
+   - **Bản đồ repo anh em** — liệt kê từng repo + vai trò + đường dẫn tuyệt đối, để agent
+     biết "BE nằm ở đâu, FE dùng contract nào".
+   - **`journal.md`** — trí nhớ tích lũy (xem §9.4).
+3. Repo **không** thuộc workspace nào → không có khối này → hành vi y hệt hiện tại. Đây là
+   lớp **opt-in**, không đổi đường chạy cũ (đúng nguyên tắc §1).
+
+**Đọc chéo read-only** (quyết định của người dùng). Hiện `allowedTools` mở `Read/Grep/Glob`
+nhưng SDK giới hạn theo `cwd`, nên agent làm FE không đọc được file BE. Cần **mở phạm vi đọc
+sang các repo anh em, chỉ đọc**:
+
+- SDK cho phép truyền thêm gốc đọc qua `additionalDirectories` (đường dẫn các repo anh em).
+  Agent `Read/Grep/Glob` được sang BE để hiểu contract thật, **không đoán**.
+- **Ghi vẫn khóa trong repo hiện tại.** Cổng `isPathInRepo` (`runner.ts:340–344`) chỉ tính
+  `workdir` (cwd). Repo anh em nằm ngoài `workdir` → mọi Edit/Write vào đó **rơi vào nhánh
+  "ghi ngoài repo" → luôn hỏi duyệt** (kể cả mode `auto`). Tức là *đọc chéo tự do, ghi chéo
+  vẫn phải xin phép* — không cần thêm luật mới, tận dụng đúng cổng §8 đã có.
+- Prompt phải nói rõ: *repo anh em là để THAM CHIẾU (đọc); đừng sửa chúng trừ khi người dùng
+  yêu cầu và duyệt.*
+
+### 9.4. Cơ chế 2 — Trí nhớ tích lũy tự động (ăn theo, gần như miễn phí)
+
+Vì §9.3 đã load `journal.md`, phần còn lại chỉ là **ghi** nó cuối phiên.
+
+**Ghi (tự động):** sau khi `query()` kết thúc thành công (`runner.ts` sau nhánh
+`case 'result'`), chạy một bước cô đọng ngắn: tóm tắt phiên vừa rồi thành 3–6 gạch đầu dòng
+— *đã làm gì / quyết định gì / học được gì về sản phẩm* — rồi **append** một mục có mốc thời
+gian vào `journal.md` của workspace. (Chỉ khi cwd thuộc một workspace; ngược lại bỏ qua.)
+
+Hai cách hiện thực bước cô đọng, chọn khi code:
+- **Rẻ (ưu tiên):** tận dụng chính `finalText` (báo cáo-khi-xong ở §BOW_AGENT_APPEND đã có
+  cấu trúc "đã đổi gì / verify gì / còn gì") → cắt gọn & append. **Không tốn thêm lượt model.**
+- **Kỹ hơn:** một lời gọi `query()` phụ, ngắn, nhồi transcript → bản tóm tắt cô đọng. Tốn
+  thêm token; chỉ dùng nếu bản rẻ ra nhiễu.
+
+**Chống phình:** journal là append-only sẽ lớn dần → chỉ nạp **N mục gần nhất** (hoặc tới
+ngưỡng ký tự) vào prompt; mục cũ giữ trên đĩa để tra tay. Không có cơ chế "học" phức tạp —
+đúng tinh thần §3 "tĩnh, đọc được, kiểm soát được": journal chỉ là markdown người đọc và sửa
+tay được. Đây **không** phải "Genome" đã gỡ (không fitness/mutation, không vòng tiến hóa) —
+chỉ là một cuốn nhật ký phẳng.
+
+### 9.5. Điểm ghép code (tối thiểu, không phá đường chạy cũ)
+
+| Việc | File | Ghép thế nào |
+|---|---|---|
+| Module workspace (đọc/ghi md + json, resolve theo tiền tố cwd) | `src/profiles/workspace.ts` (mới) | Mirror `index.ts`/`generate.ts`; dùng lại pattern `GENERATED_DIR`. |
+| Nhồi khối workspace vào prompt | `src/core/runner.ts` (§281–283) | `resolveWorkspace(cwd)` → append shared+map+journal trước project profile. |
+| Mở đọc chéo read-only | `src/core/runner.ts` (`options`) | Thêm `additionalDirectories` = đường dẫn repo anh em. |
+| Ghi journal cuối phiên | `src/core/runner.ts` (sau `case 'result'`) | Cô đọng `finalText` → append vào `journal.md`. |
+| Đăng ký/gán repo vào workspace | `src/web/server.ts` + `web/App.tsx` | Ô chọn/tạo workspace cạnh ô `cwd` (giống panel MCP). Có thể làm sau core. |
+| gitignore | `.gitignore` | Thêm `workspaces/`. |
+
+**Vì sao an toàn:** toàn bộ tính năng *song song* với `generated-profiles/`, kích hoạt chỉ
+khi `cwd` khớp một workspace đã đăng ký. Không đăng ký gì → không đổi hành vi. Ghi chéo vẫn
+qua cổng duyệt §8. Trí nhớ là markdown phẳng, sửa/xóa tay được — không có trạng thái ẩn.
+
+### 9.6. Ngoài phạm vi (cố ý chưa làm)
+
+- **Chia sẻ trí nhớ giữa các máy** (commit / server chung): người dùng chọn gitignore per-máy.
+  Nếu sau cần share → chỉ đổi nơi lưu, cơ chế giữ nguyên.
+- **Duyệt trước khi ghi journal**: chọn "tự động". Nếu journal ra nhiễu → thêm nút duyệt sau.
+- **Suy luận quan hệ repo tự động** (đoán FE↔BE): làm thủ công qua `workspaces.json` trước;
+  không đoán để tránh sai.
+
+## 10. Hướng mở rộng (chưa làm)
 
 - **UI chọn skill / subagent**: hiện agent tự chọn skill; subagent bật cả-cụm qua cờ. Có
   thể thêm ô chọn trên web như panel MCP.
@@ -167,3 +294,4 @@ Mọi con đường tới một thao tác GHI đều qua đúng một cổng —
   các profile `.md` hiện chưa khai báo subagent nào.
 - **Marker file cho monorepo**: `isMonorepo` đang nhận theo segment path; đổi sang marker
   file (vd `scripts/check-quest.sh`) sẽ chính xác hơn cho repo trùng tên.
+- **Workspace** (§9): nhóm nhiều repo + trí nhớ tích lũy — đã thiết kế, chưa code.
