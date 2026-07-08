@@ -102,33 +102,6 @@ function formatTokens(n: number): string {
 }
 
 /** Một thanh usage: nhãn + % + bar. severity đổi màu khi gần đầy. */
-function UsageBar({
-  label,
-  percent,
-  sub,
-  value,
-}: {
-  label: string;
-  percent: number | null;
-  sub?: string;
-  value?: string;
-}) {
-  const pct = percent == null ? null : Math.max(0, Math.min(100, percent));
-  const level = pct == null ? '' : pct >= 90 ? ' danger' : pct >= 70 ? ' warn' : '';
-  return (
-    <div className="usage-bar">
-      <div className="usage-bar-head">
-        <span className="usage-bar-label">{label}</span>
-        <span className="usage-bar-val">{value ?? (pct == null ? '—' : `${Math.round(pct)}%`)}</span>
-      </div>
-      <div className="usage-track">
-        <div className={`usage-fill${level}`} style={{ width: `${pct ?? 0}%` }} />
-      </div>
-      {sub && <div className="usage-bar-sub">{sub}</div>}
-    </div>
-  );
-}
-
 export function App() {
   const [task, setTask] = useState(() => localStorage.getItem('bow-task') || '');
   const [cwd, setCwd] = useState(() => localStorage.getItem('bow-cwd') || '');
@@ -226,6 +199,23 @@ export function App() {
   const [mcpForm, setMcpForm] = useState({ name: '', command: '', args: '', env: '' });
   const [mcpError, setMcpError] = useState('');
   const [mcpBusy, setMcpBusy] = useState(false);
+
+  // ── Workspace (nhóm nhiều repo + trí nhớ tích lũy) — xem DESIGN §9 ──
+  type WsRepo = { path: string; role: string };
+  type Ws = { slug: string; dir: string; repos: WsRepo[] };
+  const [wsPanelOpen, setWsPanelOpen] = useState(false);
+  const [wsList, setWsList] = useState<Ws[]>([]);
+  const [wsError, setWsError] = useState('');
+  const [wsBusy, setWsBusy] = useState(false);
+  // Form gán repo: tên workspace + path + vai trò. Prefill path = cwd hiện tại cho tiện.
+  const [wsForm, setWsForm] = useState({ name: '', path: '', role: '' });
+  // Workspace mà cwd hiện tại thuộc về (cho badge chỉ báo ở composer). null = không thuộc.
+  const [currentWs, setCurrentWs] = useState<Ws | null>(null);
+  // Slug workspace đang mở xem tri thức (shared.md + journal) trong panel. null = chưa mở.
+  const [wsViewSlug, setWsViewSlug] = useState<string | null>(null);
+  const [wsShared, setWsShared] = useState('');
+  const [wsJournal, setWsJournal] = useState('');
+  const [wsSharedDirty, setWsSharedDirty] = useState(false);
 
   /**
    * Làm mới snapshot hạn mức gói qua /api/usage (độc lập lượt chạy). Chỉ cập nhật phần
@@ -337,6 +327,114 @@ export function App() {
       setMcpError(`Lỗi gọi backend: ${(err as Error).message}`);
     } finally {
       setMcpBusy(false);
+    }
+  };
+
+  // ── Workspace: tải danh sách, gán/gỡ repo, xem/sửa tri thức ──
+
+  /** Tải danh sách workspace từ backend. */
+  const loadWsList = () => {
+    fetch('/api/workspaces')
+      .then((r) => r.json())
+      .then((d) => setWsList(d.workspaces ?? []))
+      .catch(() => setWsError('Không tải được danh sách workspace.'));
+  };
+
+  const openWsPanel = () => {
+    setWsError('');
+    // Prefill: path = cwd hiện tại (thứ hay muốn gán nhất), tên = workspace hiện tại nếu có.
+    setWsForm({ name: currentWs?.slug ?? '', path: cwd.trim(), role: '' });
+    setWsViewSlug(null);
+    setWsPanelOpen(true);
+    loadWsList();
+  };
+
+  /** Cập nhật badge "cwd thuộc workspace nào" — gọi khi cwd đổi hoặc sau khi gán/gỡ. */
+  const refreshCurrentWs = (dir: string) => {
+    const d = dir.trim();
+    if (!d) { setCurrentWs(null); return; }
+    fetch(`/api/workspace/current?cwd=${encodeURIComponent(d)}`)
+      .then((r) => r.json())
+      .then((res) => setCurrentWs(res.workspace ?? null))
+      .catch(() => setCurrentWs(null));
+  };
+
+  /** Gán repo vào workspace (tạo nếu chưa có). */
+  const submitWsRepo = async () => {
+    setWsError('');
+    const name = wsForm.name.trim();
+    const path = wsForm.path.trim();
+    if (!name || !path) { setWsError('Cần nhập Tên workspace và Đường dẫn repo.'); return; }
+    setWsBusy(true);
+    try {
+      const res = await fetch('/api/workspace/repo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, path, role: wsForm.role.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setWsError(data.error ?? 'Gán repo thất bại.'); return; }
+      loadWsList();
+      setWsForm((f) => ({ ...f, path: '', role: '' })); // giữ tên để gán tiếp repo khác
+      refreshCurrentWs(cwd);
+    } catch (err) {
+      setWsError(`Lỗi gọi backend: ${(err as Error).message}`);
+    } finally {
+      setWsBusy(false);
+    }
+  };
+
+  /** Gỡ một repo khỏi workspace. */
+  const removeWsRepo = async (name: string, path: string) => {
+    setWsError('');
+    setWsBusy(true);
+    try {
+      const res = await fetch('/api/workspace/repo', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, path }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setWsError(data.error ?? 'Gỡ repo thất bại.'); return; }
+      setWsList(data.workspaces ?? []);
+      if (wsViewSlug === name && !(data.workspaces ?? []).some((w: Ws) => w.slug === name)) {
+        setWsViewSlug(null); // workspace vừa bị xóa (hết repo) → đóng khung xem
+      }
+      refreshCurrentWs(cwd);
+    } catch (err) {
+      setWsError(`Lỗi gọi backend: ${(err as Error).message}`);
+    } finally {
+      setWsBusy(false);
+    }
+  };
+
+  /** Mở khung xem tri thức (shared.md + journal) của một workspace. */
+  const openWsKnowledge = (slug: string) => {
+    setWsError('');
+    setWsViewSlug(slug);
+    setWsSharedDirty(false);
+    fetch(`/api/workspace/${encodeURIComponent(slug)}/knowledge`)
+      .then((r) => r.json())
+      .then((d) => { setWsShared(d.shared ?? ''); setWsJournal(d.journal ?? ''); })
+      .catch(() => setWsError('Không tải được tri thức workspace.'));
+  };
+
+  /** Lưu shared.md của workspace đang xem. */
+  const saveWsShared = async () => {
+    if (!wsViewSlug) return;
+    setWsBusy(true);
+    try {
+      const res = await fetch(`/api/workspace/${encodeURIComponent(wsViewSlug)}/shared`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: wsShared }),
+      });
+      if (!res.ok) { const d = await res.json(); setWsError(d.error ?? 'Lưu thất bại.'); return; }
+      setWsSharedDirty(false);
+    } catch (err) {
+      setWsError(`Lỗi gọi backend: ${(err as Error).message}`);
+    } finally {
+      setWsBusy(false);
     }
   };
 
@@ -468,9 +566,9 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Auto-nhận diện source mỗi khi cwd đổi (debounce nhẹ).
+  // Auto-nhận diện source + workspace mỗi khi cwd đổi (debounce nhẹ, dùng chung).
   useEffect(() => {
-    if (!cwd.trim()) return;
+    if (!cwd.trim()) { setDetected(null); setCurrentWs(null); return; }
     const t = setTimeout(() => {
       fetch(`/api/detect?cwd=${encodeURIComponent(cwd.trim())}`)
         .then((r) => r.json())
@@ -478,6 +576,7 @@ export function App() {
           setDetected(d);
         })
         .catch(() => setDetected(null));
+      refreshCurrentWs(cwd);
     }, 400);
     return () => clearTimeout(t);
   }, [cwd]);
@@ -1097,6 +1196,57 @@ export function App() {
               {modeDef(mode).short}
             </span>
           </span>
+          {/* Hạn mức phiên 5 giờ (Session) — gọn trên header. Bấm để làm mới. */}
+          {(() => {
+            const s = usage?.rateLimits.find((w) => /session|5\s*h|5hr/i.test(w.label));
+            const pct = s && s.utilization != null ? Math.round(s.utilization) : null;
+            return (
+              <button
+                className="readout readout-btn"
+                title={
+                  s
+                    ? `Hạn mức phiên (5hr) — ${formatResetIn(s.resetsAt)}. Bấm để làm mới.`
+                    : 'Hạn mức phiên. Bấm để làm mới.'
+                }
+                onClick={refreshUsage}
+                disabled={usageLoading}
+              >
+                <span className="rl">Session</span>
+                <span
+                  className="rv"
+                  style={{ color: pct != null && pct >= 80 ? 'var(--danger)' : undefined }}
+                >
+                  {usageLoading ? '…' : pct != null ? `${pct}%` : '—'}
+                </span>
+              </button>
+            );
+          })()}
+          {/* Context window — dung lượng token đã dùng / tối đa (vd 22.0k / 1M) của
+              hội thoại hiện tại, kèm % trong tooltip. */}
+          {(() => {
+            const has = usage?.contextTokens != null && !!usage.contextMaxTokens;
+            const pct = has && usage!.contextPercentage != null ? Math.round(usage!.contextPercentage) : null;
+            const used = has ? formatTokens(usage!.contextTokens!) : null;
+            const max = has ? formatTokens(usage!.contextMaxTokens!) : null;
+            return (
+              <span
+                className="readout"
+                title={
+                  has
+                    ? `Context window — đã dùng ${used} / ${max} token (${pct}%).`
+                    : 'Context window — chạy một task để đo.'
+                }
+              >
+                <span className="rl">Context</span>
+                <span
+                  className="rv"
+                  style={{ color: pct != null && pct >= 80 ? 'var(--danger)' : undefined }}
+                >
+                  {has ? `${used} / ${max}` : '—'}
+                </span>
+              </span>
+            );
+          })()}
         </div>
         <div className="topbar-right">
           <div className="lang-select" title="Ngôn ngữ trả lời của agent">
@@ -1120,6 +1270,13 @@ export function App() {
           </button>
           <button
             className="theme-btn"
+            title="Workspace — nhóm nhiều repo (BE/FE/...) thành 1 sản phẩm + trí nhớ chung"
+            onClick={openWsPanel}
+          >
+            <Icon name="routing" size={18} />
+          </button>
+          <button
+            className="theme-btn"
             title={theme === 'light' ? 'Chuyển giao diện tối' : 'Chuyển giao diện sáng'}
             onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
           >
@@ -1130,47 +1287,7 @@ export function App() {
 
       <div className="main-layout">
         <aside className="sidebar-pipeline">
-          {/* ── USAGE: hạn mức gói + context window của hội thoại hiện tại ── */}
-          <div className="usage-panel">
-            <div className="usage-panel-head">
-              <span className="usage-panel-title">Usage</span>
-              <button
-                className="usage-refresh"
-                title="Làm mới hạn mức"
-                onClick={refreshUsage}
-                disabled={usageLoading}
-              >
-                <Icon name="pending" size={14} className={usageLoading ? 'step-detail-spin' : undefined} />
-              </button>
-            </div>
-
-            {usage && usage.rateLimits.length > 0 ? (
-              usage.rateLimits.map((w) => (
-                <UsageBar
-                  key={w.label}
-                  label={w.label}
-                  percent={w.utilization}
-                  sub={formatResetIn(w.resetsAt)}
-                />
-              ))
-            ) : (
-              <div className="usage-empty">
-                {usageLoading ? 'Đang tải hạn mức…' : usage ? 'Không có hạn mức gói (dùng API key/3P).' : 'Chưa có dữ liệu usage.'}
-              </div>
-            )}
-
-            {/* Context window: token đã dùng trong cửa sổ hội thoại hiện tại. */}
-            <div className="usage-context-title">Context window</div>
-            {usage && usage.contextTokens != null && usage.contextMaxTokens ? (
-              <UsageBar
-                label={`${formatTokens(usage.contextTokens)} / ${formatTokens(usage.contextMaxTokens)}`}
-                percent={usage.contextPercentage}
-              />
-            ) : (
-              <div className="usage-empty">Chạy một task để đo context đã dùng.</div>
-            )}
-          </div>
-
+          {/* Usage (Session 5hr + Context) đã chuyển lên header cho gọn. */}
           <div className="sidebar-pipeline-title">Star Chart</div>
           <div className="neural-net-container">
             <NeuralBrain
@@ -1416,10 +1533,24 @@ export function App() {
       </div>
 
       {/* Bến neo hành động — khung duyệt / câu hỏi ghim ngay trên composer, LUÔN
-          hiển thị (không nằm trong vùng cuộn) nên nút bấm không bao giờ bị khuất. */}
-      {(pending.length > 0 || questions.length > 0) && (
+          hiển thị (không nằm trong vùng cuộn) nên nút bấm không bao giờ bị khuất.
+
+          CHỈ hiện MỘT thẻ tại một thời điểm: agent chờ duyệt tuần tự (canUseTool
+          block từng tool), nên xếp chồng nhiều thẻ chỉ làm tràn màn hình và giấu
+          mất nút Cho phép/Từ chối. Ưu tiên approval trước, rồi tới câu hỏi. Số thẻ
+          còn lại trong hàng chờ hiện ở badge để người dùng biết còn việc phía sau. */}
+      {(pending.length > 0 || questions.length > 0) && (() => {
+        const p = pending[0];
+        const q = !p ? questions[0] : undefined;
+        const queued = pending.length + questions.length - 1;
+        return (
         <div className="chat-action-dock">
-          {pending.map((p) => (
+          {queued > 0 && (
+            <div className="action-queue-badge">
+              <Icon name="pending" size={13} /> Còn {queued} yêu cầu nữa trong hàng chờ
+            </div>
+          )}
+          {p && (
             <div key={p.id} className="approval">
               <div className="approval-head">
                 <Icon name="block" size={16} /> {p.title || `Cần duyệt: ${p.toolName}`}
@@ -1494,17 +1625,18 @@ export function App() {
                 </button>
               </div>
             </div>
-          ))}
-          {questions.map((q) => (
+          )}
+          {q && (
             <QuestionCard
               key={q.id}
               pending={q}
               onSubmit={(answers) => answerQuestion(q, answers)}
               onCancel={() => answerQuestion(q, null)}
             />
-          ))}
+          )}
         </div>
-      )}
+        );
+      })()}
 
       <div
         className="composer"
@@ -1595,6 +1727,25 @@ export function App() {
             </button>
           </div>
         </div>
+
+        {/* Chỉ báo workspace: cwd này thuộc sản phẩm nào, gồm những repo anh em nào.
+            Cho người dùng biết agent đang có ngữ cảnh cả nhóm repo + trí nhớ tích lũy. */}
+        {currentWs && (
+          <div className="detected" style={{ cursor: 'pointer' }} onClick={openWsPanel}
+               title="Bấm để quản lý workspace / xem nhật ký">
+            <Icon name="routing" size={14} /> Workspace <b>{currentWs.slug}</b> · {currentWs.repos.length} repo:{' '}
+            {currentWs.repos.map((r, i) => {
+              const here = cwd.trim() && (r.path === cwd.trim() || cwd.trim().startsWith(r.path + '/') || r.path.startsWith(cwd.trim() + '/'));
+              return (
+                <span key={r.path}>
+                  {i > 0 && ', '}
+                  <span style={here ? { fontWeight: 700, textDecoration: 'underline' } : undefined}>{r.role}</span>
+                </span>
+              );
+            })}
+            {currentWs.repos.length > 1 && ' — agent đọc chéo được repo anh em (read-only)'}
+          </div>
+        )}
 
         {(docs.length > 0 || pdfs.length > 0 || images.length > 0) && (
           <div className="attachments">
@@ -1833,6 +1984,141 @@ export function App() {
               </button>
               <button className="btn allow" disabled={mcpBusy} onClick={submitMcp}>
                 {mcpBusy ? 'Đang lưu…' : 'Thêm MCP'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {wsPanelOpen && (
+        <div className="modal-overlay" onClick={() => setWsPanelOpen(false)}>
+          <div
+            className="modal-content pixel-panel"
+            style={{ maxWidth: '720px', width: '94%' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <span className="modal-title"><Icon name="routing" size={16} /> Workspace — nhóm nhiều repo</span>
+              <button className="close-btn" onClick={() => setWsPanelOpen(false)}><Icon name="close" size={16} /></button>
+            </div>
+            <div className="modal-body">
+              <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '12px' }}>
+                Gom BE / FE / infra (ở các thư mục khác nhau) thành MỘT sản phẩm. Trỏ agent vào một repo →
+                nó biết bản đồ cả nhóm, đọc chéo được repo anh em (read-only) & nhớ các phiên trước.
+              </div>
+              {wsError && (
+                <div className="picker-error" style={{ color: 'var(--red)', marginBottom: '10px' }}><Icon name="warning" size={14} /> {wsError}</div>
+              )}
+
+              {/* Danh sách workspace + repo */}
+              <div className="mcp-list-title" style={{ marginBottom: '8px' }}>
+                WORKSPACE ĐÃ CÓ ({wsList.length})
+              </div>
+              <div className="mcp-list" style={{ maxHeight: '220px', overflowY: 'auto', border: 'var(--bd-thin) solid var(--outline)', padding: '6px', background: 'var(--inset)', marginBottom: '16px' }}>
+                {wsList.length === 0 && (
+                  <div style={{ padding: '10px', textAlign: 'center', color: 'var(--muted)' }}>Chưa có workspace nào</div>
+                )}
+                {wsList.map((ws) => (
+                  <div key={ws.slug} style={{ padding: '6px 8px', borderBottom: 'var(--bd-thin) solid var(--outline)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '4px' }}>
+                      <div style={{ fontWeight: 700 }}>📦 {ws.slug} <span style={{ color: 'var(--muted)', fontWeight: 400, fontSize: '12px' }}>({ws.repos.length} repo)</span></div>
+                      <button
+                        className="btn"
+                        style={{ padding: '2px 10px', fontSize: '12px' }}
+                        onClick={() => (wsViewSlug === ws.slug ? setWsViewSlug(null) : openWsKnowledge(ws.slug))}
+                        title="Xem tri thức chung + nhật ký các phiên"
+                      >
+                        {wsViewSlug === ws.slug ? 'Ẩn tri thức' : 'Tri thức & nhật ký'}
+                      </button>
+                    </div>
+                    {ws.repos.map((r) => (
+                      <div key={r.path} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', paddingLeft: '12px' }}>
+                        <div style={{ flex: 1, minWidth: 0, fontSize: '12px' }}>
+                          <span style={{ fontWeight: 600 }}>{r.role}</span>
+                          <span style={{ fontFamily: 'monospace', color: 'var(--muted)', overflowWrap: 'anywhere' }}> · {r.path}</span>
+                        </div>
+                        <button
+                          className="btn deny"
+                          style={{ padding: '1px 8px', fontSize: '11px' }}
+                          disabled={wsBusy}
+                          onClick={() => removeWsRepo(ws.slug, r.path)}
+                          title={`Gỡ ${r.path} khỏi ${ws.slug}`}
+                        >
+                          Gỡ
+                        </button>
+                      </div>
+                    ))}
+
+                    {/* Khung xem/sửa tri thức của workspace này */}
+                    {wsViewSlug === ws.slug && (
+                      <div style={{ marginTop: '10px', paddingLeft: '12px', borderLeft: '2px solid var(--outline)' }}>
+                        <div className="mcp-list-title" style={{ marginBottom: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <span>TRI THỨC CHUNG (shared.md)</span>
+                          <button className="btn allow" style={{ padding: '2px 10px', fontSize: '12px' }} disabled={wsBusy || !wsSharedDirty} onClick={saveWsShared}>
+                            {wsBusy ? 'Đang lưu…' : wsSharedDirty ? 'Lưu' : 'Đã lưu'}
+                          </button>
+                        </div>
+                        <textarea
+                          placeholder={'Contract API BE↔FE, quyết định kiến trúc chung, quy ước cả sản phẩm…\nAgent đọc phần này ở MỌI repo trong workspace.'}
+                          value={wsShared}
+                          onChange={(e) => { setWsShared(e.target.value); setWsSharedDirty(true); }}
+                          rows={5}
+                          style={{ width: '100%', padding: '8px', fontFamily: 'monospace', fontSize: '12px', resize: 'vertical' }}
+                        />
+                        <div className="mcp-list-title" style={{ margin: '10px 0 6px' }}>
+                          NHẬT KÝ CÁC PHIÊN (journal.md — tự động ghi)
+                        </div>
+                        <div style={{ maxHeight: '160px', overflowY: 'auto', padding: '8px', background: 'var(--inset)', border: 'var(--bd-thin) solid var(--outline)', fontSize: '12px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+                          {wsJournal.trim() ? wsJournal : <span style={{ color: 'var(--muted)' }}>Chưa có nhật ký. Sau mỗi phiên thực thi trong workspace này, agent tự cô đọng & ghi vào đây.</span>}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Form gán repo vào workspace */}
+              <div className="mcp-list-title" style={{ marginBottom: '8px' }}>
+                GÁN REPO VÀO WORKSPACE
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <input
+                  placeholder="Tên workspace (vd: app-giao-hang) — gõ tên đã có để thêm repo vào đó"
+                  value={wsForm.name}
+                  onChange={(e) => setWsForm((f) => ({ ...f, name: e.target.value }))}
+                  style={{ padding: '8px' }}
+                />
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <input
+                    placeholder="Đường dẫn repo (path tuyệt đối)"
+                    value={wsForm.path}
+                    onChange={(e) => setWsForm((f) => ({ ...f, path: e.target.value }))}
+                    style={{ padding: '8px', fontFamily: 'monospace', flex: 1 }}
+                  />
+                  <button
+                    className="btn"
+                    type="button"
+                    onClick={() => setWsForm((f) => ({ ...f, path: cwd.trim() }))}
+                    title="Điền path = cwd hiện tại ở composer"
+                    style={{ padding: '0 12px', whiteSpace: 'nowrap' }}
+                  >
+                    Dùng cwd
+                  </button>
+                </div>
+                <input
+                  placeholder="Vai trò (vd: BE, FE, infra) — mặc định 'repo'"
+                  value={wsForm.role}
+                  onChange={(e) => setWsForm((f) => ({ ...f, role: e.target.value }))}
+                  style={{ padding: '8px' }}
+                />
+              </div>
+            </div>
+            <div className="modal-footer" style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '16px' }}>
+              <button className="btn deny" onClick={() => setWsPanelOpen(false)}>
+                Đóng
+              </button>
+              <button className="btn allow" disabled={wsBusy} onClick={submitWsRepo}>
+                {wsBusy ? 'Đang lưu…' : 'Gán repo'}
               </button>
             </div>
           </div>

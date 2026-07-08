@@ -12,6 +12,16 @@ import { generateProfile } from '../profiles/generate.js';
 import { createSession, getSession, removeSession } from './session.js';
 import { loadClaudeCodeMcp, listGlobalMcp, addGlobalMcp, removeGlobalMcp } from '../tools/mcp.js';
 import { parseJiraRef } from '../input/jira-ref.js';
+import {
+  listWorkspaces,
+  resolveWorkspace,
+  addRepoToWorkspace,
+  removeRepoFromWorkspace,
+  readSharedKnowledge,
+  writeSharedKnowledge,
+  readFullJournal,
+  type Workspace,
+} from '../profiles/workspace.js';
 
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -359,6 +369,105 @@ app.get('/api/detect', (req, res) => {
     res.json(detectSource(cwd));
   } catch (err) {
     res.status(400).json({ error: (err as Error).message });
+  }
+});
+
+// ── Workspace (nhóm nhiều repo + trí nhớ tích lũy) — xem DESIGN §9 ────────────
+
+/** Tìm workspace đã đăng ký theo slug (null nếu không có). */
+function findWorkspace(slug: string): Workspace | null {
+  return listWorkspaces().find((w) => w.slug === slug) ?? null;
+}
+
+/** GET /api/workspaces — liệt kê mọi workspace (slug + repos). */
+app.get('/api/workspaces', (_req, res) => {
+  try {
+    res.json({ workspaces: listWorkspaces() });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+/**
+ * GET /api/workspace/current?cwd=... — workspace mà cwd hiện tại thuộc về (cho badge
+ * chỉ báo ở composer). Trả { workspace: null } nếu cwd không thuộc workspace nào.
+ */
+app.get('/api/workspace/current', (req, res) => {
+  const cwd = (req.query.cwd as string) || process.cwd();
+  try {
+    res.json({ workspace: resolveWorkspace(cwd) });
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+  }
+});
+
+/**
+ * POST /api/workspace/repo — gán một repo vào workspace (tạo nếu chưa có).
+ * body: { name, path, role }. Trả workspace sau cập nhật.
+ */
+app.post('/api/workspace/repo', (req, res) => {
+  const { name, path, role } = req.body ?? {};
+  if (typeof name !== 'string' || !name.trim() || typeof path !== 'string' || !path.trim()) {
+    res.status(400).json({ error: 'Thiếu name hoặc path.' });
+    return;
+  }
+  if (!fs.existsSync(path)) {
+    res.status(400).json({ error: `Không thấy thư mục repo: ${path}` });
+    return;
+  }
+  try {
+    const ws = addRepoToWorkspace(name, path, typeof role === 'string' && role.trim() ? role : 'repo');
+    res.json({ ok: true, workspace: ws });
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+  }
+});
+
+/**
+ * DELETE /api/workspace/repo — gỡ một repo khỏi workspace (xóa workspace nếu rỗng).
+ * body: { name, path }.
+ */
+app.delete('/api/workspace/repo', (req, res) => {
+  const { name, path } = req.body ?? {};
+  if (typeof name !== 'string' || typeof path !== 'string') {
+    res.status(400).json({ error: 'Thiếu name hoặc path.' });
+    return;
+  }
+  try {
+    removeRepoFromWorkspace(name, path);
+    res.json({ ok: true, workspaces: listWorkspaces() });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+/** GET /api/workspace/:slug/knowledge — shared.md + journal.md của workspace (cho panel). */
+app.get('/api/workspace/:slug/knowledge', (req, res) => {
+  const ws = findWorkspace(req.params.slug);
+  if (!ws) {
+    res.status(404).json({ error: 'Workspace không tồn tại.' });
+    return;
+  }
+  try {
+    res.json({ shared: readSharedKnowledge(ws), journal: readFullJournal(ws) });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+/** PUT /api/workspace/:slug/shared — ghi đè tri thức chung shared.md. body: { content }. */
+app.put('/api/workspace/:slug/shared', (req, res) => {
+  const ws = findWorkspace(req.params.slug);
+  if (!ws) {
+    res.status(404).json({ error: 'Workspace không tồn tại.' });
+    return;
+  }
+  const content = typeof req.body?.content === 'string' ? req.body.content : '';
+  try {
+    writeSharedKnowledge(ws, content);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
   }
 });
 
