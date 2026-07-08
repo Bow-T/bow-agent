@@ -107,6 +107,137 @@
   --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
+/* ───────────────────────────  Accent · màu nhấn chọn ở header  ───────────────────────────
+ * Nền sáng/tối (paper/night) GIỮ NGUYÊN — chỉ hoán màu nhấn (brass mặc định → hồng/lam/…).
+ * Người dùng chọn 1 trong 7 swatch; App.tsx đặt <html data-accent="…">.
+ * Mỗi accent khai báo 2 sắc độ: bản LIGHT (đậm hơn, đọc rõ trên giấy) và bản DARK (sáng
+ * hơn để nổi trên mực đêm) — khớp cách --brass đổi giữa 2 theme gốc. Chỉ ghi đè 5 token
+ * nhấn: --brass / --brass-bright / --brass-soft / --on-brass / --glow-a (quầng môi trường).
+ * 'brass' không cần block riêng — đó là mặc định của :root/[data-theme]. */
+
+/* Bảng màu ĐÃ KIỂM ĐỊNH (dataviz palette): 6 hue categorical được validate bằng
+ * scripts/validate_palette.js — đạt CVD-safe (worst adjacent ΔE ~29, phân biệt tốt cả
+ * khi mù màu) và tương phản ≥3:1 với nền (đọc rõ khi làm màu chữ/nút). Bản LIGHT chọn cho
+ * nền giấy #e7e0cf, bản DARK chọn cho nền đêm #0b0e12 — mỗi mode validate riêng, không
+ * lật tự động. -bright/-soft/-glow suy ra từ hue chính; -on-brass là chữ tương phản trên nút. */
+
+/* ── Lam (blue) ── */
+[data-accent='blue'] {
+  --brass: #2a78d6;
+  --brass-bright: #3d87e0;
+  --brass-soft: rgba(42, 120, 214, 0.1);
+  --on-brass: #eef4fc;
+  --glow-a: rgba(42, 120, 214, 0.1);
+}
+[data-theme='dark'][data-accent='blue'] {
+  --brass: #5c9fea;
+  --brass-bright: #78b1f0;
+  --brass-soft: rgba(92, 159, 234, 0.14);
+  --on-brass: #081524;
+  --glow-a: rgba(92, 159, 234, 0.14);
+}
+
+/* ── Xanh vịt (teal) ── */
+[data-accent='teal'] {
+  --brass: #0a8a72;
+  --brass-bright: #0f9d82;
+  --brass-soft: rgba(10, 138, 114, 0.1);
+  --on-brass: #eaf6f3;
+  --glow-a: rgba(10, 138, 114, 0.1);
+}
+[data-theme='dark'][data-accent='teal'] {
+  --brass: #3bb89d;
+  --brass-bright: #55c7af;
+  --brass-soft: rgba(59, 184, 157, 0.14);
+  --on-brass: #04211b;
+  --glow-a: rgba(59, 184, 157, 0.14);
+}
+
+/* ── Tím (violet) ── */
+[data-accent='purple'] {
+  --brass: #4a3aa7;
+  --brass-bright: #5a49bd;
+  --brass-soft: rgba(74, 58, 167, 0.1);
+  --on-brass: #efedf9;
+  --glow-a: rgba(74, 58, 167, 0.1);
+}
+[data-theme='dark'][data-accent='purple'] {
+  --brass: #9085e9;
+  --brass-bright: #a49bef;
+  --brass-soft: rgba(144, 133, 233, 0.14);
+  --on-brass: #100a24;
+  --glow-a: rgba(144, 133, 233, 0.14);
+}
+
+/* ── Hồng (magenta) ── */
+[data-accent='pink'] {
+  --brass: #b13a68;
+  --brass-bright: #c44a79;
+  --brass-soft: rgba(177, 58, 104, 0.1);
+  --on-brass: #fbedf3;
+  --glow-a: rgba(177, 58, 104, 0.1);
+}
+[data-theme='dark'][data-accent='pink'] {
+  --brass: #e084ac;
+  --brass-bright: #e89dbe;
+  --brass-soft: rgba(224, 132, 172, 0.14);
+  --on-brass: #260c17;
+  --glow-a: rgba(224, 132, 172, 0.14);
+}
+
+/* ── Đỏ (red) ── */
+[data-accent='red'] {
+  --brass: #c1443f;
+  --brass-bright: #d1544f;
+  --brass-soft: rgba(193, 68, 63, 0.1);
+  --on-brass: #fceeed;
+  --glow-a: rgba(193, 68, 63, 0.1);
+}
+[data-theme='dark'][data-accent='red'] {
+  --brass: #e66767;
+  --brass-bright: #ec8080;
+  --brass-soft: rgba(230, 103, 103, 0.14);
+  --on-brass: #260c0c;
+  --glow-a: rgba(230, 103, 103, 0.14);
+}
+
+/* ── Cam (orange) — lệch hẳn sang cam để không lẫn với đồng thau vàng ── */
+[data-accent='orange'] {
+  --brass: #c05a1a;
+  --brass-bright: #d16a24;
+  --brass-soft: rgba(192, 90, 26, 0.1);
+  --on-brass: #fbefe7;
+  --glow-a: rgba(192, 90, 26, 0.1);
+}
+[data-theme='dark'][data-accent='orange'] {
+  --brass: #e88f4c;
+  --brass-bright: #efa367;
+  --brass-soft: rgba(232, 143, 76, 0.14);
+  --on-brass: #261307;
+  --glow-a: rgba(232, 143, 76, 0.14);
+}
+
+/* ── Nền nhuốm theo accent ──
+ * Mọi accent (trừ brass mặc định) trộn NHẸ sắc accent vào token nền trung tính, để cả
+ * không gian "ấm" về phía màu đã chọn mà vẫn giữ chất giấy da / mực đêm. Một luật chung
+ * cho nền SÁNG + một cho nền TỐI — dùng var(--brass) (đã set ở block accent phía trên)
+ * nên tự đúng hue cho từng màu; không phải lặp công thức ở 12 block. %-mix thấp = tinh tế.
+ * --viewport-bg trộn ít hơn (màn kính thiên văn nên gần như trung tính). */
+[data-accent] {
+  --bg: color-mix(in srgb, var(--brass) 7%, #e7e0cf);
+  --surface: color-mix(in srgb, var(--brass) 6%, #f1ebdb);
+  --surface-2: color-mix(in srgb, var(--brass) 7%, #e0d8c3);
+  --surface-3: color-mix(in srgb, var(--brass) 8%, #d5ccb2);
+  --viewport-bg: color-mix(in srgb, var(--brass) 5%, #e4dcc7);
+}
+[data-theme='dark'][data-accent] {
+  --bg: color-mix(in srgb, var(--brass) 8%, #0b0e12);
+  --surface: color-mix(in srgb, var(--brass) 8%, #12161c);
+  --surface-2: color-mix(in srgb, var(--brass) 9%, #171c23);
+  --surface-3: color-mix(in srgb, var(--brass) 10%, #1f252e);
+  --viewport-bg: color-mix(in srgb, var(--brass) 6%, #05070c);
+}
+
 /* ───────────────────────────  Base  ─────────────────────────── */
 *,
 *::before,
@@ -329,6 +460,65 @@ a { color: var(--brass); text-underline-offset: 2px; }
 }
 .theme-btn:hover { background: var(--surface-2); color: var(--brass); border-color: var(--hairline); }
 .theme-btn:active { transform: translateY(0.5px); }
+
+/* ── Bộ chọn màu nhấn (accent) ── */
+.accent-picker { position: relative; display: inline-flex; }
+.accent-btn { color: var(--ink-2); }
+/* Chấm màu hiện tại — viền mảnh + quầng nhẹ để nổi trên nút phẳng. */
+.accent-dot {
+  width: 15px; height: 15px;
+  border-radius: 50%;
+  border: 1px solid var(--hairline);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.35), 0 0 6px -2px currentColor;
+}
+.accent-menu {
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  padding: 9px;
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  background-image: var(--grain);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--brass);
+  box-shadow: var(--depth);
+  z-index: 60;
+}
+.accent-menu-title {
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--muted);
+  padding: 0 2px 8px;
+}
+/* Lưới swatch: hàng ngang các ô tròn màu, ô đang chọn có vòng brass + dấu kiểm. */
+.accent-swatches { display: flex; gap: 8px; }
+.accent-swatch {
+  position: relative;
+  width: 24px; height: 24px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--hairline);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.35);
+  transition: transform var(--fast), box-shadow var(--fast);
+}
+.accent-swatch:hover { transform: translateY(-1px) scale(1.08); }
+.accent-swatch.selected {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px currentColor;
+}
+/* Dấu kiểm ✓ trên ô đang chọn (currentColor = màu ô → tự tương phản với chấm). */
+.accent-swatch.selected::after {
+  content: '✓';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
 
 /* ───────────────────────────  Layout  ─────────────────────────── */
 .main-layout {
@@ -682,16 +872,43 @@ a { color: var(--brass); text-underline-offset: 2px; }
   align-items: center;
   gap: 8px;
   max-width: min(680px, 82%);
-  padding: 6px 14px;
+  padding: 6px 12px 6px 14px;
   background: color-mix(in srgb, var(--surface) 92%, transparent);
   backdrop-filter: blur(8px);
   border: 1px solid var(--hairline);
+  border-radius: var(--r);
   font-family: var(--mono);
   font-size: 11.5px;
   color: var(--ink-2);
+  /* Là <button>: reset nền/viền mặc định + gợi ý bấm được (cuộn tới câu hỏi này). */
+  cursor: pointer;
+  text-align: left;
+  transition: border-color var(--fast), color var(--fast), background var(--med);
+  animation: pinned-in 200ms var(--ease);
 }
-.pinned-icon { flex-shrink: 0; color: var(--brass); }
+.chat-pinned-query:hover {
+  border-color: var(--brass);
+  color: var(--ink);
+  background: color-mix(in srgb, var(--surface) 96%, var(--brass) 8%);
+}
+.chat-pinned-query:active { transform: translate(-50%, 0.5px); }
+@keyframes pinned-in {
+  from { opacity: 0; transform: translate(-50%, -6px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+.pinned-icon { flex-shrink: 0; color: var(--brass); display: inline-flex; }
 .pinned-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Mũi tên lên — báo bấm sẽ cuộn NGƯỢC lên tới đúng câu hỏi trên pill. */
+.pinned-up {
+  flex-shrink: 0;
+  display: inline-flex;
+  color: var(--muted);
+  transition: transform var(--fast), color var(--fast);
+}
+.chat-pinned-query:hover .pinned-up {
+  color: var(--brass);
+  transform: translateY(-2px);
+}
 
 .chat {
   flex: 1;
@@ -793,6 +1010,75 @@ a { color: var(--brass); text-underline-offset: 2px; }
   50%  { content: '..'; }
   75%  { content: '...'; }
   100% { content: ''; }
+}
+
+/* NHÓM TOOL = gộp nhiều dòng "đọc file…"/"chạy lệnh…" liên tiếp thành 1 khối gấp/mở */
+.bubble.tool.tool-group {
+  display: block;
+  padding: 0;
+  align-items: initial;
+}
+.bubble.tool.tool-group::before { content: none; }
+.bubble.tool.tool-group.running::after { content: none; }
+
+.tool-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  padding: 2px 0 2px 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.tool-group-head:hover { color: var(--ink); }
+.tool-group-head > svg { flex-shrink: 0; color: var(--brass); transform: translateY(2px); }
+.tool-group-title { flex-shrink: 0; color: var(--brass); }
+.bubble.tool.tool-group.running .tool-group-title::after {
+  content: '';
+  margin-left: 2px;
+  animation: tool-ellipsis 1.2s steps(4, end) infinite;
+}
+.tool-group-preview {
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-group-list {
+  list-style: none;
+  margin: 2px 0 4px;
+  padding: 4px 0 4px 18px;
+  border-left: 1px solid var(--hairline);
+  margin-left: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.tool-group-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.tool-group-row::before {
+  content: '›';
+  color: var(--brass);
+  flex-shrink: 0;
+}
+.tool-group-row .tg-name { flex-shrink: 0; }
+.tool-group-row .tg-summary {
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* SYSTEM = ghi chú kênh */
@@ -948,7 +1234,7 @@ a { color: var(--brass); text-underline-offset: 2px; }
      lộ nút Cho phép/Từ chối. Trần 44vh khi cửa sổ cao. Thẻ con đặt flex-shrink:0 nên
      giữ nguyên chiều cao thật → dock cuộn tới nút thay vì thẻ tự cắt mất nút. */
   flex: 0 1 auto;
-  min-height: 74px;
+  min-height: 0;
   margin: 0 14px 12px;
   display: flex;
   flex-direction: column;
@@ -1004,13 +1290,13 @@ a { color: var(--brass); text-underline-offset: 2px; }
   flex-shrink: 0; /* tiêu đề ghim, không cuộn */
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 11px 15px;
+  gap: 8px;
+  padding: 7px 13px;
   font-family: var(--mono);
   text-transform: uppercase;
-  letter-spacing: 0.11em;
+  letter-spacing: 0.1em;
   font-weight: 700;
-  font-size: 11.5px;
+  font-size: 10.5px;
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 9%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--danger) 22%, var(--hairline));
@@ -1019,7 +1305,7 @@ a { color: var(--brass); text-underline-offset: 2px; }
    để báo "đang chờ người duyệt" mà không cần thêm chấm riêng. */
 .approval-head > svg {
   flex-shrink: 0;
-  padding: 3px;
+  padding: 2px;
   border-radius: 50%;
   background: color-mix(in srgb, var(--danger) 14%, transparent);
   box-shadow: 0 0 0 0 color-mix(in srgb, var(--danger) 55%, transparent);
@@ -1036,14 +1322,14 @@ a { color: var(--brass); text-underline-offset: 2px; }
      dài (mô tả + code) cuộn trong thân, không đẩy nút ra khỏi tầm nhìn. */
   flex: 1 1 auto;
   min-height: 0;
-  padding: 13px 15px;
+  padding: 9px 13px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
-.approval-desc { font-size: 13.5px; color: var(--ink); line-height: 1.55; }
+.approval-desc { font-size: 12.5px; color: var(--ink); line-height: 1.5; }
 .approval-path, .approval-reason { font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); }
 .approval-path code, .approval-reason code {
   font-family: var(--mono);
@@ -1053,9 +1339,9 @@ a { color: var(--brass); text-underline-offset: 2px; }
 }
 .approval-code-block { background: var(--surface-2); border: 1px solid var(--hairline); overflow: hidden; }
 .block-title {
-  padding: 8px 12px;
+  padding: 5px 11px;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--ink-2);
   border-bottom: 1px solid var(--hairline);
   background: var(--surface);
@@ -1063,15 +1349,15 @@ a { color: var(--brass); text-underline-offset: 2px; }
 .block-title code { color: var(--brass); font-weight: 700; }
 .approval pre {
   margin: 0;
-  padding: 11px 13px;
+  padding: 8px 11px;
   /* Cả 2 chiều: lệnh dài không đẩy thẻ cao vượt màn hình che mất nút Cho phép/
      Từ chối — thay vào đó nội dung cuộn GỌN trong khối, thẻ luôn thấy đủ nút. */
   overflow: auto;
-  max-height: 30vh;
+  max-height: 22vh;
   overscroll-behavior: contain;
   font-family: var(--mono);
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: 11.5px;
+  line-height: 1.45;
   color: var(--ink);
 }
 /* Khối diff (tìm cũ / thay mới) khi sửa file có thể rất dài — cũng cần cuộn trong
@@ -1100,14 +1386,14 @@ a { color: var(--brass); text-underline-offset: 2px; }
 .approval-actions {
   flex-shrink: 0; /* nút Cho phép/Từ chối ghim đáy thẻ, luôn hiện */
   display: flex;
-  gap: 10px;
-  padding: 12px 15px;
+  gap: 8px;
+  padding: 8px 13px;
   border-top: 1px solid var(--hairline);
   background: color-mix(in srgb, var(--surface-2) 70%, transparent);
 }
 /* Nút chính chiếm nhiều không gian hơn để "Cho phép" nổi bật, "Từ chối" gọn bên phải. */
 .approval-actions .btn.allow { flex: 1; }
-.approval-actions .btn { padding: 9px 18px; }
+.approval-actions .btn { padding: 7px 16px; }
 
 /* ─────────────────────  Câu hỏi (AskUserQuestion)  ───────────────────── */
 .question-card {
@@ -1255,7 +1541,31 @@ a { color: var(--brass); text-underline-offset: 2px; }
   gap: 11px;
   position: relative;
   transition: border-color var(--med), box-shadow var(--med);
+  /* KHÔNG đặt overflow ở đây: nhãn "INPUT CHANNEL" (::before) nằm nửa ngoài mép trên
+     khung, overflow sẽ cắt mất nó. Chỉ ô nhập (.task) mới cuộn — nó đã có scroll riêng
+     và bị kẹp chiều cao khi kéo, nên khung không bao giờ phình quá màn hình. */
 }
+/* Tay kéo giãn: dải mỏng ngay TRÊN ô nhập, kéo lên = ô nhập cao ra, xuống = thấp lại.
+   Đặt trong luồng (không absolute) nên không bao giờ che/cắt phần đầu khung. */
+.composer-resize-handle {
+  flex-shrink: 0;
+  height: 14px;
+  margin-bottom: -4px;      /* kéo sát ô nhập, không phình khoảng cách */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: ns-resize;
+  touch-action: none;
+}
+.composer-resize-grip {
+  width: 46px;
+  height: 4px;
+  border-radius: 4px;
+  background: var(--hairline);
+  transition: background var(--fast);
+}
+.composer-resize-handle:hover .composer-resize-grip,
+.composer-resize-handle:active .composer-resize-grip { background: var(--brass); }
 .composer::before {
   content: 'INPUT CHANNEL';
   position: absolute;
