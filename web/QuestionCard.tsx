@@ -79,6 +79,8 @@ export function QuestionCard({
     <div className="question-card">
       <div className="question-card-head"><Icon name="agent" size={16} /> Agent cần bạn quyết định</div>
 
+      {/* Thân cuộn: nhiều câu hỏi dài vẫn cuộn gọn, để tiêu đề + nút Gửi/Huỷ luôn hiện. */}
+      <div className="question-body">
       {pending.questions.map((q, qi) => {
         const multi = !!q.multiSelect;
         const set = picked[qi] ?? new Set<string>();
@@ -141,6 +143,7 @@ export function QuestionCard({
           </div>
         );
       })}
+      </div>
 
       <div className="question-actions">
         <button className="btn allow" disabled={!allAnswered} onClick={submit}>
