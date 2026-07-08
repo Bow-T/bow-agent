@@ -39,8 +39,23 @@ export interface Conversation {
   items: unknown[];
   /** Thư mục làm việc của cuộc (để mở lại tự set cwd). */
   cwd: string;
+  /**
+   * IP người tạo cuộc — để chia sẻ LAN (QC), mỗi máy chỉ thấy/đọc cuộc của chính nó.
+   * Admin (localhost 127.0.0.1) xem được tất cả để review. Bản ghi cũ không có field
+   * này (undefined) → coi như "vô chủ", chỉ admin thấy (xem canAccess).
+   */
+  ownerIp?: string;
   createdAt: number;
   updatedAt: number;
+}
+
+/**
+ * Quy tắc truy cập một cuộc: admin (localhost) thấy tất; còn lại chỉ thấy cuộc do
+ * chính IP mình tạo. Bản ghi cũ (ownerIp rỗng) chỉ admin thấy — tránh lộ chéo.
+ */
+function canAccess(c: Conversation, requesterIp: string): boolean {
+  if (requesterIp === '127.0.0.1') return true; // admin xem tất cả để review
+  return !!c.ownerIp && c.ownerIp === requesterIp;
 }
 
 /** Bản tóm tắt (cho danh sách sidebar — bỏ items cho nhẹ). */
@@ -83,16 +98,22 @@ function toSummary(c: Conversation): ConversationSummary {
   };
 }
 
-/** Danh sách cuộc (không kèm items), MỚI NHẤT lên đầu theo updatedAt. */
-export function listConversations(): ConversationSummary[] {
+/**
+ * Danh sách cuộc (không kèm items), MỚI NHẤT lên đầu theo updatedAt. Lọc theo
+ * requesterIp: admin (localhost) thấy tất, người khác chỉ thấy cuộc của mình.
+ */
+export function listConversations(requesterIp: string): ConversationSummary[] {
   return readAll()
+    .filter((c) => canAccess(c, requesterIp))
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .map(toSummary);
 }
 
-/** Lấy đầy đủ một cuộc (kèm items). null nếu không có. */
-export function getConversation(id: string): Conversation | null {
-  return readAll().find((c) => c.id === id) ?? null;
+/** Lấy đầy đủ một cuộc (kèm items). null nếu không có HOẶC requesterIp không có quyền. */
+export function getConversation(id: string, requesterIp: string): Conversation | null {
+  const c = readAll().find((c) => c.id === id);
+  if (!c || !canAccess(c, requesterIp)) return null;
+  return c;
 }
 
 /**
@@ -109,6 +130,7 @@ export function upsertConversation(
     cwd?: string;
   },
   now: number,
+  requesterIp: string,
 ): Conversation {
   const list = readAll();
   const idx = list.findIndex((c) => c.id === id);
@@ -119,6 +141,7 @@ export function upsertConversation(
       conversationId: patch.conversationId ?? null,
       items: patch.items ?? [],
       cwd: patch.cwd ?? '',
+      ownerIp: requesterIp, // gắn chủ sở hữu ngay khi tạo → về sau lọc theo IP
       createdAt: now,
       updatedAt: now,
     };
@@ -127,6 +150,10 @@ export function upsertConversation(
     return created;
   }
   const cur = list[idx];
+  // Không phải chủ (và không phải admin) → không cho ghi đè cuộc của người khác.
+  if (!canAccess(cur, requesterIp)) {
+    throw new Error('Không có quyền cập nhật cuộc trò chuyện này.');
+  }
   const updated: Conversation = {
     ...cur,
     // title: chỉ ghi đè khi patch có giá trị không rỗng (giữ tên người dùng đã đặt).
@@ -141,11 +168,12 @@ export function upsertConversation(
   return updated;
 }
 
-/** Đổi tên một cuộc. Trả bản ghi sau đổi, hoặc null nếu id lạ. */
-export function renameConversation(id: string, title: string, now: number): Conversation | null {
+/** Đổi tên một cuộc. Trả bản ghi sau đổi, hoặc null nếu id lạ / không có quyền. */
+export function renameConversation(id: string, title: string, now: number, requesterIp: string): Conversation | null {
   const list = readAll();
   const idx = list.findIndex((c) => c.id === id);
   if (idx === -1) return null;
+  if (!canAccess(list[idx], requesterIp)) return null; // không phải chủ/admin
   const t = title.trim();
   if (!t) return list[idx]; // tên rỗng → giữ nguyên
   list[idx] = { ...list[idx], title: t, updatedAt: now };
@@ -153,11 +181,12 @@ export function renameConversation(id: string, title: string, now: number): Conv
   return list[idx];
 }
 
-/** Xóa một cuộc. Trả true nếu có xóa. */
-export function deleteConversation(id: string): boolean {
+/** Xóa một cuộc (chỉ chủ hoặc admin). Trả true nếu có xóa. */
+export function deleteConversation(id: string, requesterIp: string): boolean {
   const list = readAll();
+  const target = list.find((c) => c.id === id);
+  if (!target || !canAccess(target, requesterIp)) return false;
   const next = list.filter((c) => c.id !== id);
-  if (next.length === list.length) return false;
   writeAll(next);
   return true;
 }

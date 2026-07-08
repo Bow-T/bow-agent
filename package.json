@@ -19,7 +19,8 @@
     "ui:api": "tsx src/web/server.ts",
     "ui:web": "vite",
     "ui:build": "vite build",
-    "ui:preview": "npm run ui:build && node --loader tsx src/web/server.ts"
+    "ui:preview": "npm run ui:build && node --loader tsx src/web/server.ts",
+    "ui:qc": "BOW_SAFE_MODE=true BOW_SAFE_CWD=/Users/tuannguyen/GitProject/monorepo concurrently -n api,web -c blue,green \"npm run ui:api\" \"vite --host\""
   },
   "engines": {
     "node": ">=18"
