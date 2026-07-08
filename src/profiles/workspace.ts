@@ -14,7 +14,7 @@ import { dirname, join, resolve, sep } from 'node:path';
  *       ├── shared.md            tri thức CHUNG sản phẩm (contract BE↔FE, quyết định KT)
  *       └── journal.md           nhật ký TỰ ĐỘNG: mỗi phiên append 1 mục
  *
- * Xem DESIGN.md §9. Tri thức là markdown phẳng — người đọc & sửa tay được, không trạng
+ * Xem ARCHITECTURE.md §9. Tri thức là markdown phẳng — người đọc & sửa tay được, không trạng
  * thái ẩn (KHÔNG phải "Genome" đã gỡ: không fitness/mutation/vòng tiến hóa).
  */
 
