@@ -10,6 +10,13 @@ import { getProfile } from '../profiles/index.js';
 import { detectSource } from '../profiles/detect.js';
 import { generateProfile, analyzeStructure } from '../profiles/generate.js';
 import { createSession, getSession, removeSession } from './session.js';
+import {
+  listConversations,
+  getConversation,
+  upsertConversation,
+  renameConversation,
+  deleteConversation,
+} from './conversations.js';
 import { loadClaudeCodeMcp, listGlobalMcp, addGlobalMcp, removeGlobalMcp } from '../tools/mcp.js';
 import { parseJiraRef } from '../input/jira-ref.js';
 import {
@@ -55,6 +62,7 @@ app.post('/api/run', async (req, res) => {
       cwd,
       model,
       conversationId,
+      resumeContext,
     } = req.body ?? {};
 
     const workdir = cwd || process.cwd();
@@ -109,7 +117,7 @@ app.post('/api/run', async (req, res) => {
       }
     }
 
-    const brief = await buildTaskBrief({
+    let brief = await buildTaskBrief({
       text,
       jiraRef,
       docs: allDocs,
@@ -118,6 +126,18 @@ app.post('/api/run', async (req, res) => {
     if (!brief) {
       res.status(400).json({ error: 'Cần ít nhất một trong: text, Jira ref, tài liệu, ảnh.' });
       return;
+    }
+
+    // Fallback trí nhớ: khi client MỞ LẠI một cuộc cũ, nó gửi kèm resumeContext = tóm
+    // tắt các dòng chat trước. Nối vào ĐẦU brief làm ngữ cảnh. Nếu SDK resume phiên
+    // .jsonl thành công thì đoạn này chỉ nhắc lại (vô hại); nếu phiên đã bị SDK dọn
+    // (resume rỗng) thì nó cứu ngữ cảnh để agent không "quên trắng" cuộc cũ.
+    if (typeof resumeContext === 'string' && resumeContext.trim()) {
+      brief =
+        `## Ngữ cảnh cuộc trò chuyện trước (tiếp nối)\n` +
+        `Đây là tóm tắt trao đổi trước đó trong cùng cuộc trò chuyện. Hãy đọc để nắm ` +
+        `bối cảnh trước khi xử lý yêu cầu mới bên dưới:\n\n${resumeContext.trim()}\n\n---\n\n` +
+        brief;
     }
 
     // Chọn profile. 'auto' = tự nhận diện từ cwd; 'none' = tổng quát; còn lại = profile đăng ký.
@@ -509,6 +529,72 @@ app.post('/api/analyze-structure', (req, res) => {
     .then((structure) => session.push({ type: 'done', result: structure }))
     .catch((err: unknown) => session.push({ type: 'fatal', message: (err as Error).message }))
     .finally(() => session.close());
+});
+
+// ── Lịch sử nhiều cuộc trò chuyện (lưu bền ra đĩa) ───────────────────────────
+
+/** GET /api/conversations — danh sách cuộc (không kèm items), mới nhất lên đầu. */
+app.get('/api/conversations', (_req, res) => {
+  try {
+    res.json({ conversations: listConversations() });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+/** GET /api/conversations/:id — lấy đầy đủ một cuộc (kèm items + conversationId). */
+app.get('/api/conversations/:id', (req, res) => {
+  const conv = getConversation(req.params.id);
+  if (!conv) {
+    res.status(404).json({ error: 'Cuộc trò chuyện không tồn tại.' });
+    return;
+  }
+  res.json({ conversation: conv });
+});
+
+/**
+ * PUT /api/conversations/:id — upsert (tạo nếu chưa có, ngược lại cập nhật). Dùng cho
+ * auto-lưu. body: { title?, conversationId?, items?, cwd? }. Trả bản ghi sau lưu.
+ */
+app.put('/api/conversations/:id', (req, res) => {
+  const { title, conversationId, items, cwd } = req.body ?? {};
+  try {
+    const conv = upsertConversation(
+      req.params.id,
+      {
+        title: typeof title === 'string' ? title : undefined,
+        conversationId:
+          conversationId === null || typeof conversationId === 'string' ? conversationId : undefined,
+        items: Array.isArray(items) ? items : undefined,
+        cwd: typeof cwd === 'string' ? cwd : undefined,
+      },
+      Date.now(),
+    );
+    res.json({ ok: true, conversation: conv });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+/** PATCH /api/conversations/:id — đổi tên. body: { title }. */
+app.patch('/api/conversations/:id', (req, res) => {
+  const title = typeof req.body?.title === 'string' ? req.body.title : '';
+  if (!title.trim()) {
+    res.status(400).json({ error: 'Thiếu tiêu đề.' });
+    return;
+  }
+  const conv = renameConversation(req.params.id, title, Date.now());
+  if (!conv) {
+    res.status(404).json({ error: 'Cuộc trò chuyện không tồn tại.' });
+    return;
+  }
+  res.json({ ok: true, conversation: conv });
+});
+
+/** DELETE /api/conversations/:id — xóa một cuộc. */
+app.delete('/api/conversations/:id', (req, res) => {
+  const ok = deleteConversation(req.params.id);
+  res.json({ ok, conversations: listConversations() });
 });
 
 const PORT = Number(process.env.BOW_AGENT_PORT ?? 4000);

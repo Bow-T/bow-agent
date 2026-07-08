@@ -106,6 +106,22 @@ export interface ImageAttachment {
   mediaType: string;
 }
 
+/** Tóm tắt một cuộc trò chuyện (cho danh sách lịch sử — không kèm items). */
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  cwd: string;
+  itemCount: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Một cuộc trò chuyện đầy đủ (khi mở lại — kèm items + conversationId). */
+export interface ConversationFull extends ConversationSummary {
+  conversationId: string | null;
+  items: ChatItem[];
+}
+
 /** Kết quả nhận diện source từ backend. */
 export interface DetectedSource {
   profile: string;
