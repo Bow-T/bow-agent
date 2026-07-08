@@ -19,6 +19,7 @@ import {
 } from './conversations.js';
 import { loadClaudeCodeMcp, listGlobalMcp, addGlobalMcp, removeGlobalMcp } from '../tools/mcp.js';
 import { parseJiraRef } from '../input/jira-ref.js';
+import { fetchJiraTicketImages, fetchJiraTicketVideos } from '../input/jira-attachments.js';
 import {
   listWorkspaces,
   resolveWorkspace,
@@ -117,11 +118,36 @@ app.post('/api/run', async (req, res) => {
       }
     }
 
+    // Tải ẢNH đính kèm ticket Jira (mockup/screenshot) để agent NHÌN được — MCP chỉ trả
+    // text, nên ta tự gọi REST có auth (xem jira-attachments.ts). Chỉ khi có ticket ref +
+    // jira đã cấu hình. Fail-open: lỗi tải không chặn việc chạy. Xem DESIGN §7.1.
+    const uploadImages: { base64: string; mediaType: string }[] = Array.isArray(images) ? images : [];
+    let jiraImageNames: string[] = [];
+    let jiraImageFailed: string[] = [];
+    let jiraVideos: { filename: string; path: string }[] = [];
+    let jiraVideosSkipped: { filename: string; sizeMb: number }[] = [];
+    const jiraTicketKey = activeJiraRef && hasJiraMcp ? parseJiraRef(activeJiraRef).ticketKey : undefined;
+    if (jiraTicketKey) {
+      const fetched = await fetchJiraTicketImages(jiraTicketKey);
+      jiraImageNames = fetched.images.map((i) => i.filename);
+      jiraImageFailed = fetched.failed;
+      // Gộp ảnh Jira vào cuối mảng ảnh (sau ảnh upload) — cùng đưa vào images[] của runner.
+      uploadImages.push(...fetched.images.map((i) => ({ base64: i.base64, mediaType: i.mediaType })));
+      // Video Jira: tải về đĩa (không vào images[]) để agent dùng skill /watch xem.
+      const vids = await fetchJiraTicketVideos(jiraTicketKey);
+      jiraVideos = vids.videos.map((v) => ({ filename: v.filename, path: v.path }));
+      jiraVideosSkipped = vids.skippedTooLarge;
+    }
+
     let brief = await buildTaskBrief({
       text,
       jiraRef,
       docs: allDocs,
       imageCount: Array.isArray(images) ? images.length : 0,
+      jiraImageNames,
+      jiraImageFailed,
+      jiraVideos,
+      jiraVideosSkipped,
     });
     if (!brief) {
       res.status(400).json({ error: 'Cần ít nhất một trong: text, Jira ref, tài liệu, ảnh.' });
@@ -181,7 +207,7 @@ app.post('/api/run', async (req, res) => {
       effort: effort ?? 'high',
       language: language === 'en' ? 'en' : 'vi',
       projectProfile,
-      images: Array.isArray(images) ? images : undefined,
+      images: uploadImages.length > 0 ? uploadImages : undefined,
       mcpServers: effectiveMcp.length > 0 ? effectiveMcp : undefined,
       abortSignal: session.abort.signal,
       onEvent: (ev) => session.push(ev),

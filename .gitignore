@@ -4,6 +4,7 @@ dist-web/
 generated-profiles/
 workspaces/
 conversations/
+.jira-cache/
 *.log
 .env
 .env.local

@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { buildTaskBrief, type TaskInput } from '../input/task.js';
+import { parseJiraRef } from '../input/jira-ref.js';
+import { fetchJiraTicketImages, fetchJiraTicketVideos } from '../input/jira-attachments.js';
 import { runAgent } from '../core/runner.js';
 import { config } from '../config/env.js';
 import { getProfile, profileNames } from '../profiles/index.js';
@@ -167,6 +169,27 @@ async function main(): Promise<void> {
     text: args.text,
   };
 
+  // Tải ảnh đính kèm ticket Jira (mockup/screenshot) để agent NHÌN — MCP chỉ trả text nên
+  // ta tự gọi REST có auth (jira-attachments.ts). Fail-open: thiếu auth/lỗi tải đều bỏ qua.
+  const jiraImages: { base64: string; mediaType: string }[] = [];
+  const ticketKey = args.ticketKey ? parseJiraRef(args.ticketKey).ticketKey : undefined;
+  if (ticketKey) {
+    const fetched = await fetchJiraTicketImages(ticketKey);
+    input.jiraImageNames = fetched.images.map((i) => i.filename);
+    input.jiraImageFailed = fetched.failed;
+    jiraImages.push(...fetched.images.map((i) => ({ base64: i.base64, mediaType: i.mediaType })));
+    if (fetched.images.length > 0) {
+      process.stdout.write(`🖼️  Đã tải ${fetched.images.length} ảnh từ ticket ${ticketKey}.\n`);
+    }
+    // Video ticket: tải về đĩa để agent dùng skill /watch xem (không vào images[]).
+    const vids = await fetchJiraTicketVideos(ticketKey);
+    input.jiraVideos = vids.videos.map((v) => ({ filename: v.filename, path: v.path }));
+    input.jiraVideosSkipped = vids.skippedTooLarge;
+    if (vids.videos.length > 0) {
+      process.stdout.write(`🎬 Đã tải ${vids.videos.length} video từ ticket ${ticketKey} (dùng /watch để xem).\n`);
+    }
+  }
+
   // Ticket Jira được đọc qua MCP jira của Claude Code (không cần JIRA_* trong .env nữa).
   // Chỉ cảnh báo nhẹ nếu vừa không có MCP jira vừa không có JIRA_* — không chặn.
 
@@ -217,6 +240,7 @@ async function main(): Promise<void> {
     mode,
     effort: args.effort,
     projectProfile,
+    images: jiraImages.length > 0 ? jiraImages : undefined,
     mcpServers,
     useSubagents: args.subagents,
     profileSubagents,
