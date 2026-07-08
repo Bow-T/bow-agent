@@ -7,6 +7,8 @@ import { QuestionCard } from './QuestionCard.js';
 import { Icon, type IconName } from './Icon.js';
 import type {
   ChatItem,
+  ConversationFull,
+  ConversationSummary,
   DetectedSource,
   DocAttachment,
   ImageAttachment,
@@ -156,6 +158,27 @@ export function App() {
     () => localStorage.getItem('bow-conversation-id') || null
   );
 
+  // ── Lịch sử nhiều cuộc trò chuyện (lưu bền ở backend) ──
+  // id cuộc đang mở. Mọi item/agent hiện trên màn hình thuộc về cuộc này; auto-lưu đẩy
+  // items+conversationId vào đúng bản ghi này. null = chưa gắn cuộc nào (sẽ tạo khi cần).
+  const [activeConvId, setActiveConvId] = useState<string | null>(
+    () => localStorage.getItem('bow-active-conv-id') || null
+  );
+  const [histPanelOpen, setHistPanelOpen] = useState(false);
+  const [histList, setHistList] = useState<ConversationSummary[]>([]);
+  const [histSearch, setHistSearch] = useState('');
+  const [histError, setHistError] = useState('');
+  const [histBusy, setHistBusy] = useState(false);
+  // id cuộc đang chờ xác nhận xóa (mở hộp xác nhận riêng). null = không xóa.
+  const [histDeleteId, setHistDeleteId] = useState<string | null>(null);
+  // id cuộc đang sửa tên tại chỗ + giá trị nháp. null = không sửa.
+  const [histRenameId, setHistRenameId] = useState<string | null>(null);
+  const [histRenameText, setHistRenameText] = useState('');
+  // true khi cuộc đang mở được nạp LẠI từ lịch sử (phiên SDK có thể đã bị dọn) → lượt
+  // chạy kế tiếp gửi kèm resumeContext (tóm tắt) để agent không mất ngữ cảnh. Về false
+  // sau lượt đầu tiên (từ đó có conversationId mới, resume bình thường).
+  const [needResumeContext, setNeedResumeContext] = useState(false);
+
   // Đồng bộ hóa cấu hình composer vào localStorage
   useEffect(() => { localStorage.setItem('bow-task', task); }, [task]);
   useEffect(() => { localStorage.setItem('bow-cwd', cwd); }, [cwd]);
@@ -172,6 +195,13 @@ export function App() {
       localStorage.removeItem('bow-conversation-id');
     }
   }, [conversationId]);
+  useEffect(() => {
+    if (activeConvId) {
+      localStorage.setItem('bow-active-conv-id', activeConvId);
+    } else {
+      localStorage.removeItem('bow-active-conv-id');
+    }
+  }, [activeConvId]);
 
   // Lưu lịch sử chat để giữ qua refresh. Chỉ giữ 300 item gần nhất để không vượt
   // quota localStorage (~5MB); chat rất dài thì tin cũ nhất bị lược, tránh crash.
@@ -184,6 +214,21 @@ export function App() {
       // Vượt quota hoặc lỗi serialize → bỏ qua, không chặn UI.
     }
   }, [items]);
+
+  // Tự lưu BỀN cuộc đang mở lên backend mỗi khi items đổi (debounce 800ms để gộp các
+  // cập nhật dồn dập khi agent đang stream). Lưu CẢ khi đang chạy dở → tắt trình duyệt
+  // giữa chừng vẫn không mất lượt. Cuộc trống thì bỏ qua (chưa có gì để nhớ).
+  useEffect(() => {
+    if (items.length === 0) return;
+    const t = setTimeout(() => {
+      // eslint-disable-next-line @typescript-eslint/no-floating-promises
+      persistActiveConversation(items, conversationId);
+    }, 800);
+    return () => clearTimeout(t);
+    // Chỉ chạy theo items/conversationId; persistActiveConversation đọc state mới nhất
+    // qua closure mỗi lần render nên không cần liệt kê (tránh vòng lặp tái tạo timer).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, conversationId]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerPath, setPickerPath] = useState('');
   const [pickerParent, setPickerParent] = useState<string | null>(null);
@@ -519,6 +564,164 @@ export function App() {
     }
   };
 
+  // ── Lịch sử nhiều cuộc trò chuyện: tóm tắt, tải danh sách, lưu, mở, đổi tên, xóa ──
+
+  /** Rút tiêu đề từ items = câu user đầu tiên (cắt gọn). Rỗng nếu chưa có câu nào. */
+  const deriveTitle = (list: ChatItem[]): string => {
+    const firstUser = list.find((it) => it.kind === 'user')?.text?.trim();
+    if (!firstUser) return '';
+    const oneLine = firstUser.replace(/\s+/g, ' ');
+    return oneLine.length > 60 ? oneLine.slice(0, 57) + '…' : oneLine;
+  };
+
+  /**
+   * Cô đọng items → text ngữ cảnh cho fallback trí nhớ (gửi kèm khi mở lại cuộc cũ).
+   * Chỉ lấy phần hội thoại có nghĩa (user hỏi / agent trả lời), bỏ log tool cho gọn;
+   * cắt tổng độ dài để không phình prompt.
+   */
+  const summarizeForResume = (list: ChatItem[]): string => {
+    const lines: string[] = [];
+    for (const it of list) {
+      if (it.kind === 'user') lines.push(`NGƯỜI DÙNG: ${it.text.trim()}`);
+      else if (it.kind === 'agent') lines.push(`AGENT: ${it.text.trim()}`);
+    }
+    let out = lines.join('\n');
+    const MAX = 6000; // ~ vài nghìn token; đủ ngữ cảnh mà không quá tốn
+    if (out.length > MAX) out = '…(lược phần đầu)…\n' + out.slice(-MAX);
+    return out;
+  };
+
+  /** Tải danh sách cuộc trò chuyện từ backend. */
+  const loadHistList = () => {
+    fetch('/api/conversations')
+      .then((r) => r.json())
+      .then((d) => setHistList(d.conversations ?? []))
+      .catch(() => setHistError('Không tải được lịch sử chat.'));
+  };
+
+  const openHistPanel = () => {
+    setHistError('');
+    setHistSearch('');
+    setHistRenameId(null);
+    setHistDeleteId(null);
+    setHistPanelOpen(true);
+    loadHistList();
+  };
+
+  /**
+   * Lưu (upsert) cuộc đang mở lên backend. Tự đặt tiêu đề từ câu user đầu nếu backend
+   * chưa có tên. Trả về id cuộc (tạo mới nếu chưa có activeConvId). Gọi sau mỗi lượt
+   * chạy và khi có thay đổi items đáng kể.
+   */
+  const persistActiveConversation = async (
+    convItems: ChatItem[],
+    convId: string | null,
+  ): Promise<string | null> => {
+    // Không lưu cuộc trống (chưa có gì để nhớ).
+    if (convItems.length === 0) return activeConvId;
+    let id = activeConvId;
+    if (!id) {
+      id = (crypto as Crypto).randomUUID();
+      setActiveConvId(id);
+    }
+    try {
+      await fetch(`/api/conversations/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: deriveTitle(convItems) || undefined,
+          conversationId: convId,
+          items: convItems,
+          cwd: cwd.trim(),
+        }),
+      });
+    } catch {
+      // Lưu thất bại → bỏ qua, không chặn UI (thử lại ở lượt sau).
+    }
+    return id;
+  };
+
+  /**
+   * Mở một cuộc cũ: nạp items + conversationId + cwd. Bật cờ needResumeContext để lượt
+   * chạy kế gửi kèm tóm tắt (phòng phiên SDK đã bị dọn). Dừng phiên đang chạy (nếu có).
+   */
+  const openConversation = async (id: string) => {
+    if (id === activeConvId && !histPanelOpen) return;
+    setHistBusy(true);
+    try {
+      const res = await fetch(`/api/conversations/${id}`);
+      if (!res.ok) { setHistError('Không mở được cuộc trò chuyện.'); return; }
+      const { conversation } = (await res.json()) as { conversation: ConversationFull };
+
+      // Dừng phiên đang chạy trước khi chuyển cuộc — tránh event phiên cũ đổ nhầm.
+      if (running) {
+        eventSourceRef.current?.close();
+        eventSourceRef.current = null;
+        setRunning(false);
+        if (sessionId) await fetch(`/api/stop/${sessionId}`, { method: 'POST' }).catch(() => {});
+      }
+
+      setActiveConvId(conversation.id);
+      setItems(conversation.items ?? []);
+      setConversationId(conversation.conversationId);
+      // Có conversationId (phiên SDK) thì thử resume trực tiếp; nếu không có thì chắc chắn
+      // cần nhồi ngữ cảnh. Dù có, ta vẫn bật cờ để lượt đầu kèm tóm tắt cho chắc (phiên
+      // .jsonl có thể đã bị SDK dọn) — vô hại nếu resume thành công.
+      setNeedResumeContext(true);
+      if (conversation.cwd) setCwd(conversation.cwd);
+      setSessionId(null);
+      setPending([]);
+      setQuestions([]);
+      setSelectedStepId(null);
+      sessionBaselineRef.current = (conversation.items ?? []).length;
+      localStorage.removeItem('bow-session-id');
+      setHistPanelOpen(false);
+    } catch (err) {
+      setHistError(`Lỗi gọi backend: ${(err as Error).message}`);
+    } finally {
+      setHistBusy(false);
+    }
+  };
+
+  /** Lưu tên mới cho một cuộc (đổi tên tại chỗ trong panel). */
+  const submitRename = async (id: string) => {
+    const title = histRenameText.trim();
+    setHistRenameId(null);
+    if (!title) return;
+    try {
+      await fetch(`/api/conversations/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      });
+      loadHistList();
+    } catch {
+      setHistError('Đổi tên thất bại.');
+    }
+  };
+
+  /** Xóa một cuộc (sau xác nhận). Nếu là cuộc đang mở → dọn màn hình về trạng thái mới. */
+  const confirmDeleteConversation = async (id: string) => {
+    setHistDeleteId(null);
+    try {
+      const res = await fetch(`/api/conversations/${id}`, { method: 'DELETE' });
+      const data = await res.json();
+      setHistList(data.conversations ?? []);
+      // Xóa đúng cuộc đang mở → reset về phiên mới trống.
+      if (id === activeConvId) {
+        setItems([]);
+        setConversationId(null);
+        setActiveConvId(null);
+        setSessionId(null);
+        sessionBaselineRef.current = 0;
+        localStorage.removeItem('bow-chat-items');
+        localStorage.removeItem('bow-session-baseline');
+      }
+    } catch {
+      setHistError('Xóa thất bại.');
+    }
+  };
+
   const openPicker = (initialPath: string) => {
     setPickerError('');
     setPickerOpen(true);
@@ -601,6 +804,17 @@ export function App() {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('bow-theme', theme);
   }, [theme]);
+
+  // Migrate 1 lần: cuộc trò chuyện đang có trong localStorage (từ trước khi có tính năng
+  // lịch sử) mà chưa gắn activeConvId → tạo thành bản ghi cuộc đầu tiên ở backend, không
+  // để mất. persistActiveConversation tự sinh id + set activeConvId.
+  useEffect(() => {
+    if (!activeConvId && items.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-floating-promises
+      persistActiveConversation(items, conversationId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Nạp cấu hình backend.
   useEffect(() => {
@@ -721,6 +935,11 @@ export function App() {
     const sentPdfs = pdfs;
     const sentImages = images;
 
+    // Fallback trí nhớ: nếu vừa mở lại một cuộc cũ (needResumeContext), gửi kèm tóm tắt
+    // hội thoại trước để agent giữ ngữ cảnh dù phiên SDK có thể đã bị dọn. Chỉ lượt đầu.
+    const sentResumeContext = needResumeContext ? summarizeForResume(items) : '';
+    if (needResumeContext) setNeedResumeContext(false);
+
     const parts = [
       sentJira && `[${sentJira}]`,
       sentText,
@@ -754,6 +973,7 @@ export function App() {
           cwd: cwd.trim() || undefined,
           model: selectedModel,
           conversationId: conversationId || undefined,
+          resumeContext: sentResumeContext || undefined,
         }),
       });
     } catch (err) {
@@ -954,13 +1174,14 @@ export function App() {
   }
 
   /**
-   * Thực thi xóa sau khi người dùng xác nhận. Nếu agent đang chạy thì DỪNG phiên
-   * (đóng SSE + gọi /api/stop) trước, rồi xóa sạch mọi trạng thái + localStorage →
-   * task tiếp theo là phiên hoàn toàn mới (agent không nhớ hội thoại cũ).
+   * Bắt đầu CUỘC TRÒ CHUYỆN MỚI sau khi người dùng xác nhận. KHÔNG mất cuộc cũ: nó đã
+   * được auto-lưu bền ở backend (mở lại từ panel Lịch sử). Ở đây chỉ: dừng phiên đang
+   * chạy (nếu có) → lưu chốt cuộc hiện tại lần cuối → dọn sạch màn hình + bỏ activeConvId
+   * để lượt kế tạo bản ghi cuộc mới hoàn toàn (agent không nhớ hội thoại cũ).
    */
   async function confirmClearChat() {
     setConfirmClearOpen(false);
-    // Dừng phiên đang chạy trước khi xóa — tránh event của phiên cũ đổ về sau khi đã xóa.
+    // Dừng phiên đang chạy trước khi dọn — tránh event của phiên cũ đổ về sau khi đã dọn.
     if (running) {
       eventSourceRef.current?.close();
       eventSourceRef.current = null;
@@ -969,13 +1190,18 @@ export function App() {
         await fetch(`/api/stop/${sessionId}`, { method: 'POST' }).catch(() => {});
       }
     }
+    // Lưu chốt cuộc hiện tại lần cuối (auto-lưu có thể chưa kịp chạy debounce).
+    await persistActiveConversation(items, conversationId);
     setItems([]);
     setPending([]);
     setQuestions([]);
     setSessionId(null);
     setConversationId(null);
+    setActiveConvId(null); // cuộc kế tiếp = bản ghi mới
+    setNeedResumeContext(false);
     setSelectedStepId(null);
     localStorage.removeItem('bow-conversation-id');
+    localStorage.removeItem('bow-active-conv-id');
     localStorage.removeItem('bow-session-id');
     sessionBaselineRef.current = 0;
     localStorage.removeItem('bow-chat-items');
@@ -1342,6 +1568,13 @@ export function App() {
               ]}
             />
           </div>
+          <button
+            className="theme-btn"
+            title="Lịch sử — các cuộc trò chuyện đã lưu (mở lại, đổi tên, xóa)"
+            onClick={openHistPanel}
+          >
+            <Icon name="history" size={18} />
+          </button>
           <button
             className="theme-btn"
             title="Quản lý MCP server (Jira/Supabase/... cho agent)"
@@ -1903,9 +2136,9 @@ export function App() {
               className="btn clear-chat"
               onClick={clearChat}
               disabled={!running && !items.length}
-              title="Xóa lịch sử chat & bắt đầu hội thoại mới (dừng agent nếu đang chạy)"
+              title="Bắt đầu cuộc trò chuyện mới — cuộc hiện tại vẫn được lưu vào Lịch sử (mở lại được). Dừng agent nếu đang chạy."
             >
-              Xóa chat
+              <Icon name="newChat" size={15} /> Cuộc trò chuyện mới
             </button>
             {running ? (
               <button className="btn stop" onClick={stop}>
@@ -2213,6 +2446,159 @@ export function App() {
         </div>
       )}
 
+      {histPanelOpen && (
+        <div className="modal-overlay" onClick={() => setHistPanelOpen(false)}>
+          <div
+            className="modal-content pixel-panel"
+            style={{ maxWidth: '640px', width: '94%' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <span className="modal-title"><Icon name="history" size={16} /> Lịch sử cuộc trò chuyện</span>
+              <button className="close-btn" onClick={() => setHistPanelOpen(false)}><Icon name="close" size={16} /></button>
+            </div>
+            <div className="modal-body">
+              <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '12px' }}>
+                Các cuộc đã lưu bền (giữ qua restart & đổi máy). Bấm để mở lại — nội dung hiện lại đầy đủ,
+                gõ tiếp thì agent nhớ hội thoại cũ (resume phiên; nếu phiên đã hết hạn, tự nhồi tóm tắt).
+              </div>
+              {histError && (
+                <div className="picker-error" style={{ color: 'var(--red)', marginBottom: '10px' }}><Icon name="warning" size={14} /> {histError}</div>
+              )}
+
+              {/* Ô tìm kiếm theo tiêu đề */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '10px' }}>
+                <Icon name="search" size={14} />
+                <input
+                  placeholder="Tìm theo tiêu đề…"
+                  value={histSearch}
+                  onChange={(e) => setHistSearch(e.target.value)}
+                  style={{ padding: '8px', flex: 1 }}
+                />
+              </div>
+
+              <div className="mcp-list" style={{ maxHeight: '420px', overflowY: 'auto', border: 'var(--bd-thin) solid var(--outline)', padding: '6px', background: 'var(--inset)' }}>
+                {(() => {
+                  const q = histSearch.trim().toLowerCase();
+                  const filtered = q
+                    ? histList.filter((c) => c.title.toLowerCase().includes(q))
+                    : histList;
+                  if (histList.length === 0) {
+                    return <div style={{ padding: '14px', textAlign: 'center', color: 'var(--muted)' }}>Chưa có cuộc trò chuyện nào được lưu.</div>;
+                  }
+                  if (filtered.length === 0) {
+                    return <div style={{ padding: '14px', textAlign: 'center', color: 'var(--muted)' }}>Không có cuộc nào khớp "{histSearch}".</div>;
+                  }
+                  return filtered.map((c) => {
+                    const isActive = c.id === activeConvId;
+                    const isRenaming = c.id === histRenameId;
+                    return (
+                      <div
+                        key={c.id}
+                        style={{
+                          padding: '8px 10px',
+                          borderBottom: 'var(--bd-thin) solid var(--outline)',
+                          background: isActive ? 'var(--outline)' : undefined,
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            {isRenaming ? (
+                              <input
+                                autoFocus
+                                value={histRenameText}
+                                onChange={(e) => setHistRenameText(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') submitRename(c.id);
+                                  if (e.key === 'Escape') setHistRenameId(null);
+                                }}
+                                onBlur={() => submitRename(c.id)}
+                                style={{ width: '100%', padding: '4px 6px', fontSize: '13px' }}
+                              />
+                            ) : (
+                              <div
+                                onDoubleClick={() => { setHistRenameId(c.id); setHistRenameText(c.title); }}
+                                title="Bấm để mở · double-click để đổi tên"
+                                style={{ fontWeight: isActive ? 700 : 600, fontSize: '13px', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                onClick={() => openConversation(c.id)}
+                              >
+                                {isActive && '● '}{c.title}
+                              </div>
+                            )}
+                            <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {c.itemCount} dòng · {new Date(c.updatedAt).toLocaleString('vi-VN')}
+                              {c.cwd && <> · <span style={{ fontFamily: 'monospace' }}>{c.cwd}</span></>}
+                            </div>
+                          </div>
+                          {!isRenaming && (
+                            <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+                              <button
+                                className="btn"
+                                style={{ padding: '2px 8px', fontSize: '11px' }}
+                                disabled={histBusy}
+                                onClick={() => openConversation(c.id)}
+                                title="Mở lại cuộc này"
+                              >
+                                Mở
+                              </button>
+                              <button
+                                className="btn"
+                                style={{ padding: '2px 6px', fontSize: '11px' }}
+                                onClick={() => { setHistRenameId(c.id); setHistRenameText(c.title); }}
+                                title="Đổi tên"
+                              >
+                                <Icon name="rename" size={13} />
+                              </button>
+                              <button
+                                className="btn deny"
+                                style={{ padding: '2px 6px', fontSize: '11px' }}
+                                onClick={() => setHistDeleteId(c.id)}
+                                title="Xóa cuộc này"
+                              >
+                                <Icon name="trash" size={13} />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+            </div>
+            <div className="modal-footer" style={{ display: 'flex', gap: '12px', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px' }}>
+              <span style={{ fontSize: '12px', color: 'var(--muted)' }}>{histList.length} cuộc đã lưu</span>
+              <button className="btn deny" onClick={() => setHistPanelOpen(false)}>Đóng</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Xác nhận xóa một cuộc trò chuyện */}
+      {histDeleteId && (
+        <div className="modal-overlay" onClick={() => setHistDeleteId(null)}>
+          <div className="modal-content pixel-panel" style={{ maxWidth: '400px' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title"><Icon name="trash" size={16} /> Xóa cuộc trò chuyện</span>
+              <button className="close-btn" onClick={() => setHistDeleteId(null)}><Icon name="close" size={16} /></button>
+            </div>
+            <div className="modal-body">
+              <p style={{ margin: 0, lineHeight: 1.6 }}>
+                {histDeleteId === activeConvId && (
+                  <><Icon name="warning" size={14} /> Đây là cuộc <strong>đang mở</strong> — màn hình sẽ được dọn về phiên mới.<br /></>
+                )}
+                Xóa vĩnh viễn cuộc <strong>{histList.find((c) => c.id === histDeleteId)?.title}</strong>?
+                <br />Thao tác này không thể hoàn tác.
+              </p>
+            </div>
+            <div className="modal-footer" style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '16px' }}>
+              <button className="btn deny" onClick={() => setHistDeleteId(null)}>Hủy</button>
+              <button className="btn stop" onClick={() => confirmDeleteConversation(histDeleteId)}>Xóa</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {structPanelOpen && (
         <div className="modal-overlay" onClick={() => setStructPanelOpen(false)}>
           <div
@@ -2274,7 +2660,7 @@ export function App() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="modal-header">
-              <span className="modal-title"><Icon name="trash" size={16} /> Xóa lịch sử chat</span>
+              <span className="modal-title"><Icon name="newChat" size={16} /> Cuộc trò chuyện mới</span>
               <button className="close-btn" onClick={() => setConfirmClearOpen(false)}><Icon name="close" size={16} /></button>
             </div>
             <div className="modal-body">
@@ -2295,7 +2681,7 @@ export function App() {
                 Hủy
               </button>
               <button className="btn stop" onClick={confirmClearChat}>
-                Xóa hết
+                Bắt đầu mới
               </button>
             </div>
           </div>
