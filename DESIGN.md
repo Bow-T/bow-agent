@@ -146,6 +146,74 @@ Figma. Không hardcode token; chỉ tham chiếu lúc chạy.
 > ⚠️ SDK truyền cấu hình MCP (kèm token) qua tham số command-line → khi MCP bật, `ps aux`
 > đọc được token lúc agent chạy. Dùng `--no-mcp` cho task không cần kết nối thật.
 
+### 7.1. Ảnh trong ticket Jira → cho agent nhìn — `src/input/jira-attachments.ts`
+
+**Vấn đề**: MCP `jira_get_issue` chỉ trả về TEXT (summary/description/comment). Ảnh đính
+kèm ticket → agent mù. Người dùng thường bỏ mockup/wireframe/ảnh chụp lỗi vào ticket, và
+đó là phần quan trọng nhất để hiểu yêu cầu.
+
+**Nút thắt**: MCP `jira_get_attachments` chỉ đưa **metadata + URL** (`content` field), KHÔNG
+đưa bytes. Tải URL `/secure/attachment/...` bằng curl trần → trả về trang login, không phải
+ảnh. Muốn có bytes phải tự gọi REST có auth. (Cùng kết luận với `netresearch/jira-skill` và
+`rui-branco/jira-mcp` — hai skill/MCP cộng đồng đã giải đúng phần tải ảnh này.)
+
+**Luồng** (chạy ở `buildTaskBrief` khi ref là ticket):
+
+1. MCP `jira_get_attachments(key)` → danh sách ảnh (id, filename, mimeType, content-url).
+   Lọc `mimeType` bắt đầu `image/`.
+2. Tải bytes có auth: `GET {JIRA_BASE_URL}/rest/api/3/attachment/content/{id}` với
+   `Authorization: Basic base64(EMAIL:TOKEN)`. Ba biến lấy từ block `mcpServers.jira.env`
+   trong `~/.claude.json` (KHÔNG từ `process.env` — xem `env.ts:39`), theo redirect sang CDN.
+3. Xác thực **magic bytes** (PNG `89 50 4E 47`, JPEG `FF D8 FF`, GIF, WEBP) — nếu là HTML thì
+   đó là trang login → bỏ, không đưa vào context. Giới hạn `MAX_IMAGE_BYTES = 5MB`/ảnh.
+4. Cache bytes vào `.jira-cache/{issueKey}/{attachmentId}.{ext}` (gitignore) — tải một lần,
+   lượt sau đọc lại từ đĩa.
+
+**Đưa vào context**: KHÔNG gọi vision riêng để sinh mô tả. Ảnh gốc được đẩy thẳng vào
+`images[]` (tái dùng đường vision sẵn có ở `runner.ts:483`) — **agent chính tự nhìn và tự
+mô tả** khi làm việc, tự ghi vào journal/`shared.md` nếu đáng nhớ (§9). Brief chỉ thêm một
+dòng liệt kê "ticket có N ảnh: … (đã đính kèm ở trên)".
+
+> Bảo mật: `JIRA_API_TOKEN` là secret cá nhân — không log token, chỉ tải từ đúng host
+> `JIRA_BASE_URL` (chống SSRF), ràng cache trong repo (chống path-traversal từ filename Jira).
+> Fail-open: lỗi tải một ảnh không kéo sập việc đọc ticket — chèn placeholder "[ảnh chưa
+> đọc được]" để agent biết ticket *có* ảnh.
+
+### 7.2. Video trong ticket Jira + skill `/watch` — xem video
+
+**Vấn đề**: Video ticket (thường là screen recording quay lại bug) — Claude KHÔNG "xem"
+video trực tiếp (không có content block video như ảnh). Phải quy về (frames JPEG +
+transcript) rồi Claude `Read` từng frame.
+
+**Giải pháp**: bundle skill `/watch` (từ `bradautomates/claude-video`, MIT) + tải video
+Jira về đĩa cho skill xử lý.
+
+**Bundle & trải skill** — `skills/agent-skills/watch/` (bundle) → `src/skills/agentSkills.ts`:
+- Trước mỗi lần chạy, `deployBundledSkills(cwd)` copy skill vào `<cwd>/.claude/skills/watch/`
+  để SDK auto-discover (đã bật `settingSources: ['project']` + `skills: 'all'`). Nhờ đó agent
+  LUÔN thấy `/watch` ở mọi repo, không cần cài thủ công.
+- Idempotent (dấu chữ ký `.bow-bundled`, chỉ copy lại khi bundle đổi). AN TOÀN: nếu repo đích
+  đã có `.claude/skills/watch/` KHÔNG do ta trải (không có stamp) → coi là của người dùng,
+  không ghi đè. Không đụng skill khác của người dùng.
+- Yêu cầu runtime: `ffmpeg` + `yt-dlp` (skill tự cài qua brew/apt lần đầu; Whisper key tùy chọn).
+
+**Video Jira attachment** — `fetchJiraTicketVideos()` trong `jira-attachments.ts`:
+- Lọc `mimeType` bắt đầu `video/`, tải về `.jira-cache/{key}/{id}.mp4` (cùng REST + auth như ảnh).
+- **Giới hạn `MAX_VIDEO_BYTES = 50MB`**: video lớn hơn KHÔNG tự tải (chặn sớm qua metadata size
+  để không treo bước chuẩn bị brief) — chỉ báo "video X quá lớn, xem thủ công".
+- Brief hướng dẫn agent: "video đã tải ở `<path>` → dùng `/watch <path>` để xem".
+
+**Video URL người dùng dán** (YouTube/Loom/...): không cần code — agent thấy URL trong text
+tự dùng `/watch <url>` (yt-dlp của skill tự tải).
+
+**Điều kiện vận hành**: `/watch` chạy nhiều lệnh Bash (tải, ffmpeg, Whisper) → hợp mode `auto`;
+ở `manual`/`edit-auto` agent sẽ xin duyệt từng lệnh.
+
+> Đã kiểm chứng end-to-end: tải video Jira thật (REST+auth) → ffmpeg tách frame → Claude đọc
+> được nội dung frame; agent bow-agent tự thấy & gọi được `/watch` (kẹt ở cổng duyệt Bash mode
+> manual — đúng thiết kế). Khác `bradautomates/claude-video` (chỉ nhận URL/file local), bow-agent
+> thêm nguồn Jira attachment và tự-trải skill.
+
 ## 8. Cổng an toàn (tổng hợp)
 
 Mọi con đường tới một thao tác GHI đều qua đúng một cổng — `canUseTool` ở `runner.ts`:
