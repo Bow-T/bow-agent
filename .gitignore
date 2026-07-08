@@ -2,6 +2,7 @@ node_modules/
 dist/
 dist-web/
 generated-profiles/
+workspaces/
 *.log
 .env
 .env.local

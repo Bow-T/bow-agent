@@ -22,6 +22,12 @@ import { loadPromptSkills } from '../skills/index.js';
 import { loadMonorepoContext } from '../skills/monorepo.js';
 import { buildMonorepoHooks } from '../skills/hooks.js';
 import { buildSubagents } from './subagents.js';
+import {
+  resolveWorkspace,
+  buildWorkspacePrompt,
+  siblingRepoPaths,
+  appendJournal,
+} from '../profiles/workspace.js';
 
 /** Sự kiện tiến độ agent phát ra — CLI/web tự quyết cách hiển thị. */
 export type AgentEvent =
@@ -278,6 +284,13 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   if (monorepoContext) {
     appendText += `\n\n---\n\n${monorepoContext}`;
   }
+  // Workspace (nhóm nhiều repo + trí nhớ tích lũy) — CHỈ khi cwd thuộc một workspace đã
+  // đăng ký. Đặt TRƯỚC project profile (chung sản phẩm → riêng repo). Rỗng = opt-out,
+  // hành vi y như cũ. Xem DESIGN §9. Giữ tham chiếu để ghi journal cuối phiên.
+  const workspace = resolveWorkspace(opts.cwd);
+  if (workspace) {
+    appendText += `\n\n---\n\n${buildWorkspacePrompt(workspace, opts.cwd)}`;
+  }
   if (opts.projectProfile) {
     appendText += `\n\n---\n\n# Kiến thức dự án hiện tại\n\n${opts.projectProfile}`;
   }
@@ -364,6 +377,12 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     pathToClaudeCodeExecutable: findClaudeCodeExecutable(opts.cwd || process.cwd()),
     ...(opts.abortSignal ? { abortController: toController(opts.abortSignal) } : {}),
     ...(hasMcp ? { mcpServers } : {}),
+    // Đọc chéo read-only sang repo anh em trong cùng workspace: mở phạm vi Read/Grep/Glob
+    // ra ngoài cwd để agent hiểu contract THẬT của BE khi làm FE, không đoán. GHI vào các
+    // repo này vẫn bị cổng isPathInRepo chặn (ngoài workdir → luôn hỏi duyệt). Xem DESIGN §9.3.
+    ...(workspace && siblingRepoPaths(workspace, opts.cwd).length > 0
+      ? { additionalDirectories: siblingRepoPaths(workspace, opts.cwd) }
+      : {}),
     // Giữ system prompt gốc của Claude Code + nạp CLAUDE.md của repo, rồi append quy trình + profile.
     systemPrompt: { type: 'preset', preset: 'claude_code', append: appendText },
     settingSources: ['project'],
@@ -579,7 +598,36 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     releaseInput();
   }
 
+  // Trí nhớ tích lũy: cuối phiên (nếu cwd thuộc workspace & chạy thành công) cô đọng
+  // finalText — vốn đã có cấu trúc "đã đổi gì / verify gì / còn gì" theo BOW_AGENT_APPEND —
+  // rồi APPEND vào journal.md. Cách "rẻ" của DESIGN §9.4: KHÔNG tốn thêm lượt model. Chỉ
+  // ghi ở mode thực thi (mode 'plan' chưa đổi gì, không đáng ghi nhật ký). Fail-open: lỗi
+  // ghi journal không được kéo sập kết quả phiên.
+  if (workspace && isExecuting && finalText && finalText.trim()) {
+    try {
+      appendJournal(workspace, condenseForJournal(finalText, opts.brief), new Date().toISOString());
+    } catch {
+      // Bỏ qua — ghi nhật ký chỉ là phụ trợ, không được ảnh hưởng luồng chính.
+    }
+  }
+
   return finalText;
+}
+
+/**
+ * Cô đọng báo cáo-khi-xong của agent thành một mục journal ngắn. Bản "rẻ" (§9.4): dùng
+ * chính finalText, thêm một dòng ngữ cảnh task ở đầu, cắt tới ngưỡng để journal không
+ * phình. Không gọi model. Nếu sau này ra nhiễu có thể thay bằng một query() phụ tóm tắt.
+ */
+const JOURNAL_ENTRY_MAX_CHARS = 2000;
+function condenseForJournal(finalText: string, brief: string): string {
+  const taskLine = brief.split('\n').find((l) => l.trim())?.trim() ?? '';
+  const header = taskLine ? `**Task:** ${taskLine.slice(0, 200)}\n\n` : '';
+  let body = finalText.trim();
+  if (header.length + body.length > JOURNAL_ENTRY_MAX_CHARS) {
+    body = body.slice(0, JOURNAL_ENTRY_MAX_CHARS - header.length - 1).trimEnd() + '…';
+  }
+  return header + body;
 }
 
 /**
