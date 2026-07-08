@@ -19,6 +19,20 @@ export interface TaskInput {
   text?: string;
   /** Có ảnh đính kèm không (để nhắc agent nhìn ảnh). Nội dung ảnh đưa ở runner. */
   imageCount?: number;
+  /**
+   * Tên các ảnh TẢI ĐƯỢC từ ticket Jira (đã đính kèm vào images[] ở runner) — liệt kê
+   * trong brief để agent biết "ảnh nào là của ticket". Caller tải qua fetchJiraTicketImages.
+   */
+  jiraImageNames?: string[];
+  /** Tên các ảnh của ticket Jira tải HỤT — báo placeholder để agent biết có mà chưa xem được. */
+  jiraImageFailed?: string[];
+  /**
+   * Video ticket Jira đã tải về đĩa (đường dẫn) — agent dùng skill /watch để xem. Khác ảnh,
+   * video không đưa thẳng vào context; caller tải qua fetchJiraTicketVideos.
+   */
+  jiraVideos?: { filename: string; path: string }[];
+  /** Video ticket bị bỏ qua vì quá lớn (tên + MB) — báo để agent biết có mà chưa xem. */
+  jiraVideosSkipped?: { filename: string; sizeMb: number }[];
 }
 
 /** Đọc file tài liệu; ném lỗi rõ ràng nếu không đọc được. */
@@ -67,6 +81,52 @@ export async function buildTaskBrief(input: TaskInput): Promise<string | null> {
       );
     } else {
       sections.push(`## Jira (không bóc được ref rõ ràng từ: ${activeJiraRef})`);
+    }
+
+    // Ảnh đính kèm ticket (mockup/screenshot/ảnh lỗi) — đã được caller tải và đưa vào
+    // images[] ở runner. Ở đây chỉ LIỆT KÊ để agent biết ảnh nào thuộc ticket, và báo
+    // ảnh nào tải hụt (agent biết có ảnh mà chưa xem được → có thể nhờ người dùng gửi lại).
+    const jiraImgNames = input.jiraImageNames ?? [];
+    const jiraImgFailed = input.jiraImageFailed ?? [];
+    if (jiraImgNames.length > 0 || jiraImgFailed.length > 0) {
+      const lines: string[] = ['## Ảnh trong ticket Jira'];
+      if (jiraImgNames.length > 0) {
+        lines.push(
+          `Ticket có ${jiraImgNames.length} ảnh (ĐÃ đính kèm ở cuối tin nhắn này — hãy XEM KỸ ` +
+            `để hiểu yêu cầu UI/luồng/bug): ${jiraImgNames.map((n) => `\`${n}\``).join(', ')}.`,
+        );
+      }
+      if (jiraImgFailed.length > 0) {
+        lines.push(
+          `⚠️ ${jiraImgFailed.length} ảnh KHÔNG tải được: ${jiraImgFailed
+            .map((n) => `\`${n}\``)
+            .join(', ')}. Nếu cần nội dung các ảnh này, hãy nhờ người dùng gửi trực tiếp.`,
+        );
+      }
+      sections.push(lines.join('\n'));
+    }
+
+    // Video đính kèm ticket (thường là screen recording quay lại bug). Claude KHÔNG xem
+    // video trực tiếp — dùng skill /watch (tách frame + transcript). Caller đã tải video về
+    // đĩa; ở đây hướng dẫn agent gọi /watch trên đường dẫn đó. Xem DESIGN §7.2.
+    const jiraVideos = input.jiraVideos ?? [];
+    const jiraVideosSkipped = input.jiraVideosSkipped ?? [];
+    if (jiraVideos.length > 0 || jiraVideosSkipped.length > 0) {
+      const lines: string[] = ['## Video trong ticket Jira'];
+      for (const v of jiraVideos) {
+        lines.push(
+          `- Video \`${v.filename}\` đã tải về: \`${v.path}\`\n` +
+            `  → Để XEM nội dung video này, dùng skill \`/watch ${v.path}\` (nó tách frame + ` +
+            `transcript rồi bạn Read từng frame). Cần thiết khi video là screen recording mô tả bug.`,
+        );
+      }
+      for (const v of jiraVideosSkipped) {
+        lines.push(
+          `- ⚠️ Video \`${v.filename}\` (${v.sizeMb}MB) QUÁ LỚN nên chưa tải tự động. Nếu cần ` +
+            `xem, hỏi người dùng hoặc tải thủ công rồi dùng \`/watch <đường-dẫn>\`.`,
+        );
+      }
+      sections.push(lines.join('\n'));
     }
   }
 

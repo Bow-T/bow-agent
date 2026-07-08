@@ -19,6 +19,7 @@ import {
   summarizeToolResult,
 } from '../tools/mcp.js';
 import { loadPromptSkills } from '../skills/index.js';
+import { deployBundledSkills } from '../skills/agentSkills.js';
 import { loadMonorepoContext } from '../skills/monorepo.js';
 import { buildMonorepoHooks } from '../skills/hooks.js';
 import { buildSubagents } from './subagents.js';
@@ -359,6 +360,17 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
 
   // Hook monorepo (guard-push/commit, self-verify, githooks) — chỉ khi cwd là monorepo.
   const monorepoHooks = buildMonorepoHooks(opts.cwd);
+
+  // Trải Agent Skills bundle (vd /watch — xem video) vào <cwd>/.claude/skills/ để SDK
+  // auto-discover. Idempotent, không đụng skill người dùng tự đặt. Xem DESIGN §7.2.
+  const bundledSkills = deployBundledSkills(opts.cwd);
+  if (bundledSkills.length > 0) {
+    opts.onEvent({
+      type: 'tool',
+      name: 'skills',
+      describe: `📦 skill sẵn dùng: ${bundledSkills.join(', ')}`,
+    });
+  }
 
   const options: Options = {
     model: opts.model ?? config.model,
