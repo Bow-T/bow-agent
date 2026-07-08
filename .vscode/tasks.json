@@ -1,0 +1,88 @@
+{
+  // Các task chạy npm script — dùng chung cho nút Run and Debug (launch.json) và
+  // bảng lệnh "Tasks: Run Task". Xem package.json để biết chi tiết từng script.
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "web: chạy (api + web)",
+      "detail": "Chế độ thường — api (:4000) + vite web (:5173). Dùng hằng ngày.",
+      "type": "npm",
+      "script": "ui",
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "vite",
+        "pattern": {
+          "regexp": "^$"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": "Local:\\s+http://localhost:5173"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "web: chạy Safe/QC Mode",
+      "detail": "BOW_SAFE_MODE=true — chỉ hỏi đáp/lập kế hoạch, để chia sẻ LAN cho QC.",
+      "type": "npm",
+      "script": "ui:safe",
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "vite",
+        "pattern": {
+          "regexp": "^$"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": "Local:\\s+http://localhost:5173"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "web: chạy QC (khoá monorepo)",
+      "detail": "Safe Mode + khoá source vào /monorepo (script ui:qc).",
+      "type": "npm",
+      "script": "ui:qc",
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "vite",
+        "pattern": {
+          "regexp": "^$"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": "Local:\\s+http://localhost:5173"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "web: dừng (:4000 + :5173)",
+      "detail": "Kill tiến trình đang chiếm cổng api/web (script ui:stop).",
+      "type": "npm",
+      "script": "ui:stop",
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    }
+  ]
+}
