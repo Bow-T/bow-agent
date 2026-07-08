@@ -936,9 +936,8 @@ export function App() {
   const addItem = (kind: ChatItem['kind'], text: string, tool?: ChatItem['tool']) =>
     setItems((prev) => [...prev, { id: nextId(), kind, text, tool }]);
 
-  async function onFiles(files: FileList | null) {
-    if (!files) return;
-    for (const f of Array.from(files)) {
+  async function addFiles(files: File[]) {
+    for (const f of files) {
       if (f.type.startsWith('image/')) {
         const img = await readImage(f);
         setImages((prev) => [...prev, img]);
@@ -950,6 +949,23 @@ export function App() {
         setDocs((prev) => [...prev, doc]);
       }
     }
+  }
+
+  function onFiles(files: FileList | null) {
+    if (!files) return;
+    return addFiles(Array.from(files));
+  }
+
+  // Dán (Ctrl+V/Cmd+V) ảnh từ clipboard — chỉ nuốt sự kiện khi thực sự có file,
+  // để dán text bình thường vẫn hoạt động.
+  async function onPaste(e: React.ClipboardEvent) {
+    const files = Array.from(e.clipboardData.items)
+      .filter((it) => it.kind === 'file')
+      .map((it) => it.getAsFile())
+      .filter((f): f is File => f !== null);
+    if (!files.length) return;
+    e.preventDefault();
+    await addFiles(files);
   }
 
   async function start() {
@@ -2158,8 +2174,13 @@ export function App() {
               </span>
             ))}
             {images.map((im, i) => (
-              <span key={`i${i}`} className="chip">
-                <Icon name="image" size={14} /> {im.name}
+              <span key={`i${i}`} className="chip chip-image" title={im.name}>
+                <img
+                  className="chip-thumb"
+                  src={`data:${im.mediaType};base64,${im.base64}`}
+                  alt={im.name}
+                />
+                <span className="chip-name">{im.name}</span>
                 <button onClick={() => setImages((p) => p.filter((_, j) => j !== i))}>×</button>
               </span>
             ))}
@@ -2192,6 +2213,7 @@ export function App() {
             onKeyDown={(e) => {
               if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') start();
             }}
+            onPaste={onPaste}
             disabled={running}
             rows={3}
           />

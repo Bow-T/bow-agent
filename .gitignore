@@ -10,3 +10,6 @@ conversations/
 .env.local
 .DS_Store
 *.tsbuildinfo
+
+# Cấu hình Claude riêng theo máy (không đồng bộ) — memory ở .claude/memory/ thì vẫn commit
+.claude/settings.local.json
