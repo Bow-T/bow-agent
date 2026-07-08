@@ -227,9 +227,11 @@ Mọi con đường tới một thao tác GHI đều qua đúng một cổng —
 5. **Subagent** (nếu bật) bị `permissionMode:'plan'` + `disallowedTools` khóa cứng, không
    chạm được cổng ghi.
 
-## 9. Workspace — nhóm nhiều repo + trí nhớ tích lũy (ĐỀ XUẤT, chưa làm)
+## 9. Workspace — nhóm nhiều repo + trí nhớ tích lũy
 
-> **Trạng thái:** thiết kế đã chốt, chưa implement. Đây là tài liệu để duyệt trước khi code.
+> **Trạng thái:** ĐÃ IMPLEMENT (`src/profiles/workspace.ts`, ghép vào `runner.ts`; UI quản lý
+> ở panel workspace của web + API `/api/workspace/*`). Kích hoạt bằng cách đăng ký repo vào
+> `workspaces/workspaces.json` — chưa đăng ký thì hành vi y như cũ.
 > Quyết định người dùng: (a) ưu tiên **liên kết nhiều repo**, (b) trí nhớ ghi **tự động**,
 > (c) lưu **trong bow-agent, gitignore** (giống `generated-profiles/`), (d) agent được
 > **đọc chéo read-only** repo anh em.
@@ -319,8 +321,9 @@ Vì §9.3 đã load `journal.md`, phần còn lại chỉ là **ghi** nó cuối
 — *đã làm gì / quyết định gì / học được gì về sản phẩm* — rồi **append** một mục có mốc thời
 gian vào `journal.md` của workspace. (Chỉ khi cwd thuộc một workspace; ngược lại bỏ qua.)
 
-Hai cách hiện thực bước cô đọng, chọn khi code:
-- **Rẻ (ưu tiên):** tận dụng chính `finalText` (báo cáo-khi-xong ở §BOW_AGENT_APPEND đã có
+Hai cách hiện thực bước cô đọng — bản **rẻ** đã được chọn và implement
+(`condenseForJournal` trong `runner.ts`):
+- **Rẻ (đang dùng):** tận dụng chính `finalText` (báo cáo-khi-xong ở §BOW_AGENT_APPEND đã có
   cấu trúc "đã đổi gì / verify gì / còn gì") → cắt gọn & append. **Không tốn thêm lượt model.**
 - **Kỹ hơn:** một lời gọi `query()` phụ, ngắn, nhồi transcript → bản tóm tắt cô đọng. Tốn
   thêm token; chỉ dùng nếu bản rẻ ra nhiễu.
@@ -331,7 +334,7 @@ ngưỡng ký tự) vào prompt; mục cũ giữ trên đĩa để tra tay. Khô
 tay được. Đây **không** phải "Genome" đã gỡ (không fitness/mutation, không vòng tiến hóa) —
 chỉ là một cuốn nhật ký phẳng.
 
-### 9.5. Điểm ghép code (tối thiểu, không phá đường chạy cũ)
+### 9.5. Điểm ghép code (tối thiểu, không phá đường chạy cũ — đã ghép đủ)
 
 | Việc | File | Ghép thế nào |
 |---|---|---|
@@ -339,7 +342,7 @@ chỉ là một cuốn nhật ký phẳng.
 | Nhồi khối workspace vào prompt | `src/core/runner.ts` (§281–283) | `resolveWorkspace(cwd)` → append shared+map+journal trước project profile. |
 | Mở đọc chéo read-only | `src/core/runner.ts` (`options`) | Thêm `additionalDirectories` = đường dẫn repo anh em. |
 | Ghi journal cuối phiên | `src/core/runner.ts` (sau `case 'result'`) | Cô đọng `finalText` → append vào `journal.md`. |
-| Đăng ký/gán repo vào workspace | `src/web/server.ts` + `web/App.tsx` | Ô chọn/tạo workspace cạnh ô `cwd` (giống panel MCP). Có thể làm sau core. |
+| Đăng ký/gán repo vào workspace | `src/web/server.ts` + `web/App.tsx` | Ô chọn/tạo workspace cạnh ô `cwd` (giống panel MCP). |
 | gitignore | `.gitignore` | Thêm `workspaces/`. |
 
 **Vì sao an toàn:** toàn bộ tính năng *song song* với `generated-profiles/`, kích hoạt chỉ
@@ -362,4 +365,5 @@ qua cổng duyệt §8. Trí nhớ là markdown phẳng, sửa/xóa tay được
   các profile `.md` hiện chưa khai báo subagent nào.
 - **Marker file cho monorepo**: `isMonorepo` đang nhận theo segment path; đổi sang marker
   file (vd `scripts/check-quest.sh`) sẽ chính xác hơn cho repo trùng tên.
-- **Workspace** (§9): nhóm nhiều repo + trí nhớ tích lũy — đã thiết kế, chưa code.
+- **Journal cho phiên thất bại**: hiện journal chỉ ghi khi phiên chạy thành công — bài học
+  từ phiên lỗi / bị từ chối duyệt chưa được lưu.
