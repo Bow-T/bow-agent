@@ -230,6 +230,9 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, conversationId]);
   const [pickerOpen, setPickerOpen] = useState(false);
+  // Đích của picker: 'cwd' = chọn thư mục làm việc thường; 'safe-cwd' = Admin đổi
+  // source mà QC hỏi đáp (Safe Mode). Quyết định nút "Chọn thư mục này" làm gì.
+  const [pickerTarget, setPickerTarget] = useState<'cwd' | 'safe-cwd'>('cwd');
   const [pickerPath, setPickerPath] = useState('');
   const [pickerParent, setPickerParent] = useState<string | null>(null);
   const [pickerDirs, setPickerDirs] = useState<string[]>([]);
@@ -722,10 +725,29 @@ export function App() {
     }
   };
 
-  const openPicker = (initialPath: string) => {
+  const openPicker = (initialPath: string, target: 'cwd' | 'safe-cwd' = 'cwd') => {
     setPickerError('');
+    setPickerTarget(target);
     setPickerOpen(true);
     fetchDirs(initialPath || cfg?.defaultCwd || '');
+  };
+
+  /** Admin đổi source mà QC hỏi đáp (Safe Mode) → POST /api/safe-cwd rồi tải lại config. */
+  const applySafeCwd = async (dir: string) => {
+    try {
+      const res = await fetch('/api/safe-cwd', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cwd: dir }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setPickerError(data.error ?? 'Đổi source thất bại.'); return; }
+      // Cập nhật cfg tại chỗ để banner header đổi ngay, không cần reload trang.
+      setCfg((c) => (c ? { ...c, defaultCwd: data.cwd, repoName: data.repoName } : c));
+      setPickerOpen(false);
+    } catch (err) {
+      setPickerError((err as Error).message);
+    }
   };
 
   const fetchDirs = (path: string) => {
@@ -747,6 +769,7 @@ export function App() {
 
   const [cfg, setCfg] = useState<{
     defaultCwd: string;
+    repoName?: string;
     mcpServers?: string[];
     lanUrl?: string;
     isSafeMode?: boolean;
@@ -1541,8 +1564,13 @@ export function App() {
     }
   }
 
+  // Safe Mode (QC hỏi đáp read-only): ẩn bớt các nút/điều khiển kỹ thuật, khoá repo.
+  // Bật bằng cách chạy `npm run ui:safe` (đặt BOW_SAFE_MODE=true ở backend).
+  const safe = !!cfg?.isSafeMode;
+  const repoLabel = cfg?.repoName || (cfg?.defaultCwd ? cfg.defaultCwd.split('/').filter(Boolean).pop() : '') || 'monorepo';
+
   return (
-    <div className="app">
+    <div className={`app${safe ? ' safe-mode' : ''}`}>
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">
@@ -1556,22 +1584,44 @@ export function App() {
           <span className="brand-tag">Observatory</span>
         </div>
         <div className="obs-readouts">
+          {/* Safe Mode: source QC đang hỏi — gọn trên header. Admin bấm để đổi repo. */}
+          {safe && (
+            cfg?.isAdmin ? (
+              <button
+                className="readout readout-btn"
+                title={`Đang hỏi đáp: ${cfg?.defaultCwd ?? repoLabel} — bấm để đổi source`}
+                onClick={() => openPicker(cfg?.defaultCwd || '', 'safe-cwd')}
+              >
+                <span className="rl">Source</span>
+                <span className="rv" style={{ color: 'var(--brass)' }}>{repoLabel}</span>
+              </button>
+            ) : (
+              <span className="readout" title={`Đang hỏi đáp source (chỉ đọc): ${cfg?.defaultCwd ?? ''}`}>
+                <span className="rl">Source</span>
+                <span className="rv" style={{ color: 'var(--brass)' }}>{repoLabel}</span>
+              </span>
+            )
+          )}
           <span className="readout" title="Giờ UTC">
             <span className="rl">UTC</span>
             <span className="rv">{utc}</span>
           </span>
-          <span className="readout" title="Chi phí tích lũy phiên này">
-            <span className="rl">Cost</span>
-            <span className="rv" style={{ color: accumulatedCost > 2 ? 'var(--danger)' : undefined }}>
-              ${accumulatedCost.toFixed(4)}
+          {!safe && (
+            <span className="readout" title="Chi phí tích lũy phiên này">
+              <span className="rl">Cost</span>
+              <span className="rv" style={{ color: accumulatedCost > 2 ? 'var(--danger)' : undefined }}>
+                ${accumulatedCost.toFixed(4)}
+              </span>
             </span>
-          </span>
-          <span className="readout" title={modeDef(mode).desc}>
-            <span className="rl">Mode</span>
-            <span className={`rv mode-${mode}`}>
-              {modeDef(mode).short}
+          )}
+          {!safe && (
+            <span className="readout" title={modeDef(mode).desc}>
+              <span className="rl">Mode</span>
+              <span className={`rv mode-${mode}`}>
+                {modeDef(mode).short}
+              </span>
             </span>
-          </span>
+          )}
           {cfg?.lanUrl && (
             <button
               className="readout readout-btn"
@@ -1585,7 +1635,7 @@ export function App() {
             </button>
           )}
           {/* Hạn mức phiên 5 giờ (Session) — gọn trên header. Bấm để làm mới. */}
-          {(() => {
+          {!safe && (() => {
             const s = usage?.rateLimits.find((w) => /session|5\s*h|5hr/i.test(w.label));
             const pct = s && s.utilization != null ? Math.round(s.utilization) : null;
             return (
@@ -1611,7 +1661,7 @@ export function App() {
           })()}
           {/* Context window — dung lượng token đã dùng / tối đa (vd 22.0k / 1M) của
               hội thoại hiện tại, kèm % trong tooltip. */}
-          {(() => {
+          {!safe && (() => {
             const has = usage?.contextTokens != null && !!usage.contextMaxTokens;
             const pct = has && usage!.contextPercentage != null ? Math.round(usage!.contextPercentage) : null;
             const used = has ? formatTokens(usage!.contextTokens!) : null;
@@ -1638,7 +1688,6 @@ export function App() {
         </div>
         <div className="topbar-right">
           <div className="lang-select" title="Ngôn ngữ trả lời của agent">
-            <span className="lang-icon" aria-hidden="true"><Icon name="lang" size={16} /></span>
             <PixelSelect
               value={language}
               onChange={setLanguage}
@@ -1656,27 +1705,33 @@ export function App() {
           >
             <Icon name="history" size={18} />
           </button>
-          <button
-            className="theme-btn"
-            title="Quản lý MCP server (Jira/Supabase/... cho agent)"
-            onClick={openMcpPanel}
-          >
-            <Icon name="mcp" size={18} />
-          </button>
-          <button
-            className="theme-btn"
-            title="Workspace — nhóm nhiều repo (BE/FE/...) thành 1 sản phẩm + trí nhớ chung"
-            onClick={openWsPanel}
-          >
-            <Icon name="routing" size={18} />
-          </button>
-          <button
-            className="theme-btn"
-            title="Cấu trúc dự án — AI quét repo (cwd) rồi mô tả kiến trúc & cây thư mục"
-            onClick={openStructPanel}
-          >
-            <Icon name="structure" size={18} />
-          </button>
+          {!safe && (
+            <button
+              className="theme-btn"
+              title="Quản lý MCP server (Jira/Supabase/... cho agent)"
+              onClick={openMcpPanel}
+            >
+              <Icon name="mcp" size={18} />
+            </button>
+          )}
+          {!safe && (
+            <button
+              className="theme-btn"
+              title="Workspace — nhóm nhiều repo (BE/FE/...) thành 1 sản phẩm + trí nhớ chung"
+              onClick={openWsPanel}
+            >
+              <Icon name="routing" size={18} />
+            </button>
+          )}
+          {!safe && (
+            <button
+              className="theme-btn"
+              title="Cấu trúc dự án — AI quét repo (cwd) rồi mô tả kiến trúc & cây thư mục"
+              onClick={openStructPanel}
+            >
+              <Icon name="structure" size={18} />
+            </button>
+          )}
           {cfg?.isAdmin && (
             <button
               className="theme-btn"
@@ -2057,6 +2112,7 @@ export function App() {
           onFiles(e.dataTransfer.files);
         }}
       >
+        {!safe && (
         <div className="controls">
           <div className="field">
             Chế độ:
@@ -2103,8 +2159,9 @@ export function App() {
             />
           </label>
         </div>
+        )}
 
-        {detected && (
+        {!safe && detected && (
           <div className="detected">
             <Icon name="search" size={14} /> {detected.summary}
             {profile === 'auto' && detected.profile !== 'none' && ` → profile: ${detected.profile}`}
@@ -2116,6 +2173,7 @@ export function App() {
           </div>
         )}
 
+        {!safe && (
         <div className="row">
           <div className="cwd-container" style={{ display: 'flex', flex: 1, gap: '6px', alignItems: 'stretch' }}>
             <input
@@ -2139,10 +2197,11 @@ export function App() {
             </button>
           </div>
         </div>
+        )}
 
         {/* Chỉ báo workspace: cwd này thuộc sản phẩm nào, gồm những repo anh em nào.
             Cho người dùng biết agent đang có ngữ cảnh cả nhóm repo + trí nhớ tích lũy. */}
-        {currentWs && (
+        {!safe && currentWs && (
           <div className="detected" style={{ cursor: 'pointer' }} onClick={openWsPanel}
                title="Bấm để quản lý workspace / xem nhật ký">
             <Icon name="routing" size={14} /> Workspace <b>{currentWs.slug}</b> · {currentWs.repos.length} repo:{' '}
@@ -2189,7 +2248,9 @@ export function App() {
 
         {!running && (
           <div className="quick-prompts">
-            {QUICK_PROMPTS.map((qp) => (
+            {/* Safe Mode (QC read-only): chỉ giữ gợi ý "Giải thích codebase" —
+                ẩn các gợi ý hướng tới sửa/thực thi (Sửa bug, Làm theo đề xuất). */}
+            {(safe ? QUICK_PROMPTS.filter((qp) => qp.label === 'Giải thích codebase') : QUICK_PROMPTS).map((qp) => (
               <button
                 key={qp.label}
                 type="button"
@@ -2256,7 +2317,7 @@ export function App() {
         <div className="modal-overlay" onClick={() => setPickerOpen(false)}>
           <div className="modal-content pixel-panel" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <span className="modal-title"><Icon name="folder" size={16} /> Chọn thư mục làm việc</span>
+              <span className="modal-title"><Icon name="folder" size={16} /> {pickerTarget === 'safe-cwd' ? 'Chọn source cho QC hỏi đáp' : 'Chọn thư mục làm việc'}</span>
               <button className="close-btn" onClick={() => setPickerOpen(false)}><Icon name="close" size={16} /></button>
             </div>
             <div className="modal-body">
@@ -2302,8 +2363,12 @@ export function App() {
               <button
                 className="btn allow"
                 onClick={() => {
-                  setCwd(pickerPath);
-                  setPickerOpen(false);
+                  if (pickerTarget === 'safe-cwd') {
+                    applySafeCwd(pickerPath);
+                  } else {
+                    setCwd(pickerPath);
+                    setPickerOpen(false);
+                  }
                 }}
               >
                 Chọn thư mục này

@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import { fileURLToPath } from 'node:url';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, basename } from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import { runAgent, fetchUsageSnapshot } from '../core/runner.js';
@@ -59,6 +59,13 @@ app.use((req, res, next) => {
 });
 
 const isSafeMode = process.env.BOW_SAFE_MODE === 'true';
+// Thư mục source cố định cho Safe Mode (QC hỏi đáp read-only). Cho phép trỏ tới
+// một repo khác (vd monorepo) mà không cần chạy server TỪ trong repo đó:
+//   BOW_SAFE_MODE=true BOW_SAFE_CWD=/path/to/monorepo npm run ui:safe
+// Mặc định = process.cwd() (thư mục đang chạy server). Admin đổi lúc chạy qua
+// POST /api/safe-cwd (không cần restart) → lưu vào safeCwdOverride.
+let safeCwdOverride: string | null = null;
+const safeCwd = () => resolve(safeCwdOverride || process.env.BOW_SAFE_CWD || process.cwd());
 
 function getLocalIp(): string {
   const interfaces = os.networkInterfaces();
@@ -107,6 +114,29 @@ const checkSafeMode = (req: express.Request, res: express.Response, next: expres
   next();
 };
 
+/** IP client đã chuẩn hoá (::1 / ::ffff:127.0.0.1 → 127.0.0.1). */
+function getCleanIp(req: express.Request): string {
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  let cleanIp = typeof ip === 'string' ? ip : '';
+  if (cleanIp === '::1' || cleanIp === '::ffff:127.0.0.1') return '127.0.0.1';
+  if (cleanIp.startsWith('::ffff:')) return cleanIp.slice(7);
+  return cleanIp;
+}
+
+/** Admin = truy cập từ localhost. Chỉ admin xem/đổi cấu hình LAN, log, chọn source. */
+function isAdminReq(req: express.Request): boolean {
+  return getCleanIp(req) === '127.0.0.1';
+}
+
+/** Middleware chặn mọi request không phải admin (dùng cho API nội bộ LAN Dashboard). */
+const requireAdmin = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (!isAdminReq(req)) {
+    res.status(403).json({ error: 'Chỉ Admin (localhost) mới có quyền truy cập.' });
+    return;
+  }
+  next();
+};
+
 // Phục vụ frontend đã build (dist-web). Trong dev, Vite chạy riêng ở cổng khác.
 const webDist = join(__dirname, '..', '..', 'dist-web');
 app.use(express.static(webDist));
@@ -135,7 +165,7 @@ app.post('/api/run', async (req, res) => {
       resumeContext,
     } = req.body ?? {};
 
-    const workdir = isSafeMode ? process.cwd() : (cwd || process.cwd());
+    const workdir = isSafeMode ? safeCwd() : (cwd || process.cwd());
     const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
     let cleanIp = typeof ip === 'string' ? ip : 'unknown';
     if (cleanIp === '::1' || cleanIp === '::ffff:127.0.0.1') {
@@ -423,18 +453,15 @@ app.get('/api/config', (req, res) => {
   const cc = loadClaudeCodeMcp();
   const localIp = getLocalIp();
   
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-  let cleanIp = typeof ip === 'string' ? ip : '';
-  if (cleanIp === '::1' || cleanIp === '::ffff:127.0.0.1') {
-    cleanIp = '127.0.0.1';
-  } else if (cleanIp.startsWith('::ffff:')) {
-    cleanIp = cleanIp.slice(7);
-  }
-  const isAdmin = cleanIp === '127.0.0.1';
-  console.log(`[LAN Check] ip=${ip}, cleanIp=${cleanIp}, isAdmin=${isAdmin}`);
+  const isAdmin = isAdminReq(req);
 
+  // Ở Safe Mode, source bị khoá vào safeCwd (có thể là monorepo qua BOW_SAFE_CWD).
+  const effectiveCwd = isSafeMode ? safeCwd() : process.cwd();
   res.json({
-    defaultCwd: process.cwd(),
+    defaultCwd: effectiveCwd,
+    // Tên repo (basename của cwd) — dùng cho banner "Đang hỏi đáp source: <repo>"
+    // ở chế độ Safe Mode, để QC luôn biết mình đang hỏi ở source nào.
+    repoName: basename(effectiveCwd),
     mcpServers: cc.names,
     lanUrl: `http://${localIp}:5173`,
     isSafeMode,
@@ -442,21 +469,32 @@ app.get('/api/config', (req, res) => {
   });
 });
 
-/** GET /api/audit-logs — trả về danh sách lịch sử log kiểm toán (chỉ dành cho localhost admin). */
-app.get('/api/audit-logs', (req, res) => {
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-  let cleanIp = typeof ip === 'string' ? ip : '';
-  if (cleanIp === '::1' || cleanIp === '::ffff:127.0.0.1') {
-    cleanIp = '127.0.0.1';
-  } else if (cleanIp.startsWith('::ffff:')) {
-    cleanIp = cleanIp.slice(7);
-  }
-  
-  if (cleanIp !== '127.0.0.1') {
-    res.status(403).json({ error: 'Chỉ Admin truy cập localhost mới có quyền xem log.' });
+/**
+ * POST /api/safe-cwd — Admin đổi thư mục source mà QC hỏi đáp (chỉ Safe Mode).
+ * body: { cwd }. Chỉ Admin (localhost) mới đổi được; không cần restart server.
+ */
+app.post('/api/safe-cwd', requireAdmin, (req, res) => {
+  if (!isSafeMode) {
+    res.status(400).json({ error: 'Chỉ đổi source ở chế độ Safe Mode.' });
     return;
   }
-  
+  const raw = typeof req.body?.cwd === 'string' ? req.body.cwd.trim() : '';
+  if (!raw) {
+    res.status(400).json({ error: 'Thiếu đường dẫn thư mục.' });
+    return;
+  }
+  const dir = resolve(raw);
+  if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
+    res.status(400).json({ error: 'Đường dẫn không tồn tại hoặc không phải thư mục.' });
+    return;
+  }
+  safeCwdOverride = dir;
+  logAudit(`ADMIN đổi source QC hỏi đáp → ${dir}`, '127.0.0.1');
+  res.json({ ok: true, cwd: dir, repoName: basename(dir) });
+});
+
+/** GET /api/audit-logs — trả về danh sách lịch sử log kiểm toán (chỉ dành cho localhost admin). */
+app.get('/api/audit-logs', requireAdmin, (_req, res) => {
   try {
     const logPath = join(process.cwd(), 'memory', 'audit_share.log');
     if (!fs.existsSync(logPath)) {
@@ -471,8 +509,8 @@ app.get('/api/audit-logs', (req, res) => {
   }
 });
 
-/** GET /api/active-clients — trả về danh sách thiết bị đang kết nối mạng LAN. */
-app.get('/api/active-clients', (_req, res) => {
+/** GET /api/active-clients — danh sách thiết bị đang kết nối LAN (chỉ Admin localhost). */
+app.get('/api/active-clients', requireAdmin, (_req, res) => {
   const now = Date.now();
   for (const [ip, data] of activeClients.entries()) {
     if (now - data.lastSeen.getTime() > 45000) {
@@ -747,18 +785,20 @@ app.post('/api/analyze-structure', (req, res) => {
 
 // ── Lịch sử nhiều cuộc trò chuyện (lưu bền ra đĩa) ───────────────────────────
 
-/** GET /api/conversations — danh sách cuộc (không kèm items), mới nhất lên đầu. */
-app.get('/api/conversations', (_req, res) => {
+/** GET /api/conversations — danh sách cuộc (không kèm items), mới nhất lên đầu.
+ *  Lọc theo IP: mỗi máy chỉ thấy cuộc của mình; admin (localhost) thấy tất cả. */
+app.get('/api/conversations', (req, res) => {
   try {
-    res.json({ conversations: listConversations() });
+    res.json({ conversations: listConversations(getCleanIp(req)) });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
 });
 
-/** GET /api/conversations/:id — lấy đầy đủ một cuộc (kèm items + conversationId). */
+/** GET /api/conversations/:id — lấy đầy đủ một cuộc (kèm items + conversationId).
+ *  Chỉ chủ cuộc hoặc admin đọc được (tránh QC đọc chéo cuộc của người khác). */
 app.get('/api/conversations/:id', (req, res) => {
-  const conv = getConversation(req.params.id);
+  const conv = getConversation(req.params.id, getCleanIp(req));
   if (!conv) {
     res.status(404).json({ error: 'Cuộc trò chuyện không tồn tại.' });
     return;
@@ -783,10 +823,13 @@ app.put('/api/conversations/:id', (req, res) => {
         cwd: typeof cwd === 'string' ? cwd : undefined,
       },
       Date.now(),
+      getCleanIp(req),
     );
     res.json({ ok: true, conversation: conv });
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    // Ghi đè cuộc của người khác → 403 (không phải lỗi server).
+    const msg = (err as Error).message;
+    res.status(/Không có quyền/.test(msg) ? 403 : 500).json({ error: msg });
   }
 });
 
@@ -797,7 +840,7 @@ app.patch('/api/conversations/:id', (req, res) => {
     res.status(400).json({ error: 'Thiếu tiêu đề.' });
     return;
   }
-  const conv = renameConversation(req.params.id, title, Date.now());
+  const conv = renameConversation(req.params.id, title, Date.now(), getCleanIp(req));
   if (!conv) {
     res.status(404).json({ error: 'Cuộc trò chuyện không tồn tại.' });
     return;
@@ -805,10 +848,11 @@ app.patch('/api/conversations/:id', (req, res) => {
   res.json({ ok: true, conversation: conv });
 });
 
-/** DELETE /api/conversations/:id — xóa một cuộc. */
+/** DELETE /api/conversations/:id — xóa một cuộc (chỉ chủ hoặc admin). */
 app.delete('/api/conversations/:id', (req, res) => {
-  const ok = deleteConversation(req.params.id);
-  res.json({ ok, conversations: listConversations() });
+  const ip = getCleanIp(req);
+  const ok = deleteConversation(req.params.id, ip);
+  res.json({ ok, conversations: listConversations(ip) });
 });
 
 const PORT = Number(process.env.BOW_AGENT_PORT ?? 4000);
