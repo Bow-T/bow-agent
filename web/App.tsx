@@ -649,7 +649,7 @@ export function App() {
       setActiveConvId(id);
     }
     try {
-      await fetch(`/api/conversations/${id}`, {
+      const res = await fetch(`/api/conversations/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -659,8 +659,11 @@ export function App() {
           cwd: cwd.trim(),
         }),
       });
+      // Lưu thất bại (backend từ chối) → báo cho caller biết để không dọn màn hình.
+      if (!res.ok) return null;
     } catch {
-      // Lưu thất bại → bỏ qua, không chặn UI (thử lại ở lượt sau).
+      // Lưu thất bại (mạng/đứt kết nối) → trả null, không chặn UI ở lượt auto-lưu.
+      return null;
     }
     return id;
   };
@@ -969,6 +972,11 @@ export function App() {
       .then((c) => {
         setCfg(c);
         if (!cwd) setCwd(c.defaultCwd);
+        // Safe/QC Mode mặc định dùng Sonnet (nhẹ/rẻ để hỏi đáp) — chỉ áp khi người
+        // dùng CHƯA từng tự chọn model; nếu đã chọn thì tôn trọng lựa chọn của họ.
+        if (c.isSafeMode && !localStorage.getItem('bow-selectedModel')) {
+          setSelectedModel('claude-sonnet-5');
+        }
         if (c.mcpServers) {
           const saved = localStorage.getItem('bow-selectedMcps');
           if (!saved) {
@@ -1353,7 +1361,15 @@ export function App() {
       }
     }
     // Lưu chốt cuộc hiện tại lần cuối (auto-lưu có thể chưa kịp chạy debounce).
-    await persistActiveConversation(items, conversationId);
+    // CHỈ dọn màn hình khi lưu thành công — nếu lưu lỗi, giữ nguyên tin nhắn để
+    // người dùng không mất dữ liệu, và báo cho họ biết.
+    if (items.length > 0) {
+      const savedId = await persistActiveConversation(items, conversationId);
+      if (!savedId) {
+        addItem('error', 'Không lưu được cuộc trò chuyện hiện tại (mất kết nối tới máy chủ). Đã giữ nguyên tin nhắn — hãy thử lại khi có kết nối để tránh mất dữ liệu.');
+        return;
+      }
+    }
     setItems([]);
     setPending([]);
     setQuestions([]);
@@ -2304,12 +2320,15 @@ export function App() {
           onFiles(e.dataTransfer.files);
         }}
       >
-        {!safe && (
         <div className="controls">
+          {/* Safe/QC Mode: backend ép chế độ 'plan' → ẩn ô Chế độ (chọn cũng vô nghĩa).
+              Vẫn cho QC đổi Model/Profile/Effort để chọn model nhẹ hơn khi hỏi. */}
+          {!safe && (
           <div className="field">
             Chế độ:
             <ModeSelect value={mode} onChange={setMode} disabled={running} />
           </div>
+          )}
           <label>
             Model:
             <PixelSelect
@@ -2352,7 +2371,9 @@ export function App() {
           </label>
           {/* Ô chọn thư mục repo (cwd) — thu gọn, nằm cuối hàng bên phải Effort.
               Chỉ HIỂN THỊ tên folder (basename, vd "monorepo"); cwd đầy đủ vẫn giữ ở state
-              để gửi backend, và hiện qua tooltip khi hover. */}
+              để gửi backend, và hiện qua tooltip khi hover.
+              Ẩn ở Safe/QC Mode: repo bị khoá vào safeCwd, chỉ Admin đổi được (chỗ khác). */}
+          {!safe && (
           <div
             className="cwd-container"
             style={{ display: 'flex', gap: '6px', alignItems: 'stretch', marginLeft: 'auto', flexShrink: 0 }}
@@ -2381,8 +2402,8 @@ export function App() {
               <Icon name="folder" size={16} />
             </button>
           </div>
+          )}
         </div>
-        )}
 
         {!safe && detected && (
           <div className="detected">
@@ -3044,9 +3065,11 @@ export function App() {
                     <br />
                   </>
                 )}
-                Xóa toàn bộ <strong>{items.length}</strong> tin nhắn và bắt đầu hội thoại mới?
+                Cuộc trò chuyện hiện tại (<strong>{items.length}</strong> tin nhắn) sẽ được{' '}
+                <strong>lưu vào Lịch sử</strong> và màn hình được dọn để bắt đầu cuộc mới.
                 <br />
-                Thao tác này không thể hoàn tác.
+                Bạn có thể mở lại và chat tiếp bất cứ lúc nào từ panel{' '}
+                <Icon name="history" size={13} /> Lịch sử.
               </p>
             </div>
             <div className="modal-footer" style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '16px' }}>
