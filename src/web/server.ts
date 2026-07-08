@@ -3,6 +3,7 @@ import cors from 'cors';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
 import { runAgent, fetchUsageSnapshot } from '../core/runner.js';
 import { buildTaskBrief } from '../input/task.js';
 import { pdfToText } from '../input/pdf.js';
@@ -29,6 +30,74 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
+
+const activeClients = new Map<string, { lastSeen: Date; userAgent?: string }>();
+
+app.use((req, res, next) => {
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  if (typeof ip === 'string') {
+    let cleanIp = ip;
+    if (cleanIp === '::1' || cleanIp === '::ffff:127.0.0.1') {
+      cleanIp = '127.0.0.1';
+    } else if (cleanIp.startsWith('::ffff:')) {
+      cleanIp = cleanIp.slice(7);
+    }
+    activeClients.set(cleanIp, {
+      lastSeen: new Date(),
+      userAgent: req.headers['user-agent']
+    });
+  }
+  next();
+});
+
+const isSafeMode = process.env.BOW_SAFE_MODE === 'true';
+
+function getLocalIp(): string {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name] ?? []) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return 'localhost';
+}
+
+const logAudit = (message: string, clientIp?: string) => {
+  try {
+    const logDir = join(process.cwd(), 'memory');
+    if (!fs.existsSync(logDir)) {
+      fs.mkdirSync(logDir, { recursive: true });
+    }
+    const timestamp = new Date().toISOString();
+    const formattedMsg = `[${timestamp}] ${message}\n`;
+    
+    // Ghi vào log chung
+    const globalLogPath = join(logDir, 'audit_share.log');
+    fs.appendFileSync(globalLogPath, formattedMsg);
+    
+    // Ghi vào log riêng theo IP (nếu có)
+    if (clientIp) {
+      const safeIp = clientIp.replace(/[^a-zA-Z0-9.-]/g, '_');
+      const ipLogPath = join(logDir, `audit_${safeIp}.log`);
+      fs.appendFileSync(ipLogPath, formattedMsg);
+    }
+  } catch (err) {
+    console.error('Lỗi ghi log audit:', err);
+  }
+};
+
+const checkSafeMode = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (isSafeMode) {
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    const cleanIp = typeof ip === 'string' ? ip : 'unknown';
+    logAudit(`IP: ${cleanIp} - BỊ CHẶN: Thao tác ${req.method} ${req.originalUrl} bị chặn trong Safe Mode.`, cleanIp);
+    res.status(403).json({ error: 'Thao tác bị chặn trong chế độ Safe Mode (chỉ đọc).' });
+    return;
+  }
+  next();
+};
 
 // Phục vụ frontend đã build (dist-web). Trong dev, Vite chạy riêng ở cổng khác.
 const webDist = join(__dirname, '..', '..', 'dist-web');
@@ -57,7 +126,15 @@ app.post('/api/run', async (req, res) => {
       conversationId,
     } = req.body ?? {};
 
-    const workdir = cwd || process.cwd();
+    const workdir = isSafeMode ? process.cwd() : (cwd || process.cwd());
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    let cleanIp = typeof ip === 'string' ? ip : 'unknown';
+    if (cleanIp === '::1' || cleanIp === '::ffff:127.0.0.1') {
+      cleanIp = '127.0.0.1';
+    } else if (cleanIp.startsWith('::ffff:')) {
+      cleanIp = cleanIp.slice(7);
+    }
+    logAudit(`IP: ${cleanIp} - YÊU CẦU CHẠY: CWD=${workdir}, Mode=${isSafeMode ? 'plan' : mode}, Brief=${JSON.stringify(text || jiraRef || 'N/A')}`, cleanIp);
 
     let activeJiraRef = jiraRef;
     if (!activeJiraRef && text) {
@@ -134,6 +211,8 @@ app.post('/api/run', async (req, res) => {
     }
 
     const session = createSession();
+    (session as any).clientIp = cleanIp;
+    logAudit(`IP: ${cleanIp} - Session khởi tạo: id=${session.id}`, cleanIp);
     // sessionId (lớp web/SSE) trả ngay để client mở stream. conversationId THẬT của SDK
     // đến sau qua event 'conversation' (bắt từ system/init) — client lưu để resume lượt sau.
     res.json({ sessionId: session.id });
@@ -145,11 +224,12 @@ app.post('/api/run', async (req, res) => {
     // 4 mode kiểu Claude. Nhận cả tên cũ 'execute' (→ 'manual') để tương thích client cũ.
     // Mọi mode ngoài 'plan' đều là "đang thực thi" (có cổng duyệt theo policy của runner).
     const VALID_MODES = new Set(['plan', 'manual', 'edit-auto', 'auto']);
+    const requestedMode = isSafeMode ? 'plan' : mode;
     const runMode: 'plan' | 'manual' | 'edit-auto' | 'auto' =
-      mode === 'execute'
+      requestedMode === 'execute'
         ? 'manual'
-        : VALID_MODES.has(mode)
-          ? (mode as 'plan' | 'manual' | 'edit-auto' | 'auto')
+        : VALID_MODES.has(requestedMode)
+          ? (requestedMode as 'plan' | 'manual' | 'edit-auto' | 'auto')
           : 'plan';
     const isExecuting = runMode !== 'plan';
 
@@ -175,8 +255,16 @@ app.post('/api/run', async (req, res) => {
       // Bắt session_id THẬT của SDK → đẩy lên client để lưu, lượt sau resume đúng phiên.
       onSessionId: (conversationId) => session.push({ type: 'conversation', conversationId }),
     })
-      .then((result) => session.push({ type: 'done', result }))
-      .catch((err: unknown) => session.push({ type: 'fatal', message: (err as Error).message }))
+      .then((result) => {
+        const sessionIp = (session as any).clientIp;
+        logAudit(`IP: ${sessionIp || 'unknown'} - Session ${session.id} HOÀN THÀNH. Result length: ${result?.length ?? 0}`, sessionIp);
+        session.push({ type: 'done', result });
+      })
+      .catch((err: unknown) => {
+        const sessionIp = (session as any).clientIp;
+        logAudit(`IP: ${sessionIp || 'unknown'} - Session ${session.id} THẤT BẠI: ${(err as Error).message}`, sessionIp);
+        session.push({ type: 'fatal', message: (err as Error).message });
+      })
       .finally(() => session.close());
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
@@ -223,6 +311,14 @@ app.get('/api/events/:id', async (req, res) => {
 /** POST /api/approve — duyệt/từ chối một thao tác ghi. body: { sessionId, id, approved } */
 app.post('/api/approve', (req, res) => {
   const { sessionId, id, approved } = req.body ?? {};
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  let cleanIp = typeof ip === 'string' ? ip : 'unknown';
+  if (cleanIp === '::1' || cleanIp === '::ffff:127.0.0.1') {
+    cleanIp = '127.0.0.1';
+  } else if (cleanIp.startsWith('::ffff:')) {
+    cleanIp = cleanIp.slice(7);
+  }
+  logAudit(`IP: ${cleanIp} - Yêu cầu duyệt: sessionId=${sessionId}, toolUseId=${id}, approved=${approved}`, cleanIp);
   const session = getSession(sessionId);
   if (!session) {
     res.status(404).json({ error: 'Phiên không tồn tại.' });
@@ -239,6 +335,14 @@ app.post('/api/approve', (req, res) => {
  */
 app.post('/api/answer', (req, res) => {
   const { sessionId, id, answers } = req.body ?? {};
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  let cleanIp = typeof ip === 'string' ? ip : 'unknown';
+  if (cleanIp === '::1' || cleanIp === '::ffff:127.0.0.1') {
+    cleanIp = '127.0.0.1';
+  } else if (cleanIp.startsWith('::ffff:')) {
+    cleanIp = cleanIp.slice(7);
+  }
+  logAudit(`IP: ${cleanIp} - Trả lời câu hỏi: sessionId=${sessionId}, toolUseId=${id}, answers=${JSON.stringify(answers)}`, cleanIp);
   const session = getSession(sessionId);
   if (!session) {
     res.status(404).json({ error: 'Phiên không tồn tại.' });
@@ -252,6 +356,14 @@ app.post('/api/answer', (req, res) => {
 
 /** POST /api/stop/:id — dừng agent giữa chừng. */
 app.post('/api/stop/:id', (req, res) => {
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  let cleanIp = typeof ip === 'string' ? ip : 'unknown';
+  if (cleanIp === '::1' || cleanIp === '::ffff:127.0.0.1') {
+    cleanIp = '127.0.0.1';
+  } else if (cleanIp.startsWith('::ffff:')) {
+    cleanIp = cleanIp.slice(7);
+  }
+  logAudit(`IP: ${cleanIp} - Yêu cầu dừng session: id=${req.params.id}`, cleanIp);
   const session = getSession(req.params.id);
   if (session) {
     session.abort.abort();
@@ -261,12 +373,88 @@ app.post('/api/stop/:id', (req, res) => {
 });
 
 /** GET /api/config — thông tin cấu hình cho UI (MCP, cwd). Model do web tự chọn. */
-app.get('/api/config', (_req, res) => {
+app.get('/api/config', (req, res) => {
   const cc = loadClaudeCodeMcp();
+  const localIp = getLocalIp();
+  
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  let cleanIp = typeof ip === 'string' ? ip : '';
+  if (cleanIp === '::1' || cleanIp === '::ffff:127.0.0.1') {
+    cleanIp = '127.0.0.1';
+  } else if (cleanIp.startsWith('::ffff:')) {
+    cleanIp = cleanIp.slice(7);
+  }
+  const isAdmin = cleanIp === '127.0.0.1';
+  console.log(`[LAN Check] ip=${ip}, cleanIp=${cleanIp}, isAdmin=${isAdmin}`);
+
   res.json({
     defaultCwd: process.cwd(),
     mcpServers: cc.names,
+    lanUrl: `http://${localIp}:5173`,
+    isSafeMode,
+    isAdmin,
   });
+});
+
+/** GET /api/audit-logs — trả về danh sách lịch sử log kiểm toán (chỉ dành cho localhost admin). */
+app.get('/api/audit-logs', (req, res) => {
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  let cleanIp = typeof ip === 'string' ? ip : '';
+  if (cleanIp === '::1' || cleanIp === '::ffff:127.0.0.1') {
+    cleanIp = '127.0.0.1';
+  } else if (cleanIp.startsWith('::ffff:')) {
+    cleanIp = cleanIp.slice(7);
+  }
+  
+  if (cleanIp !== '127.0.0.1') {
+    res.status(403).json({ error: 'Chỉ Admin truy cập localhost mới có quyền xem log.' });
+    return;
+  }
+  
+  try {
+    const logPath = join(process.cwd(), 'memory', 'audit_share.log');
+    if (!fs.existsSync(logPath)) {
+      res.json({ logs: [] });
+      return;
+    }
+    const content = fs.readFileSync(logPath, 'utf8');
+    const lines = content.split('\n').filter(l => l.trim()).slice(-150).reverse();
+    res.json({ logs: lines });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+/** GET /api/active-clients — trả về danh sách thiết bị đang kết nối mạng LAN. */
+app.get('/api/active-clients', (_req, res) => {
+  const now = Date.now();
+  for (const [ip, data] of activeClients.entries()) {
+    if (now - data.lastSeen.getTime() > 45000) {
+      activeClients.delete(ip);
+    }
+  }
+  
+  const clients = Array.from(activeClients.entries()).map(([ip, data]) => {
+    let device = 'Thiết bị khác';
+    const ua = data.userAgent || '';
+    if (ua.includes('Mobi')) {
+      device = 'Mobile';
+    } else if (ua.includes('Chrome')) {
+      device = 'Chrome';
+    } else if (ua.includes('Safari') && !ua.includes('Chrome')) {
+      device = 'Safari';
+    } else if (ua.includes('Firefox')) {
+      device = 'Firefox';
+    }
+    
+    return {
+      ip,
+      device,
+      lastSeen: data.lastSeen.toISOString(),
+    };
+  });
+  
+  res.json({ clients });
 });
 
 /**
@@ -298,7 +486,7 @@ app.get('/api/mcp', (_req, res) => {
 });
 
 /** POST /api/mcp — thêm MCP server stdio mới. body: {name, command, args?, env?} */
-app.post('/api/mcp', (req, res) => {
+app.post('/api/mcp', checkSafeMode, (req, res) => {
   const { name, command, args, env } = req.body ?? {};
   if (typeof name !== 'string' || typeof command !== 'string') {
     res.status(400).json({ error: 'Thiếu name hoặc command.' });
@@ -318,7 +506,7 @@ app.post('/api/mcp', (req, res) => {
 });
 
 /** DELETE /api/mcp/:name — xóa một MCP server. */
-app.delete('/api/mcp/:name', (req, res) => {
+app.delete('/api/mcp/:name', checkSafeMode, (req, res) => {
   try {
     removeGlobalMcp(req.params.name);
     res.json({ ok: true, servers: listGlobalMcp() });
@@ -405,7 +593,7 @@ app.get('/api/workspace/current', (req, res) => {
  * POST /api/workspace/repo — gán một repo vào workspace (tạo nếu chưa có).
  * body: { name, path, role }. Trả workspace sau cập nhật.
  */
-app.post('/api/workspace/repo', (req, res) => {
+app.post('/api/workspace/repo', checkSafeMode, (req, res) => {
   const { name, path, role } = req.body ?? {};
   if (typeof name !== 'string' || !name.trim() || typeof path !== 'string' || !path.trim()) {
     res.status(400).json({ error: 'Thiếu name hoặc path.' });
@@ -427,7 +615,7 @@ app.post('/api/workspace/repo', (req, res) => {
  * DELETE /api/workspace/repo — gỡ một repo khỏi workspace (xóa workspace nếu rỗng).
  * body: { name, path }.
  */
-app.delete('/api/workspace/repo', (req, res) => {
+app.delete('/api/workspace/repo', checkSafeMode, (req, res) => {
   const { name, path } = req.body ?? {};
   if (typeof name !== 'string' || typeof path !== 'string') {
     res.status(400).json({ error: 'Thiếu name hoặc path.' });
@@ -456,7 +644,7 @@ app.get('/api/workspace/:slug/knowledge', (req, res) => {
 });
 
 /** PUT /api/workspace/:slug/shared — ghi đè tri thức chung shared.md. body: { content }. */
-app.put('/api/workspace/:slug/shared', (req, res) => {
+app.put('/api/workspace/:slug/shared', checkSafeMode, (req, res) => {
   const ws = findWorkspace(req.params.slug);
   if (!ws) {
     res.status(404).json({ error: 'Workspace không tồn tại.' });
@@ -514,5 +702,10 @@ app.post('/api/analyze-structure', (req, res) => {
 const PORT = Number(process.env.BOW_AGENT_PORT ?? 4000);
 app.listen(PORT, () => {
   process.stdout.write(`\n🌐 bow-agent web API chạy tại http://localhost:${PORT}\n`);
-  process.stdout.write(`   (dev frontend: chạy \`npm run ui:web\` rồi mở http://localhost:5173)\n\n`);
+  if (isSafeMode) {
+    process.stdout.write(`   ⚠️ CHẾ ĐỘ AN TOÀN ĐANG BẬT (Safe/LAN Share Mode) - CHỈ CHO PHÉP HỎI ĐÁP/LẬP KẾ HOẠCH\n`);
+    process.stdout.write(`   Để chia sẻ với đồng nghiệp, chạy frontend bằng: npm run ui:web -- --host\n\n`);
+  } else {
+    process.stdout.write(`   (dev frontend: chạy \`npm run ui:web\` rồi mở http://localhost:5173)\n\n`);
+  }
 });

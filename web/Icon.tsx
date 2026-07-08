@@ -43,6 +43,7 @@ import {
   Send2,
   Routing2,
   Hierarchy,
+  People,
   TickSquare,
   Stop as StopSquare,
   RecordCircle as RadioOn,
@@ -74,6 +75,7 @@ const ICONS: Record<string, IconType> = {
   lock: Lock1,
   routing: Routing2,
   structure: Hierarchy,
+  users: People,
   // Caret
   caretRight: ArrowRight2,
   caretDown: ArrowDown2,
