@@ -252,12 +252,13 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   // Multi-agent (opt-in): bộ subagent chuẩn + subagent riêng profile. Chỉ dựng khi bật.
   const subagents = opts.useSubagents ? buildSubagents(opts.profileSubagents) : undefined;
 
+  const isSafeMode = process.env.BOW_SAFE_MODE === 'true';
+
   // Lưu ý: KHÔNG đưa AskUserQuestion vào allowedTools — entry "trần" trong
   // allowedTools auto-approve tool TRƯỚC khi tới canUseTool, khiến câu hỏi không
   // bao giờ tới UI. Để nó rơi vào canUseTool (xử lý bên dưới) để render UI.
   const allowedTools = [
-    'Read',
-    'Grep',
+    ...(isSafeMode ? [] : ['Read', 'Grep']),
     'Glob',
     // Cho agent chính spawn subagent không kẹt cổng duyệt — subagent đều read-only /
     // chỉ chạy lệnh kiểm chứng nên an toàn. Chỉ mở khi bật multi-agent.
@@ -388,9 +389,48 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     settingSources: ['project'],
     // Gắn canUseTool khi cần xử lý câu hỏi (mọi mode) hoặc có cổng duyệt (mọi mode thực thi).
     // AskUserQuestion xử lý riêng ở MỌI mode; tool ghi/bash qua cổng theo policy của từng mode.
-    ...(opts.onQuestion || (isExecuting && opts.onApproval)
+    ...(opts.onQuestion || (isExecuting && opts.onApproval) || isSafeMode
       ? {
           canUseTool: async (toolName, input, sdkOpts) => {
+            // Kiểm tra truy cập file nhạy cảm trong chế độ an toàn
+            if (isSafeMode && (toolName === 'Read' || toolName === 'Edit' || toolName === 'Write' || toolName === 'MultiEdit')) {
+              const target =
+                (input as Record<string, unknown>).file_path ??
+                (input as Record<string, unknown>).path ??
+                (input as Record<string, unknown>).notebook_path;
+              
+              if (typeof target === 'string') {
+                const lowerTarget = target.toLowerCase();
+                const isSensitive =
+                  lowerTarget.includes('.env') ||
+                  lowerTarget.includes('.git/') ||
+                  lowerTarget.includes('.git\\') ||
+                  lowerTarget.includes('.npmrc') ||
+                  lowerTarget.includes('.pypirc') ||
+                  lowerTarget.endsWith('.pem') ||
+                  lowerTarget.endsWith('.key') ||
+                  lowerTarget.endsWith('.p12') ||
+                  lowerTarget.endsWith('.jks') ||
+                  lowerTarget.includes('id_rsa') ||
+                  lowerTarget.includes('id_ed25519') ||
+                  lowerTarget.includes('.aws/') ||
+                  lowerTarget.includes('.kube/');
+                
+                if (isSensitive) {
+                  return {
+                    behavior: 'deny' as const,
+                    message: 'Truy cập bị chặn: Không được phép đọc/ghi file cấu hình nhạy cảm trong Safe Mode.',
+                  };
+                }
+              }
+            }
+
+            if (isSafeMode && toolName === 'Grep') {
+              return {
+                behavior: 'deny' as const,
+                message: 'Grep bị vô hiệu hóa trong Safe Mode để bảo mật dữ liệu nhạy cảm. Vui lòng sử dụng Glob + Read.',
+              };
+            }
             // AskUserQuestion: render UI câu hỏi, gắn câu trả lời vào input trả cho agent.
             if (toolName === 'AskUserQuestion' && opts.onQuestion) {
               const questions = Array.isArray((input as { questions?: unknown }).questions)

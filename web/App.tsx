@@ -545,7 +545,60 @@ export function App() {
   const [cfg, setCfg] = useState<{
     defaultCwd: string;
     mcpServers?: string[];
+    lanUrl?: string;
+    isSafeMode?: boolean;
+    isAdmin?: boolean;
   } | null>(null);
+  const [activeClientsOpen, setActiveClientsOpen] = useState(false);
+  const [activeClients, setActiveClients] = useState<{ ip: string; device: string; lastSeen: string }[]>([]);
+  const [loadingActiveClients, setLoadingActiveClients] = useState(false);
+  const [activeTab, setActiveTab] = useState<'clients' | 'logs'>('clients');
+  const [auditLogs, setAuditLogs] = useState<string[]>([]);
+  const [loadingLogs, setLoadingLogs] = useState(false);
+
+  const [copied, setCopied] = useState(false);
+
+  const copyLanUrl = () => {
+    if (cfg?.lanUrl) {
+      navigator.clipboard.writeText(cfg.lanUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const fetchActiveClients = () => {
+    setLoadingActiveClients(true);
+    fetch('/api/active-clients')
+      .then((r) => r.json())
+      .then((data) => {
+        setActiveClients(data.clients || []);
+        setLoadingActiveClients(false);
+      })
+      .catch(() => {
+        setLoadingActiveClients(false);
+      });
+  };
+
+  const fetchAuditLogs = () => {
+    setLoadingLogs(true);
+    fetch('/api/audit-logs')
+      .then((r) => r.json())
+      .then((data) => {
+        setAuditLogs(data.logs || []);
+        setLoadingLogs(false);
+      })
+      .catch(() => {
+        setLoadingLogs(false);
+      });
+  };
+
+  const openActiveClientsPanel = () => {
+    fetchActiveClients();
+    fetchAuditLogs();
+    setActiveTab('clients');
+    setActiveClientsOpen(true);
+  };
+
   const [detected, setDetected] = useState<DetectedSource | null>(null);
   const [theme, setTheme] = useState<Theme>(() => {
     // Lần đầu: theo cài đặt hệ điều hành. Sau đó ưu tiên lựa chọn user đã lưu.
@@ -1277,6 +1330,18 @@ export function App() {
               {modeDef(mode).short}
             </span>
           </span>
+          {cfg?.lanUrl && (
+            <button
+              className="readout readout-btn"
+              title="Địa chỉ mạng LAN của trang này. Bấm để copy."
+              onClick={copyLanUrl}
+            >
+              <span className="rl">LAN URL</span>
+              <span className="rv" style={{ color: copied ? 'var(--teal)' : 'var(--brass)', textDecoration: copied ? 'none' : 'underline' }}>
+                {copied ? 'ĐÃ COPY!' : cfg.lanUrl}
+              </span>
+            </button>
+          )}
           {/* Hạn mức phiên 5 giờ (Session) — gọn trên header. Bấm để làm mới. */}
           {(() => {
             const s = usage?.rateLimits.find((w) => /session|5\s*h|5hr/i.test(w.label));
@@ -1363,6 +1428,15 @@ export function App() {
           >
             <Icon name="structure" size={18} />
           </button>
+          {cfg?.isAdmin && (
+            <button
+              className="theme-btn"
+              title="LAN Dashboard — Quản lý thiết bị & xem log hoạt động"
+              onClick={openActiveClientsPanel}
+            >
+              <Icon name="users" size={18} />
+            </button>
+          )}
           <button
             className="theme-btn"
             title={theme === 'light' ? 'Chuyển giao diện tối' : 'Chuyển giao diện sáng'}
@@ -1799,9 +1873,10 @@ export function App() {
               className="cwd"
               placeholder="Thư mục repo (cwd)"
               value={cwd}
-              onChange={(e) => setCwd(e.target.value)}
+              readOnly
+              onClick={() => { if (!running) openPicker(cwd); }}
               disabled={running}
-              style={{ flex: 1 }}
+              style={{ flex: 1, cursor: running ? 'not-allowed' : 'pointer' }}
             />
             <button
               className="btn folder-picker-btn"
@@ -2296,6 +2371,186 @@ export function App() {
               </button>
               <button className="btn stop" onClick={confirmClearChat}>
                 Xóa hết
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeClientsOpen && (
+        <div className="modal-overlay" onClick={() => setActiveClientsOpen(false)}>
+          <div
+            className="modal-content pixel-panel"
+            style={{ maxWidth: '640px', width: '92%' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <span className="modal-title">
+                <Icon name="users" size={16} /> Bảng điều khiển LAN (LAN Dashboard)
+              </span>
+              <button className="close-btn" onClick={() => setActiveClientsOpen(false)}>
+                <Icon name="close" size={16} />
+              </button>
+            </div>
+            
+            <div className="modal-tabs" style={{ display: 'flex', gap: '8px', borderBottom: '1px solid var(--hairline)', paddingBottom: '8px', marginBottom: '12px' }}>
+              <button
+                className={`btn ${activeTab === 'clients' ? 'active' : ''}`}
+                style={{
+                  padding: '4px 12px',
+                  fontSize: '12px',
+                  background: activeTab === 'clients' ? 'var(--brass)' : 'transparent',
+                  color: activeTab === 'clients' ? 'var(--on-brass)' : 'var(--ink)',
+                  border: '1px solid var(--hairline)'
+                }}
+                onClick={() => setActiveTab('clients')}
+              >
+                Thiết bị online ({activeClients.length})
+              </button>
+              <button
+                className={`btn ${activeTab === 'logs' ? 'active' : ''}`}
+                style={{
+                  padding: '4px 12px',
+                  fontSize: '12px',
+                  background: activeTab === 'logs' ? 'var(--brass)' : 'transparent',
+                  color: activeTab === 'logs' ? 'var(--on-brass)' : 'var(--ink)',
+                  border: '1px solid var(--hairline)'
+                }}
+                onClick={() => {
+                  setActiveTab('logs');
+                  fetchAuditLogs();
+                }}
+              >
+                Nhật ký Audit ({auditLogs.length})
+              </button>
+            </div>
+
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {activeTab === 'clients' ? (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '12px', color: 'var(--muted)' }}>
+                      Các IP đã gọi API tới máy bạn trong 45s qua:
+                    </span>
+                    <button
+                      className="btn"
+                      style={{ padding: '2px 8px', fontSize: '11px' }}
+                      onClick={fetchActiveClients}
+                      disabled={loadingActiveClients}
+                    >
+                      {loadingActiveClients ? 'Đang tải...' : 'Làm mới'}
+                    </button>
+                  </div>
+                  <div
+                    style={{
+                      maxHeight: '300px',
+                      overflowY: 'auto',
+                      border: 'var(--bd-thin) solid var(--outline)',
+                      padding: '6px',
+                      background: 'var(--inset)',
+                    }}
+                  >
+                    {activeClients.length === 0 ? (
+                      <div style={{ padding: '20px', textAlign: 'center', color: 'var(--muted)' }}>
+                        Chưa có thiết bị LAN nào kết nối
+                      </div>
+                    ) : (
+                      activeClients.map((client, idx) => (
+                        <div
+                          key={idx}
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            padding: '8px 10px',
+                            borderBottom: idx < activeClients.length - 1 ? 'var(--bd-thin) solid var(--outline)' : 'none',
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <span
+                                style={{
+                                  width: '8px',
+                                  height: '8px',
+                                  borderRadius: '50%',
+                                  background: 'var(--teal)',
+                                  display: 'inline-block',
+                                }}
+                              ></span>
+                              {client.ip}{' '}
+                              {client.ip === '127.0.0.1' && (
+                                <span style={{ color: 'var(--muted)', fontSize: '11px', fontWeight: 'normal' }}>
+                                  (Bạn)
+                                </span>
+                              )}
+                            </div>
+                            <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px' }}>
+                              Trình duyệt: {client.device}
+                            </div>
+                          </div>
+                          <div style={{ fontSize: '11px', color: 'var(--muted)' }}>
+                            Hoạt động: {new Date(client.lastSeen).toLocaleTimeString()}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '12px', color: 'var(--muted)' }}>
+                      150 dòng nhật ký mới nhất ghi lại câu hỏi & hoạt động của client:
+                    </span>
+                    <button
+                      className="btn"
+                      style={{ padding: '2px 8px', fontSize: '11px' }}
+                      onClick={fetchAuditLogs}
+                      disabled={loadingLogs}
+                    >
+                      {loadingLogs ? 'Đang tải...' : 'Làm mới'}
+                    </button>
+                  </div>
+                  <div
+                    style={{
+                      maxHeight: '300px',
+                      overflowY: 'auto',
+                      border: 'var(--bd-thin) solid var(--outline)',
+                      padding: '8px',
+                      background: '#05070c',
+                      color: '#a79e88',
+                      fontFamily: 'var(--mono)',
+                      fontSize: '11px',
+                      whiteSpace: 'pre-wrap',
+                      lineHeight: '1.4'
+                    }}
+                  >
+                    {auditLogs.length === 0 ? (
+                      <div style={{ padding: '20px', textAlign: 'center', color: 'var(--muted)' }}>
+                        Chưa có lịch sử hoạt động nào được ghi lại.
+                      </div>
+                    ) : (
+                      auditLogs.map((logLine, idx) => (
+                        <div key={idx} style={{ 
+                          borderBottom: '1px solid rgba(231, 223, 204, 0.05)', 
+                          paddingBottom: '4px', 
+                          marginBottom: '4px',
+                          color: logLine.includes('BỊ CHẶN') ? '#d9603f' : (logLine.includes('THẤT BẠI') ? '#d9603f' : '#a79e88')
+                        }}>
+                          {logLine}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+            <div
+              className="modal-footer"
+              style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '16px' }}
+            >
+              <button className="btn deny" onClick={() => setActiveClientsOpen(false)}>
+                Đóng
               </button>
             </div>
           </div>
