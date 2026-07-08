@@ -1440,6 +1440,21 @@ a { color: var(--brass); text-underline-offset: 2px; }
 }
 .chip button:hover { color: var(--danger); }
 
+/* chip ảnh: thumbnail xem trước + tên cắt gọn */
+.chip-image { padding-left: 4px; }
+.chip-thumb {
+  width: 28px; height: 28px;
+  object-fit: cover;
+  border: 1px solid var(--hairline);
+  flex: none;
+}
+.chip-name {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* gợi ý nhanh = preset */
 .quick-prompts { display: flex; flex-wrap: wrap; gap: 6px; }
 .quick-prompt-chip {
