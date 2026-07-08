@@ -8,7 +8,7 @@ import { buildTaskBrief } from '../input/task.js';
 import { pdfToText } from '../input/pdf.js';
 import { getProfile } from '../profiles/index.js';
 import { detectSource } from '../profiles/detect.js';
-import { generateProfile } from '../profiles/generate.js';
+import { generateProfile, analyzeStructure } from '../profiles/generate.js';
 import { createSession, getSession, removeSession } from './session.js';
 import { loadClaudeCodeMcp, listGlobalMcp, addGlobalMcp, removeGlobalMcp } from '../tools/mcp.js';
 import { parseJiraRef } from '../input/jira-ref.js';
@@ -485,6 +485,28 @@ app.post('/api/generate-profile', async (req, res) => {
       session.push({ type: 'text', text: `Đã sinh profile "${r.name}" → ${r.file}` });
       session.push({ type: 'done', result: r.name });
     })
+    .catch((err: unknown) => session.push({ type: 'fatal', message: (err as Error).message }))
+    .finally(() => session.close());
+});
+
+/**
+ * POST /api/analyze-structure — quét repo ở cwd (chỉ đọc) rồi mô tả CẤU TRÚC (markdown)
+ * cho panel "Cấu trúc dự án" ở header. Trả { sessionId } NGAY, stream tiến độ + kết quả
+ * qua SSE (/api/events/:id) — KHÔNG treo HTTP request 60s (tránh proxy/browser timeout,
+ * nguyên nhân lỗi "Unexpected end of JSON input"). KHÔNG lưu file (khác sinh profile).
+ * Kết quả cuối đẩy qua event 'done' với result = mô tả markdown. body: { cwd }.
+ */
+app.post('/api/analyze-structure', (req, res) => {
+  const cwd = (req.body?.cwd as string) || process.cwd();
+  if (!fs.existsSync(cwd)) {
+    res.status(400).json({ error: `Không thấy thư mục: ${cwd}` });
+    return;
+  }
+  const session = createSession();
+  res.json({ sessionId: session.id });
+
+  analyzeStructure(cwd, (msg) => session.push({ type: 'text', text: msg }))
+    .then((structure) => session.push({ type: 'done', result: structure }))
     .catch((err: unknown) => session.push({ type: 'fatal', message: (err as Error).message }))
     .finally(() => session.close());
 });
