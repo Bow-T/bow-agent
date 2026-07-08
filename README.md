@@ -211,7 +211,7 @@ bow-agent run PROJ-123 --execute --subagents --cwd ~/GitProject/monorepo/apps/mo
 - Subagent đều **read-only / chỉ chạy lệnh kiểm chứng** (chặn cứng Edit/Write/commit/push). Mọi thay đổi thật vẫn do **agent chính** làm và **vẫn qua cổng duyệt** — bật multi-agent không nới lỏng an toàn.
 - Profile có thể bổ sung subagent riêng (ghi đè bộ chuẩn nếu trùng tên); chỉ có tác dụng khi `--subagents` bật.
 
-> Thiết kế đầy đủ: xem **[DESIGN.md](DESIGN.md)**.
+> Thiết kế đầy đủ: xem **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 
 ---
 
