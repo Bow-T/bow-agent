@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { PixelSelect } from './PixelSelect.js';
 import { AccentPicker } from './AccentPicker.js';
 import { ModeSelect, modeDef } from './ModeSelect.js';
@@ -57,6 +57,92 @@ interface ActivityNode {
 
 let seq = 0;
 const nextId = () => `${Date.now()}-${seq++}`;
+
+// ── Chat nhóm (người-với-người qua LAN) ──────────────────────────────────────
+// Mỗi máy có một ID CÁ NHÂN cố định (sinh 1 lần, nhớ ở localStorage) để phân biệt
+// người gửi, và một BIỆT DANH hiển thị (đổi được). Vào phòng bằng "mã phòng".
+
+const CHAT_USER_ID_KEY = 'bow-chat-user-id';
+const CHAT_NICKNAME_KEY = 'bow-chat-nickname';
+const CHAT_LAST_GROUP_KEY = 'bow-chat-last-group';
+
+/** ID cá nhân của máy này (sinh & nhớ 1 lần). Dùng để tô "tin của mình" vs người khác. */
+function getChatUserId(): string {
+  try {
+    let id = localStorage.getItem(CHAT_USER_ID_KEY);
+    if (!id) {
+      id =
+        typeof crypto !== 'undefined' && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `u-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+      localStorage.setItem(CHAT_USER_ID_KEY, id);
+    }
+    return id;
+  } catch {
+    // localStorage bị chặn → ID tạm theo phiên (không bền, nhưng vẫn chat được).
+    return `u-${Date.now()}`;
+  }
+}
+
+/** Một tin nhắn chat như server trả về. */
+interface ChatMsg {
+  id: string;
+  userId: string;
+  nickname: string;
+  text: string;
+  createdAt: number;
+}
+
+// ── Cổng mã truy cập ─────────────────────────────────────────────────────────
+// Client LAN (không phải admin/localhost) phải nhập mã do admin cấp → server trả
+// token → nhớ ở localStorage. apiFetch tự đính token vào header; SSE đính qua query.
+
+const ACCESS_TOKEN_KEY = 'bow-access-token';
+
+/** Token truy cập đã lưu (rỗng nếu chưa có). */
+function getAccessToken(): string {
+  try {
+    return localStorage.getItem(ACCESS_TOKEN_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+function setAccessToken(token: string): void {
+  try {
+    localStorage.setItem(ACCESS_TOKEN_KEY, token);
+  } catch {
+    /* localStorage bị chặn (chế độ riêng tư) — bỏ qua, chỉ mất nhớ. */
+  }
+}
+
+function clearAccessToken(): void {
+  try {
+    localStorage.removeItem(ACCESS_TOKEN_KEY);
+  } catch {
+    /* bỏ qua */
+  }
+}
+
+/**
+ * fetch bọc: tự đính header 'x-bow-token' để qua cổng mã truy cập. Dùng cho MỌI gọi
+ * /api/* nghiệp vụ (thay cho fetch trần). SSE (EventSource) không dùng được cái này —
+ * đính token qua query '?token=' (xem withToken).
+ */
+function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  const token = getAccessToken();
+  const headers = new Headers(init.headers);
+  if (token) headers.set('x-bow-token', token);
+  return fetch(input, { ...init, headers });
+}
+
+/** Thêm token vào query string cho URL SSE (EventSource không set được header). */
+function withToken(url: string): string {
+  const token = getAccessToken();
+  if (!token) return url;
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}token=${encodeURIComponent(token)}`;
+}
 
 /** Đọc file text → {name, content}. */
 function readText(file: File): Promise<DocAttachment> {
@@ -134,7 +220,24 @@ function formatTokens(n: number): string {
 }
 
 /** Một thanh usage: nhãn + % + bar. severity đổi màu khi gần đầy. */
+const API_PORTS = [4000, 4001, 4002];
+
+function getAdminApiOrigins(): string[] {
+  const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  if (!isLocal) return ['']; // non-admin LAN clients only talk to their own origin
+  return API_PORTS.map(p => `http://localhost:${p}`);
+}
+
 export function App() {
+  const [cfg, setCfg] = useState<{
+    defaultCwd: string;
+    repoName?: string;
+    mcpServers?: string[];
+    lanUrl?: string;
+    isSafeMode?: boolean;
+    isCollabMode?: boolean;
+    isAdmin?: boolean;
+  } | null>(null);
   const [task, setTask] = useState(() => localStorage.getItem('bow-task') || '');
   const [cwd, setCwd] = useState(() => localStorage.getItem('bow-cwd') || '');
   const [mode, setMode] = useState<Mode>(() => {
@@ -269,7 +372,7 @@ export function App() {
   const [pickerOpen, setPickerOpen] = useState(false);
   // Đích của picker: 'cwd' = chọn thư mục làm việc thường; 'safe-cwd' = Admin đổi
   // source mà QC hỏi đáp (Safe Mode). Quyết định nút "Chọn thư mục này" làm gì.
-  const [pickerTarget, setPickerTarget] = useState<'cwd' | 'safe-cwd'>('cwd');
+  const [pickerTarget, setPickerTarget] = useState<'cwd' | 'dev-cwd' | 'safe-cwd' | 'collab-cwd'>('cwd');
   const [pickerPath, setPickerPath] = useState('');
   const [pickerParent, setPickerParent] = useState<string | null>(null);
   const [pickerDirs, setPickerDirs] = useState<string[]>([]);
@@ -309,6 +412,25 @@ export function App() {
   const [structCwd, setStructCwd] = useState('');          // cwd đã phân tích (để biết đang xem repo nào)
   const [structError, setStructError] = useState('');
 
+  // ── Chat nhóm (người-với-người qua LAN) ──
+  const chatUserId = useRef(getChatUserId()).current;
+  const [chatPanelOpen, setChatPanelOpen] = useState(false);
+  const [chatNickname, setChatNickname] = useState(() => {
+    try { return localStorage.getItem(CHAT_NICKNAME_KEY) || ''; } catch { return ''; }
+  });
+  const [chatGroupInput, setChatGroupInput] = useState(() => {
+    try { return localStorage.getItem(CHAT_LAST_GROUP_KEY) || ''; } catch { return ''; }
+  });
+  const [chatJoinedGroup, setChatJoinedGroup] = useState<string | null>(null); // đã vào phòng nào (null = màn hình nhập)
+  const [chatMessages, setChatMessages] = useState<ChatMsg[]>([]);
+  const [chatDraft, setChatDraft] = useState('');
+  const [chatError, setChatError] = useState('');
+  const [chatBusy, setChatBusy] = useState(false);
+  const chatSseRef = useRef<EventSource | null>(null);   // SSE realtime của phòng đang mở
+  const chatScrollRef = useRef<HTMLDivElement | null>(null); // khung tin để auto-cuộn xuống đáy
+
+  useEffect(() => { try { localStorage.setItem(CHAT_NICKNAME_KEY, chatNickname); } catch {} }, [chatNickname]);
+
   /**
    * Làm mới snapshot hạn mức gói qua /api/usage (độc lập lượt chạy). Chỉ cập nhật phần
    * rateLimits/subscription; GIỮ context window cũ (đến từ event 'usage' trong lượt chạy
@@ -316,7 +438,7 @@ export function App() {
    */
   const refreshUsage = () => {
     setUsageLoading(true);
-    fetch(`/api/usage?model=${encodeURIComponent(selectedModel)}`)
+    apiFetch(`/api/usage?model=${encodeURIComponent(selectedModel)}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then((d: { usage: UsageSnapshot }) => {
         setUsage((prev) => ({
@@ -332,7 +454,7 @@ export function App() {
 
   /** Tải danh sách MCP từ backend (che token). */
   const loadMcpList = () => {
-    fetch('/api/mcp')
+    apiFetch('/api/mcp')
       .then((r) => r.json())
       .then((d) => setMcpList(d.servers ?? []))
       .catch(() => setMcpError('Không tải được danh sách MCP.'));
@@ -369,7 +491,7 @@ export function App() {
     }
     setMcpBusy(true);
     try {
-      const res = await fetch('/api/mcp', {
+      const res = await apiFetch('/api/mcp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, command, args, env }),
@@ -382,7 +504,7 @@ export function App() {
       setMcpList(data.servers ?? []);
       setMcpForm({ name: '', command: '', args: '', env: '' });
       // Refresh /api/config để checkbox MCP ở composer cập nhật danh sách mới.
-      fetch('/api/config')
+      apiFetch('/api/config')
         .then((r) => r.json())
         .then((c) => { if (c.mcpServers) setCfg((prev) => (prev ? { ...prev, mcpServers: c.mcpServers } : prev)); })
         .catch(() => {});
@@ -398,14 +520,14 @@ export function App() {
     setMcpError('');
     setMcpBusy(true);
     try {
-      const res = await fetch(`/api/mcp/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      const res = await apiFetch(`/api/mcp/${encodeURIComponent(name)}`, { method: 'DELETE' });
       const data = await res.json();
       if (!res.ok) {
         setMcpError(data.error ?? 'Xóa thất bại.');
         return;
       }
       setMcpList(data.servers ?? []);
-      fetch('/api/config')
+      apiFetch('/api/config')
         .then((r) => r.json())
         .then((c) => {
           if (c.mcpServers) {
@@ -426,7 +548,7 @@ export function App() {
 
   /** Tải danh sách workspace từ backend. */
   const loadWsList = () => {
-    fetch('/api/workspaces')
+    apiFetch('/api/workspaces')
       .then((r) => r.json())
       .then((d) => setWsList(d.workspaces ?? []))
       .catch(() => setWsError('Không tải được danh sách workspace.'));
@@ -445,7 +567,7 @@ export function App() {
   const refreshCurrentWs = (dir: string) => {
     const d = dir.trim();
     if (!d) { setCurrentWs(null); return; }
-    fetch(`/api/workspace/current?cwd=${encodeURIComponent(d)}`)
+    apiFetch(`/api/workspace/current?cwd=${encodeURIComponent(d)}`)
       .then((r) => r.json())
       .then((res) => setCurrentWs(res.workspace ?? null))
       .catch(() => setCurrentWs(null));
@@ -459,7 +581,7 @@ export function App() {
     if (!name || !path) { setWsError('Cần nhập Tên workspace và Đường dẫn repo.'); return; }
     setWsBusy(true);
     try {
-      const res = await fetch('/api/workspace/repo', {
+      const res = await apiFetch('/api/workspace/repo', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, path, role: wsForm.role.trim() }),
@@ -481,7 +603,7 @@ export function App() {
     setWsError('');
     setWsBusy(true);
     try {
-      const res = await fetch('/api/workspace/repo', {
+      const res = await apiFetch('/api/workspace/repo', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, path }),
@@ -505,7 +627,7 @@ export function App() {
     setWsError('');
     setWsViewSlug(slug);
     setWsSharedDirty(false);
-    fetch(`/api/workspace/${encodeURIComponent(slug)}/knowledge`)
+    apiFetch(`/api/workspace/${encodeURIComponent(slug)}/knowledge`)
       .then((r) => r.json())
       .then((d) => { setWsShared(d.shared ?? ''); setWsJournal(d.journal ?? ''); })
       .catch(() => setWsError('Không tải được tri thức workspace.'));
@@ -516,7 +638,7 @@ export function App() {
     if (!wsViewSlug) return;
     setWsBusy(true);
     try {
-      const res = await fetch(`/api/workspace/${encodeURIComponent(wsViewSlug)}/shared`, {
+      const res = await apiFetch(`/api/workspace/${encodeURIComponent(wsViewSlug)}/shared`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: wsShared }),
@@ -545,7 +667,7 @@ export function App() {
     setStructBusy(true);
     setStructText('');
     try {
-      const res = await fetch('/api/analyze-structure', {
+      const res = await apiFetch('/api/analyze-structure', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ cwd: dir }),
@@ -558,7 +680,7 @@ export function App() {
         return;
       }
       const { sessionId: sid } = await res.json();
-      const src = new EventSource(`/api/events/${sid}`);
+      const src = new EventSource(withToken(`/api/events/${sid}`));
       // Gom các text block tiến độ để hiện dần (agent vừa quét vừa mô tả).
       let acc = '';
       src.onmessage = (msg) => {
@@ -604,6 +726,107 @@ export function App() {
     }
   };
 
+  // ── Chat nhóm: vào phòng, gửi tin, realtime SSE ──
+
+  /** Đóng SSE phòng đang mở (nếu có). */
+  const closeChatSse = () => {
+    chatSseRef.current?.close();
+    chatSseRef.current = null;
+  };
+
+  /**
+   * Vào một phòng: nạp lịch sử (REST) rồi mở SSE nghe tin mới. Cần biệt danh + mã phòng.
+   */
+  const joinChatGroup = async () => {
+    const gid = chatGroupInput.trim();
+    const nick = chatNickname.trim();
+    if (!gid) { setChatError('Nhập mã phòng để vào nhóm.'); return; }
+    if (!nick) { setChatError('Đặt biệt danh trước khi vào phòng.'); return; }
+    setChatError('');
+    setChatBusy(true);
+    try {
+      // Vào/tạo phòng — trả về lịch sử tin.
+      const res = await apiFetch('/api/chat/groups', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: gid, name: gid }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'Không vào được phòng.');
+      const group = data.group as { id: string; messages: ChatMsg[] };
+      setChatJoinedGroup(group.id);
+      setChatMessages(Array.isArray(group.messages) ? group.messages : []);
+      try { localStorage.setItem(CHAT_LAST_GROUP_KEY, group.id); } catch {}
+
+      // Mở SSE realtime — chỉ giữ ĐÚNG MỘT stream.
+      closeChatSse();
+      const src = new EventSource(withToken(`/api/chat/groups/${encodeURIComponent(group.id)}/events`));
+      chatSseRef.current = src;
+      src.onmessage = (e) => {
+        try {
+          const ev = JSON.parse(e.data);
+          if (ev.type === 'message' && ev.message) {
+            const m = ev.message as ChatMsg;
+            // Dedup theo id (phòng SSE chồng lấn / gửi tin của chính mình cũng vọng về).
+            setChatMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
+          }
+        } catch { /* bỏ qua dòng lỗi */ }
+      };
+      src.onerror = () => { /* LAN chập chờn — EventSource tự reconnect, không cần báo. */ };
+    } catch (err) {
+      setChatError((err as Error).message);
+    } finally {
+      setChatBusy(false);
+    }
+  };
+
+  /** Rời phòng: đóng SSE, về màn hình nhập. */
+  const leaveChatGroup = () => {
+    closeChatSse();
+    setChatJoinedGroup(null);
+    setChatMessages([]);
+    setChatDraft('');
+  };
+
+  /** Gửi một tin nhắn vào phòng đang mở. */
+  const sendChatMessage = async () => {
+    const text = chatDraft.trim();
+    if (!text || !chatJoinedGroup) return;
+    const nick = chatNickname.trim() || 'Ẩn danh';
+    setChatDraft(''); // xoá ô ngay cho mượt; tin thật hiện lại qua SSE
+    try {
+      const res = await apiFetch(`/api/chat/groups/${encodeURIComponent(chatJoinedGroup)}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: chatUserId, nickname: nick, text }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setChatError(data?.error || 'Gửi tin thất bại.');
+        setChatDraft(text); // trả lại nội dung để gửi lại
+      }
+    } catch (err) {
+      setChatError((err as Error).message);
+      setChatDraft(text);
+    }
+  };
+
+  /** Mở panel chat: nếu đã có biệt danh + mã phòng nhớ sẵn thì vào thẳng. */
+  const openChatPanel = () => {
+    setChatPanelOpen(true);
+    setChatError('');
+  };
+
+  // Auto-cuộn xuống đáy khi có tin mới (nếu panel đang mở).
+  useEffect(() => {
+    if (chatPanelOpen && chatScrollRef.current) {
+      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+    }
+  }, [chatMessages, chatPanelOpen]);
+
+  // Dọn SSE khi component unmount.
+  useEffect(() => () => closeChatSse(), []);
+
   // ── Lịch sử nhiều cuộc trò chuyện: tóm tắt, tải danh sách, lưu, mở, đổi tên, xóa ──
 
   /** Rút tiêu đề từ items = câu user đầu tiên (cắt gọn). Rỗng nếu chưa có câu nào. */
@@ -633,7 +856,7 @@ export function App() {
 
   /** Tải danh sách cuộc trò chuyện từ backend. */
   const loadHistList = () => {
-    fetch('/api/conversations')
+    apiFetch('/api/conversations')
       .then((r) => r.json())
       .then((d) => setHistList(d.conversations ?? []))
       .catch(() => setHistError('Không tải được lịch sử chat.'));
@@ -665,7 +888,7 @@ export function App() {
       setActiveConvId(id);
     }
     try {
-      const res = await fetch(`/api/conversations/${id}`, {
+      const res = await apiFetch(`/api/conversations/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -692,7 +915,7 @@ export function App() {
     if (id === activeConvId && !histPanelOpen) return;
     setHistBusy(true);
     try {
-      const res = await fetch(`/api/conversations/${id}`);
+      const res = await apiFetch(`/api/conversations/${id}`);
       if (!res.ok) { setHistError('Không mở được cuộc trò chuyện.'); return; }
       const { conversation } = (await res.json()) as { conversation: ConversationFull };
 
@@ -701,7 +924,7 @@ export function App() {
         eventSourceRef.current?.close();
         eventSourceRef.current = null;
         setRunning(false);
-        if (sessionId) await fetch(`/api/stop/${sessionId}`, { method: 'POST' }).catch(() => {});
+        if (sessionId) await apiFetch(`/api/stop/${sessionId}`, { method: 'POST' }).catch(() => {});
       }
 
       setActiveConvId(conversation.id);
@@ -732,7 +955,7 @@ export function App() {
     setHistRenameId(null);
     if (!title) return;
     try {
-      await fetch(`/api/conversations/${id}`, {
+      await apiFetch(`/api/conversations/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title }),
@@ -747,7 +970,7 @@ export function App() {
   const confirmDeleteConversation = async (id: string) => {
     setHistDeleteId(null);
     try {
-      const res = await fetch(`/api/conversations/${id}`, { method: 'DELETE' });
+      const res = await apiFetch(`/api/conversations/${id}`, { method: 'DELETE' });
       const data = await res.json();
       setHistList(data.conversations ?? []);
       // Xóa đúng cuộc đang mở → reset về phiên mới trống.
@@ -765,25 +988,85 @@ export function App() {
     }
   };
 
-  const openPicker = (initialPath: string, target: 'cwd' | 'safe-cwd' = 'cwd') => {
+  const [devRepoLabel, setDevRepoLabel] = useState('');
+  const [devCwd, setDevCwd] = useState('');
+  const [safeRepoLabel, setSafeRepoLabel] = useState('');
+  const [safeCwd, setSafeCwd] = useState('');
+  const [collabRepoLabel, setCollabRepoLabel] = useState('');
+  const [collabCwd, setCollabCwd] = useState('');
+
+  // Nạp repo của các chế độ khác khi là admin
+  useEffect(() => {
+    if (!cfg?.isAdmin) return;
+    
+    const fetchConfigs = () => {
+      fetch('http://localhost:4000/api/config')
+        .then((r) => r.json())
+        .then((c) => {
+          setDevRepoLabel(c.repoName);
+          setDevCwd(c.defaultCwd);
+        })
+        .catch(() => {});
+
+      fetch('http://localhost:4001/api/config')
+        .then((r) => r.json())
+        .then((c) => {
+          setSafeRepoLabel(c.repoName);
+          setSafeCwd(c.defaultCwd);
+        })
+        .catch(() => {});
+
+      fetch('http://localhost:4002/api/config')
+        .then((r) => r.json())
+        .then((c) => {
+          setCollabRepoLabel(c.repoName);
+          setCollabCwd(c.defaultCwd);
+        })
+        .catch(() => {});
+    };
+
+    fetchConfigs();
+    const interval = setInterval(fetchConfigs, 5000); // cập nhật trạng thái folder mỗi 5s
+    return () => clearInterval(interval);
+  }, [cfg?.isAdmin]);
+
+  const openPicker = (initialPath: string, target: 'cwd' | 'dev-cwd' | 'safe-cwd' | 'collab-cwd' = 'cwd') => {
     setPickerError('');
     setPickerTarget(target);
     setPickerOpen(true);
     fetchDirs(initialPath || cfg?.defaultCwd || '');
   };
 
-  /** Admin đổi source mà QC hỏi đáp (Safe Mode) → POST /api/safe-cwd rồi tải lại config. */
-  const applySafeCwd = async (dir: string) => {
+  const applyPortCwd = async (target: 'dev-cwd' | 'safe-cwd' | 'collab-cwd', dir: string) => {
     try {
-      const res = await fetch('/api/safe-cwd', {
+      const port = target === 'dev-cwd' ? 4000 : target === 'safe-cwd' ? 4001 : 4002;
+      const res = await fetch(`http://localhost:${port}/api/safe-cwd`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ cwd: dir }),
       });
       const data = await res.json();
       if (!res.ok) { setPickerError(data.error ?? 'Đổi source thất bại.'); return; }
-      // Cập nhật cfg tại chỗ để banner header đổi ngay, không cần reload trang.
-      setCfg((c) => (c ? { ...c, defaultCwd: data.cwd, repoName: data.repoName } : c));
+      
+      if (target === 'safe-cwd') {
+        setSafeRepoLabel(data.repoName);
+        setSafeCwd(data.cwd);
+        if (cfg?.isSafeMode) {
+          setCfg((c) => (c ? { ...c, defaultCwd: data.cwd, repoName: data.repoName } : c));
+        }
+      } else if (target === 'collab-cwd') {
+        setCollabRepoLabel(data.repoName);
+        setCollabCwd(data.cwd);
+        if (cfg?.isCollabMode) {
+          setCfg((c) => (c ? { ...c, defaultCwd: data.cwd, repoName: data.repoName } : c));
+        }
+      } else if (target === 'dev-cwd') {
+        setDevRepoLabel(data.repoName);
+        setDevCwd(data.cwd);
+        if (!cfg?.isSafeMode && !cfg?.isCollabMode) {
+          setCfg((c) => (c ? { ...c, defaultCwd: data.cwd, repoName: data.repoName } : c));
+        }
+      }
       setPickerOpen(false);
     } catch (err) {
       setPickerError((err as Error).message);
@@ -792,7 +1075,7 @@ export function App() {
 
   const fetchDirs = (path: string) => {
     setPickerError('');
-    fetch(`/api/browse-dirs?path=${encodeURIComponent(path)}`)
+    apiFetch(`/api/browse-dirs?path=${encodeURIComponent(path)}`)
       .then((r) => {
         if (!r.ok) throw new Error('Không thể đọc thư mục');
         return r.json();
@@ -807,14 +1090,195 @@ export function App() {
       });
   };
 
-  const [cfg, setCfg] = useState<{
-    defaultCwd: string;
-    repoName?: string;
-    mcpServers?: string[];
-    lanUrl?: string;
-    isSafeMode?: boolean;
-    isAdmin?: boolean;
-  } | null>(null);
+
+
+  // ── Cổng duyệt truy cập theo tên ──────────────────────────────────────────
+  const [gateState, setGateState] = useState<'checking' | 'locked' | 'pending' | 'rejected' | 'open'>('checking');
+  const [nameInput, setNameInput] = useState('');
+  const [codeError, setCodeError] = useState('');
+  const [codeBusy, setCodeBusy] = useState(false);
+  const [accessUsers, setAccessUsers] = useState<any[]>([]);
+  const [adminCodeBusy, setAdminCodeBusy] = useState(false);
+  const [adminCodeMsg, setAdminCodeMsg] = useState('');
+
+  const refreshAccessUsers = useCallback(() => {
+    if (!cfg?.isAdmin) return;
+    const origins = getAdminApiOrigins();
+    setAccessUsers([]);
+    origins.forEach((origin) => {
+      fetch(`${origin}/api/access/users`)
+        .then((r) => r.json())
+        .then((data: { users?: any[] }) => {
+          if (data.users) {
+            const mapped = data.users.map((u) => ({ ...u, apiOrigin: origin }));
+            setAccessUsers((prev) => {
+              const filtered = prev.filter((p) => !mapped.some((m) => m.id === p.id));
+              return [...filtered, ...mapped];
+            });
+          }
+        })
+        .catch(() => {});
+    });
+  }, [cfg?.isAdmin]);
+
+  // Kiểm tra cổng lúc mở app và định kỳ 2s/lần
+  useEffect(() => {
+    let isMounted = true;
+    const checkStatus = () => {
+      apiFetch('/api/access/status')
+        .then((r) => r.json())
+        .then((s: { allowed?: boolean; status?: 'none' | 'pending' | 'approved' | 'rejected'; isAdmin?: boolean }) => {
+          if (!isMounted) return;
+          if (s.allowed) {
+            setGateState('open');
+          } else if (s.status === 'pending') {
+            setGateState('pending');
+          } else if (s.status === 'rejected') {
+            setGateState('rejected');
+          } else {
+            setGateState('locked');
+          }
+        })
+        .catch(() => {
+          if (isMounted) setGateState('open'); // Lỗi mạng: không khoá cứng
+        });
+    };
+
+    checkStatus();
+
+    const interval = setInterval(checkStatus, 2000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, []);
+
+  // Gửi tên lên server để xin duyệt truy cập.
+  const submitAccessName = async () => {
+    const name = nameInput.trim();
+    if (!name) return;
+    setCodeBusy(true);
+    setCodeError('');
+    try {
+      const res = await fetch('/api/access/request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json();
+      if (res.ok && data.token) {
+        setAccessToken(data.token);
+        setGateState(data.status || 'pending');
+      } else {
+        setCodeError(data.error || 'Lỗi gửi yêu cầu.');
+      }
+    } catch {
+      setCodeError('Không kết nối được server.');
+    } finally {
+      setCodeBusy(false);
+    }
+  };
+
+  const handleApproveAccess = async (id: string, apiOrigin?: string) => {
+    try {
+      const origin = apiOrigin || '';
+      await fetch(`${origin}/api/access/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      });
+      setAccessUsers((prev) =>
+        prev.map((u) => (u.id === id ? { ...u, status: 'approved', updatedAt: Date.now() } : u)),
+      );
+    } catch {}
+  };
+
+  const handleRejectAccess = async (id: string, apiOrigin?: string) => {
+    try {
+      const origin = apiOrigin || '';
+      await fetch(`${origin}/api/access/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      });
+      setAccessUsers((prev) =>
+        prev.map((u) => (u.id === id ? { ...u, status: 'rejected', updatedAt: Date.now() } : u)),
+      );
+    } catch {}
+  };
+
+  const handleRevokeAccess = async (id: string, apiOrigin?: string) => {
+    try {
+      const origin = apiOrigin || '';
+      await fetch(`${origin}/api/access/revoke`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      });
+      setAccessUsers((prev) =>
+        prev.map((u) => (u.id === id ? { ...u, status: 'rejected', updatedAt: Date.now() } : u)),
+      );
+    } catch {}
+  };
+
+  // Nạp danh sách khi là admin
+  useEffect(() => {
+    if (cfg?.isAdmin) {
+      refreshAccessUsers();
+    }
+  }, [cfg?.isAdmin, refreshAccessUsers]);
+
+  // Nhận sự kiện realtime về yêu cầu truy cập từ LAN (trên cả 3 cổng)
+  useEffect(() => {
+    if (!cfg?.isAdmin) return;
+    const origins = getAdminApiOrigins();
+    const sources: EventSource[] = [];
+
+    origins.forEach((origin) => {
+      const src = new EventSource(`${origin}/api/access/events`);
+      src.onmessage = (msg) => {
+        try {
+          const ev = JSON.parse(msg.data);
+          if (ev.type === 'access-request' && ev.user) {
+            setAccessUsers((prev) => {
+              const userWithOrigin = { ...ev.user, apiOrigin: origin };
+              const exists = prev.some((u) => u.id === ev.user.id);
+              if (exists) {
+                return prev.map((u) => (u.id === ev.user.id ? userWithOrigin : u));
+              }
+              return [...prev, userWithOrigin];
+            });
+          } else if (ev.type === 'access-resolved') {
+            setAccessUsers((prev) =>
+              prev.map((u) => (u.id === ev.id ? { ...u, status: ev.status, updatedAt: Date.now() } : u)),
+            );
+          }
+        } catch {}
+      };
+      sources.push(src);
+    });
+
+    return () => {
+      sources.forEach((s) => s.close());
+    };
+  }, [cfg?.isAdmin]);
+
+  // Collab Mode: yêu cầu duyệt lệnh hủy hoại do CTV phát lên, admin (localhost) duyệt.
+  const [collabApprovals, setCollabApprovals] = useState<
+    {
+      id: string;
+      sessionId: string;
+      clientIp: string;
+      toolName: string;
+      input: Record<string, unknown>;
+      title?: string;
+      description?: string;
+      decisionReason?: string;
+      createdAt: string;
+      apiOrigin?: string;
+    }[]
+  >([]);
   const [activeClientsOpen, setActiveClientsOpen] = useState(false);
   const [activeClients, setActiveClients] = useState<{ ip: string; device: string; lastSeen: string }[]>([]);
   const [loadingActiveClients, setLoadingActiveClients] = useState(false);
@@ -834,7 +1298,7 @@ export function App() {
 
   const fetchActiveClients = () => {
     setLoadingActiveClients(true);
-    fetch('/api/active-clients')
+    apiFetch('/api/active-clients')
       .then((r) => r.json())
       .then((data) => {
         setActiveClients(data.clients || []);
@@ -847,7 +1311,7 @@ export function App() {
 
   const fetchAuditLogs = () => {
     setLoadingLogs(true);
-    fetch('/api/audit-logs')
+    apiFetch('/api/audit-logs')
       .then((r) => r.json())
       .then((data) => {
         setAuditLogs(data.logs || []);
@@ -996,14 +1460,15 @@ export function App() {
 
   // Nạp cấu hình backend.
   useEffect(() => {
-    fetch('/api/config')
+    apiFetch('/api/config')
       .then((r) => r.json())
       .then((c) => {
         setCfg(c);
         if (!cwd) setCwd(c.defaultCwd);
-        // Safe/QC Mode mặc định dùng Sonnet (nhẹ/rẻ để hỏi đáp) — chỉ áp khi người
-        // dùng CHƯA từng tự chọn model; nếu đã chọn thì tôn trọng lựa chọn của họ.
-        if (c.isSafeMode && !localStorage.getItem('bow-selectedModel')) {
+        // Safe/QC Mode chỉ hỏi đáp read-only → LUÔN dùng Sonnet (nhẹ/rẻ), bất kể
+        // localStorage. Backend cũng ép Sonnet ở mode này nên UI phải khớp để không
+        // hiển thị Opus mà thực chất chạy Sonnet.
+        if (c.isSafeMode) {
           setSelectedModel('claude-sonnet-5');
         }
         if (c.mcpServers) {
@@ -1019,11 +1484,43 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Collab Mode + admin (localhost): mở kênh SSE riêng nhận yêu cầu duyệt lệnh hủy hoại
+  // từ CTV. Kênh toàn cục /api/admin/events (trên cả 3 cổng).
+  useEffect(() => {
+    if (!cfg?.isAdmin) return;
+    const origins = getAdminApiOrigins();
+    const sources: EventSource[] = [];
+
+    origins.forEach((origin) => {
+      const src = new EventSource(`${origin}/api/admin/events`);
+      src.onmessage = (msg) => {
+        try {
+          const ev = JSON.parse(msg.data);
+          if (ev.type === 'admin-approval-request' && ev.request) {
+            setCollabApprovals((prev) => {
+              const reqWithOrigin = { ...ev.request, apiOrigin: origin };
+              return prev.some((a) => a.id === ev.request.id) ? prev : [...prev, reqWithOrigin];
+            });
+          } else if (ev.type === 'admin-approval-resolved') {
+            setCollabApprovals((prev) => prev.filter((a) => a.id !== ev.id));
+          }
+        } catch {
+          /* bỏ qua dòng ping/keep-alive */
+        }
+      };
+      sources.push(src);
+    });
+
+    return () => {
+      sources.forEach((s) => s.close());
+    };
+  }, [cfg?.isAdmin]);
+
   // Khôi phục phiên chạy cũ nếu có và đang hoạt động
   useEffect(() => {
     const savedSessionId = localStorage.getItem('bow-session-id');
     if (savedSessionId) {
-      fetch(`/api/session/${savedSessionId}`)
+      apiFetch(`/api/session/${savedSessionId}`)
         .then((r) => r.json())
         .then((data: { exists: boolean }) => {
           if (data.exists) {
@@ -1048,7 +1545,7 @@ export function App() {
   useEffect(() => {
     if (!cwd.trim()) { setDetected(null); setCurrentWs(null); return; }
     const t = setTimeout(() => {
-      fetch(`/api/detect?cwd=${encodeURIComponent(cwd.trim())}`)
+      apiFetch(`/api/detect?cwd=${encodeURIComponent(cwd.trim())}`)
         .then((r) => r.json())
         .then((d: DetectedSource) => {
           setDetected(d);
@@ -1155,7 +1652,7 @@ export function App() {
 
     let res: Response;
     try {
-      res = await fetch('/api/run', {
+      res = await apiFetch('/api/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1215,7 +1712,7 @@ export function App() {
     setItems((prev) => prev.slice(0, sessionBaselineRef.current));
     setPending([]);
     setQuestions([]);
-    const src = new EventSource(`/api/events/${sid}`);
+    const src = new EventSource(withToken(`/api/events/${sid}`));
     eventSourceRef.current = src;
     // Đóng SSE + xóa ref (chỉ khi ref vẫn trỏ chính src này, tránh xóa nhầm kết nối
     // mới hơn đã thay chỗ).
@@ -1326,10 +1823,22 @@ export function App() {
   async function decide(approval: PendingApproval, approved: boolean) {
     setPending((prev) => prev.filter((p) => p.id !== approval.id));
     addItem('system', `${approved ? '✅ Cho phép' : '⛔ Từ chối'}: ${approval.toolName}`);
-    await fetch('/api/approve', {
+    await apiFetch('/api/approve', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionId, id: approval.id, approved }),
+    }).catch(() => {});
+  }
+
+  // Admin duyệt/từ chối một yêu cầu Collab (lệnh hủy hoại của CTV). Gỡ lạc quan khỏi UI
+  // rồi POST /api/admin/approve — server giải Promise treo bên phiên CTV.
+  async function decideCollab(id: string, approved: boolean, apiOrigin?: string) {
+    setCollabApprovals((prev) => prev.filter((a) => a.id !== id));
+    const origin = apiOrigin || '';
+    await fetch(`${origin}/api/admin/approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, approved }),
     }).catch(() => {});
   }
 
@@ -1347,7 +1856,7 @@ export function App() {
     } else {
       addItem('system', '⛔ Đã huỷ câu hỏi của agent.');
     }
-    await fetch('/api/answer', {
+    await apiFetch('/api/answer', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionId, id: q.id, answers }),
@@ -1359,7 +1868,7 @@ export function App() {
     setRunning(false);
     localStorage.removeItem('bow-session-id');
     addItem('system', '⏹ Yêu cầu dừng agent...');
-    await fetch(`/api/stop/${sessionId}`, { method: 'POST' }).catch(() => {});
+    await apiFetch(`/api/stop/${sessionId}`, { method: 'POST' }).catch(() => {});
   }
 
   /**
@@ -1386,7 +1895,7 @@ export function App() {
       eventSourceRef.current = null;
       setRunning(false);
       if (sessionId) {
-        await fetch(`/api/stop/${sessionId}`, { method: 'POST' }).catch(() => {});
+        await apiFetch(`/api/stop/${sessionId}`, { method: 'POST' }).catch(() => {});
       }
     }
     // Lưu chốt cuộc hiện tại lần cuối (auto-lưu có thể chưa kịp chạy debounce).
@@ -1421,7 +1930,7 @@ export function App() {
     // Giữ lịch sử cũ, nối tiếp bên dưới (như start).
     addItem('system', `🔧 Đang quét repo để sinh profile: ${cwd}`);
     try {
-      const res = await fetch('/api/generate-profile', {
+      const res = await apiFetch('/api/generate-profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ cwd: cwd.trim() || undefined }),
@@ -1681,17 +2190,97 @@ export function App() {
 
   // Safe Mode (QC hỏi đáp read-only): ẩn bớt các nút/điều khiển kỹ thuật, khoá repo.
   // Bật bằng cách chạy `npm run ui:safe` (đặt BOW_SAFE_MODE=true ở backend).
-  const safe = !!cfg?.isSafeMode;
+  const safe = cfg ? !!cfg.isSafeMode : true;
+  const collab = cfg ? !!cfg.isCollabMode : false;
+  const pendingAccessCount = accessUsers.filter((u) => u.status === 'pending').length;
   // Tên repo hiển thị ở badge "Source" trên header:
   // - Safe Mode: repo bị khoá vào cfg (safeCwd) → dùng repoName/defaultCwd từ backend.
   // - Thường: repo là cwd người dùng đang chọn ở composer (thứ lượt chạy sẽ dùng) →
   //   lấy tên thư mục từ chính cwd, để QC/mọi người luôn biết đang hỏi source nào.
   const cwdRepoLabel = cwd.trim() ? cwd.trim().split('/').filter(Boolean).pop() : '';
-  const safeRepoLabel = cfg?.repoName || (cfg?.defaultCwd ? cfg.defaultCwd.split('/').filter(Boolean).pop() : '') || 'monorepo';
-  const repoLabel = safe ? safeRepoLabel : (cwdRepoLabel || '(chưa chọn)');
+  const localSafeRepoLabel = cfg?.repoName || (cfg?.defaultCwd ? cfg.defaultCwd.split('/').filter(Boolean).pop() : '') || 'monorepo';
+  const repoLabel = safe ? localSafeRepoLabel : (cwdRepoLabel || '(chưa chọn)');
+
+  // Cổng duyệt truy cập theo tên: chưa được vào thì chặn toàn bộ app bằng màn khoá.
+  if (gateState !== 'open') {
+    return (
+      <div className="access-gate">
+        <div className="access-gate-card">
+          <div className="access-gate-icon">
+            {gateState === 'pending' ? '⏳' : gateState === 'rejected' ? '🚫' : '🔒'}
+          </div>
+          <h1>
+            {gateState === 'pending'
+              ? 'Đang chờ duyệt'
+              : gateState === 'rejected'
+                ? 'Bị từ chối'
+                : 'Yêu cầu truy cập'}
+          </h1>
+          {gateState === 'checking' && (
+            <p className="access-gate-hint">Đang kiểm tra quyền truy cập…</p>
+          )}
+          {gateState === 'pending' && (
+            <p className="access-gate-hint" style={{ color: 'var(--brass)' }}>
+              Yêu cầu của bạn đã gửi đi. Vui lòng đợi Admin phê duyệt để tiếp tục...
+            </p>
+          )}
+          {gateState === 'rejected' && (
+            <>
+              <p className="access-gate-hint" style={{ color: 'var(--red)' }}>
+                Yêu cầu truy cập của bạn đã bị Admin từ chối hoặc thu hồi.
+              </p>
+              <button
+                className="btn deny"
+                style={{ width: '100%', marginTop: '12px', padding: '8px' }}
+                onClick={() => {
+                  setGateState('locked');
+                  setCodeError('');
+                }}
+              >
+                Gửi lại yêu cầu
+              </button>
+            </>
+          )}
+          {gateState === 'locked' && (
+            <>
+              <p className="access-gate-hint">Nhập tên của bạn để gửi yêu cầu truy cập đến Admin.</p>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  submitAccessName();
+                }}
+              >
+                <input
+                  type="text"
+                  className="access-gate-input"
+                  placeholder="Họ và tên của bạn"
+                  value={nameInput}
+                  autoFocus
+                  onChange={(e) => {
+                    setNameInput(e.target.value);
+                    if (codeError) setCodeError('');
+                  }}
+                />
+                {codeError && <div className="access-gate-error">{codeError}</div>}
+                <button type="submit" className="access-gate-btn" disabled={codeBusy || !nameInput.trim()}>
+                  {codeBusy ? 'Đang gửi…' : 'Gửi yêu cầu'}
+                </button>
+              </form>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className={`app${safe ? ' safe-mode' : ''}`}>
+    <div className={`app${safe ? ' safe-mode' : ''}${collab ? ' collab-mode' : ''}`}>
+      {collab && (
+        <div className="collab-banner" role="status">
+          🤝 <strong>Collab Mode</strong> — bạn code như dev; lệnh hủy hoại (xoá, deploy, ghi ngoài repo)
+          {cfg?.isAdmin ? ' bạn tự duyệt.' : ' cần admin duyệt từ xa. Git tự do.'}
+        </div>
+      )}
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">
@@ -1705,34 +2294,46 @@ export function App() {
           <span className="brand-tag">Observatory</span>
         </div>
         <div className="obs-readouts">
-          {/* Badge Source — luôn hiện để mọi người biết đang hỏi/làm việc trên repo nào.
-              - Safe Mode: repo bị khoá; chỉ Admin (localhost) bấm đổi được (target 'safe-cwd').
-              - Thường: repo là cwd đang chọn ở composer; ai cũng bấm đổi được (target 'cwd'). */}
-          {safe ? (
-            cfg?.isAdmin ? (
-              <button
-                className="readout readout-btn"
-                title={`Đang hỏi đáp: ${cfg?.defaultCwd ?? repoLabel} — bấm để đổi source`}
-                onClick={() => openPicker(cfg?.defaultCwd || '', 'safe-cwd')}
-              >
-                <span className="rl">Source</span>
-                <span className="rv" style={{ color: 'var(--brass)' }}>{repoLabel}</span>
-              </button>
-            ) : (
-              <span className="readout" title={`Đang hỏi đáp source (chỉ đọc): ${cfg?.defaultCwd ?? ''}`}>
+          {cfg?.isAdmin ? (
+            <>
+              {devRepoLabel && (
+                <button
+                  className="readout readout-btn"
+                  title={`Dev Mode Repo: ${devCwd} — bấm để đổi`}
+                  onClick={() => openPicker(devCwd || '', 'dev-cwd')}
+                >
+                  <span className="rl">Dev Src</span>
+                  <span className="rv" style={{ color: 'var(--brass)' }}>{devRepoLabel}</span>
+                </button>
+              )}
+              {safeRepoLabel && (
+                <button
+                  className="readout readout-btn"
+                  title={`Safe Mode Repo: ${safeCwd} — bấm để đổi`}
+                  onClick={() => openPicker(safeCwd || '', 'safe-cwd')}
+                >
+                  <span className="rl">Safe Src</span>
+                  <span className="rv" style={{ color: 'var(--teal)' }}>{safeRepoLabel}</span>
+                </button>
+              )}
+              {collabRepoLabel && (
+                <button
+                  className="readout readout-btn"
+                  title={`Collab Mode Repo: ${collabCwd} — bấm để đổi`}
+                  onClick={() => openPicker(collabCwd || '', 'collab-cwd')}
+                >
+                  <span className="rl">Collab Src</span>
+                  <span className="rv" style={{ color: 'var(--red)' }}>{collabRepoLabel}</span>
+                </button>
+              )}
+            </>
+          ) : (
+            (safe || collab) && (
+              <span className="readout" title={`Đang hỏi đáp source: ${repoLabel}`}>
                 <span className="rl">Source</span>
                 <span className="rv" style={{ color: 'var(--brass)' }}>{repoLabel}</span>
               </span>
             )
-          ) : (
-            <button
-              className="readout readout-btn"
-              title={`Đang làm việc trên repo: ${cwd.trim() || '(chưa chọn thư mục)'} — bấm để đổi`}
-              onClick={() => openPicker(cwd.trim() || cfg?.defaultCwd || '', 'cwd')}
-            >
-              <span className="rl">Source</span>
-              <span className="rv" style={{ color: 'var(--brass)' }}>{repoLabel}</span>
-            </button>
           )}
           <span className="readout" title="Giờ UTC">
             <span className="rl">UTC</span>
@@ -1856,6 +2457,13 @@ export function App() {
           >
             <Icon name="history" size={18} />
           </button>
+          <button
+            className="theme-btn"
+            title="Chat nhóm — nhắn tin với đồng nghiệp cùng mạng (vào phòng theo mã, đặt biệt danh)"
+            onClick={openChatPanel}
+          >
+            <Icon name="chat" size={18} />
+          </button>
           {!safe && (
             <button
               className="theme-btn"
@@ -1874,22 +2482,37 @@ export function App() {
               <Icon name="routing" size={18} />
             </button>
           )}
-          {!safe && (
-            <button
-              className="theme-btn"
-              title="Cấu trúc dự án — AI quét repo (cwd) rồi mô tả kiến trúc & cây thư mục"
-              onClick={openStructPanel}
-            >
-              <Icon name="structure" size={18} />
-            </button>
-          )}
+
           {cfg?.isAdmin && (
             <button
-              className="theme-btn"
-              title="LAN Dashboard — Quản lý thiết bị & xem log hoạt động"
+              className={`theme-btn${pendingAccessCount > 0 ? ' has-pending' : ''}`}
+              title={`LAN Dashboard — Quản lý thiết bị & xem log hoạt động${pendingAccessCount > 0 ? ` (${pendingAccessCount} yêu cầu đang chờ)` : ''}`}
               onClick={openActiveClientsPanel}
+              style={{ position: 'relative' }}
             >
               <Icon name="users" size={18} />
+              {pendingAccessCount > 0 && (
+                <span
+                  style={{
+                    position: 'absolute',
+                    top: '-2px',
+                    right: '-2px',
+                    background: 'var(--danger)',
+                    color: 'white',
+                    borderRadius: '50%',
+                    width: '14px',
+                    height: '14px',
+                    fontSize: '9px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontWeight: 'bold',
+                    boxShadow: '0 0 4px var(--danger)',
+                  }}
+                >
+                  {pendingAccessCount}
+                </span>
+              )}
             </button>
           )}
           <AccentPicker value={accent} options={ACCENTS} onChange={(id) => setAccent(id as Accent)} />
@@ -1914,6 +2537,7 @@ export function App() {
               selectedId={selectedStepId}
               onSelect={(s) => setSelectedStepId((prev) => (prev === s.id ? null : s.id))}
               theme={theme}
+              accent={accent}
             />
           </div>
 
@@ -2261,6 +2885,38 @@ export function App() {
           block từng tool), nên xếp chồng nhiều thẻ chỉ làm tràn màn hình và giấu
           mất nút Cho phép/Từ chối. Ưu tiên approval trước, rồi tới câu hỏi. Số thẻ
           còn lại trong hàng chờ hiện ở badge để người dùng biết còn việc phía sau. */}
+      {/* Panel ADMIN duyệt Collab: yêu cầu duyệt lệnh hủy hoại do CTV phát lên. Kênh
+          riêng, độc lập với approval của chính admin. Chỉ hiện cho admin ở Collab Mode. */}
+      {cfg?.isAdmin && collabApprovals.length > 0 && (
+        <div className="chat-action-dock collab-approvals">
+          {collabApprovals.map((a) => (
+            <div key={a.id} className="approval collab-approval">
+              <div className="approval-head">
+                <Icon name="block" size={16} /> {a.title || `CTV xin duyệt: ${a.toolName}`}
+              </div>
+              <div className="approval-who">
+                👤 Từ <strong>{a.clientIp}</strong> · phiên <code>{a.sessionId.slice(0, 8)}</code>
+                {a.apiOrigin && (
+                  <span style={{ marginLeft: '6px', color: 'var(--brass)', fontSize: '11px' }}>
+                    ({a.apiOrigin.includes('4002') ? 'Collab' : a.apiOrigin.includes('4001') ? 'Safe' : 'Dev'})
+                  </span>
+                )}
+              </div>
+              {a.decisionReason && <div className="approval-reason">{a.decisionReason}</div>}
+              {typeof a.input?.command === 'string' && (
+                <pre className="approval-cmd">{a.input.command as string}</pre>
+              )}
+              {typeof a.input?.file_path === 'string' && (
+                <div className="approval-path">📄 {a.input.file_path as string}</div>
+              )}
+              <div className="approval-actions">
+                <button className="btn allow" onClick={() => decideCollab(a.id, true, a.apiOrigin)}>Cho phép</button>
+                <button className="btn deny" onClick={() => decideCollab(a.id, false, a.apiOrigin)}>Từ chối</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       {(pending.length > 0 || questions.length > 0) && (() => {
         const p = pending[0];
         const q = !p ? questions[0] : undefined;
@@ -2377,6 +3033,18 @@ export function App() {
             <ModeSelect value={mode} onChange={setMode} disabled={running} />
           </div>
           )}
+          {safe ? (
+            // Safe/QC Mode cố định Sonnet (backend cũng ép) → khoá picker, chỉ hiện nhãn.
+            <label>
+              Model:
+              <PixelSelect
+                value="claude-sonnet-5"
+                onChange={() => {}}
+                disabled
+                options={[{ value: 'claude-sonnet-5', label: 'Sonnet 5' }]}
+              />
+            </label>
+          ) : (
           <label>
             Model:
             <PixelSelect
@@ -2390,6 +3058,7 @@ export function App() {
               ]}
             />
           </label>
+          )}
           <label>
             Profile:
             <PixelSelect
@@ -2422,34 +3091,53 @@ export function App() {
               để gửi backend, và hiện qua tooltip khi hover.
               Ẩn ở Safe/QC Mode: repo bị khoá vào safeCwd, chỉ Admin đổi được (chỗ khác). */}
           {!safe && (
-          <div
-            className="cwd-container"
-            style={{ display: 'flex', gap: '6px', alignItems: 'stretch', marginLeft: 'auto', flexShrink: 0 }}
-            title={cwd || 'Chưa chọn thư mục repo (cwd)'}
-          >
-            <input
-              className="cwd"
-              placeholder="Chọn repo"
-              value={cwd.trim() ? (cwd.trim().split('/').filter(Boolean).pop() ?? cwd) : ''}
-              readOnly
-              onClick={() => { if (!running) openPicker(cwd); }}
-              disabled={running}
-              style={{
-                width: '130px',
-                cursor: running ? 'not-allowed' : 'pointer',
-              }}
-            />
-            <button
-              className="btn folder-picker-btn"
-              type="button"
-              disabled={running}
-              onClick={() => openPicker(cwd)}
-              title="Chọn thư mục"
-              style={{ padding: '0 10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            <div
+              className="cwd-container"
+              style={{ display: 'flex', gap: '6px', alignItems: 'stretch', marginLeft: 'auto', flexShrink: 0 }}
+              title={cwd || 'Chưa chọn thư mục repo (cwd)'}
             >
-              <Icon name="folder" size={16} />
-            </button>
-          </div>
+              {cfg?.isAdmin ? (
+                <>
+                  <input
+                    className="cwd"
+                    placeholder="Chọn repo"
+                    value={cwd.trim() ? (cwd.trim().split('/').filter(Boolean).pop() ?? cwd) : ''}
+                    readOnly
+                    onClick={() => { if (!running) openPicker(cwd); }}
+                    disabled={running}
+                    style={{
+                      width: '130px',
+                      cursor: running ? 'not-allowed' : 'pointer',
+                    }}
+                  />
+                  <button
+                    className="btn folder-picker-btn"
+                    type="button"
+                    disabled={running}
+                    onClick={() => openPicker(cwd)}
+                    title="Chọn thư mục"
+                    style={{ padding: '0 10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                  >
+                    <Icon name="folder" size={16} />
+                  </button>
+                </>
+              ) : (
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    padding: '0 10px',
+                    fontSize: '11px',
+                    borderRadius: '4px',
+                    background: 'var(--inset)',
+                    border: 'var(--bd-thin) solid var(--outline)',
+                    color: 'var(--muted)',
+                  }}
+                >
+                  📁 {cwd.trim() ? (cwd.trim().split('/').filter(Boolean).pop() ?? cwd) : 'Chưa chọn repo'}
+                </div>
+              )}
+            </div>
           )}
         </div>
 
@@ -2597,7 +3285,7 @@ export function App() {
         <div className="modal-overlay" onClick={() => setPickerOpen(false)}>
           <div className="modal-content pixel-panel" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <span className="modal-title"><Icon name="folder" size={16} /> {pickerTarget === 'safe-cwd' ? 'Chọn source cho QC hỏi đáp' : 'Chọn thư mục làm việc'}</span>
+              <span className="modal-title"><Icon name="folder" size={16} /> {pickerTarget === 'safe-cwd' ? 'Chọn source để hỏi đáp' : 'Chọn thư mục làm việc'}</span>
               <button className="close-btn" onClick={() => setPickerOpen(false)}><Icon name="close" size={16} /></button>
             </div>
             <div className="modal-body">
@@ -2643,11 +3331,11 @@ export function App() {
               <button
                 className="btn allow"
                 onClick={() => {
-                  if (pickerTarget === 'safe-cwd') {
-                    applySafeCwd(pickerPath);
-                  } else {
+                  if (pickerTarget === 'cwd') {
                     setCwd(pickerPath);
                     setPickerOpen(false);
+                  } else {
+                    applyPortCwd(pickerTarget, pickerPath);
                   }
                 }}
               >
@@ -3041,6 +3729,116 @@ export function App() {
         </div>
       )}
 
+      {chatPanelOpen && (
+        <div className="modal-overlay" onClick={() => setChatPanelOpen(false)}>
+          <div
+            className="modal-content pixel-panel chat-panel"
+            style={{ maxWidth: '560px', width: '94%' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <span className="modal-title">
+                <Icon name="chat" size={16} />{' '}
+                {chatJoinedGroup ? `Phòng: ${chatJoinedGroup}` : 'Chat nhóm'}
+              </span>
+              <button className="close-btn" onClick={() => setChatPanelOpen(false)}><Icon name="close" size={16} /></button>
+            </div>
+            <div className="modal-body">
+              {chatError && (
+                <div className="picker-error" style={{ color: 'var(--red)', marginBottom: '10px' }}>
+                  <Icon name="warning" size={14} /> {chatError}
+                </div>
+              )}
+
+              {!chatJoinedGroup ? (
+                /* Màn hình VÀO PHÒNG: biệt danh + mã phòng */
+                <div className="chat-join">
+                  <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '12px' }}>
+                    Nhắn tin với đồng nghiệp cùng mạng LAN. Nhập <strong>mã phòng</strong> giống nhau để
+                    vào cùng nhóm; đặt <strong>biệt danh</strong> để mọi người biết ai đang nói. Tin nhắn
+                    được lưu lại — người vào sau vẫn đọc được.
+                  </div>
+                  <label className="chat-field">
+                    <span>Biệt danh của bạn</span>
+                    <input
+                      placeholder="VD: Bow, Cường, QC-Ánh…"
+                      value={chatNickname}
+                      onChange={(e) => setChatNickname(e.target.value)}
+                      maxLength={40}
+                      style={{ padding: '9px', width: '100%' }}
+                    />
+                  </label>
+                  <label className="chat-field" style={{ marginTop: '10px' }}>
+                    <span>Mã phòng</span>
+                    <input
+                      placeholder="VD: team-fe, hop-thu-2, du-an-x…"
+                      value={chatGroupInput}
+                      onChange={(e) => setChatGroupInput(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') joinChatGroup(); }}
+                      style={{ padding: '9px', width: '100%' }}
+                    />
+                  </label>
+                  <button
+                    className="btn primary"
+                    onClick={joinChatGroup}
+                    disabled={chatBusy}
+                    style={{ marginTop: '14px', width: '100%' }}
+                  >
+                    {chatBusy ? 'Đang vào…' : 'Vào phòng'}
+                  </button>
+                </div>
+              ) : (
+                /* Màn hình TRONG PHÒNG: danh sách tin + ô nhập */
+                <div className="chat-room">
+                  <div className="chat-room-bar">
+                    <span style={{ fontSize: '12px', color: 'var(--muted)' }}>
+                      Bạn: <strong>{chatNickname.trim() || 'Ẩn danh'}</strong>
+                    </span>
+                    <button className="btn deny chat-leave-btn" onClick={leaveChatGroup}>Rời phòng</button>
+                  </div>
+
+                  <div className="chat-messages" ref={chatScrollRef}>
+                    {chatMessages.length === 0 ? (
+                      <div style={{ padding: '20px', textAlign: 'center', color: 'var(--muted)', fontSize: '13px' }}>
+                        Chưa có tin nhắn. Gửi lời chào đầu tiên!
+                      </div>
+                    ) : (
+                      chatMessages.map((m) => {
+                        const mine = m.userId === chatUserId;
+                        const time = new Date(m.createdAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+                        return (
+                          <div key={m.id} className={`chat-msg ${mine ? 'chat-msg-mine' : ''}`}>
+                            <div className="chat-msg-meta">
+                              <span className="chat-msg-nick">{mine ? 'Bạn' : m.nickname}</span>
+                              <span className="chat-msg-time">{time}</span>
+                            </div>
+                            <div className="chat-msg-text">{m.text}</div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  <div className="chat-composer">
+                    <input
+                      placeholder="Nhập tin nhắn…"
+                      value={chatDraft}
+                      onChange={(e) => setChatDraft(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMessage(); } }}
+                      maxLength={4000}
+                      style={{ flex: 1, padding: '9px' }}
+                    />
+                    <button className="btn primary chat-send-btn" onClick={sendChatMessage} disabled={!chatDraft.trim()}>
+                      <Icon name="send" size={16} />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {structPanelOpen && (
         <div className="modal-overlay" onClick={() => setStructPanelOpen(false)}>
           <div
@@ -3181,6 +3979,132 @@ export function App() {
             </div>
 
             <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {/* Mã truy cập — chỉ admin thấy panel này nên đặt luôn ở đây. */}
+              <div
+                style={{
+                  border: 'var(--bd-thin) solid var(--outline)',
+                  padding: '10px',
+                  background: 'var(--inset)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '8px',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Icon name="lock" size={14} />
+                    <strong style={{ fontSize: '13px' }}>Quản lý truy cập LAN ({accessUsers.length})</strong>
+                  </div>
+                  <button
+                    className="btn"
+                    onClick={refreshAccessUsers}
+                    style={{ fontSize: '11px', padding: '2px 8px' }}
+                  >
+                    Tải lại 🔄
+                  </button>
+                </div>
+                <span style={{ fontSize: '11px', color: 'var(--muted)' }}>
+                  Duyệt hoặc thu hồi quyền truy cập của các máy tính khác trong mạng LAN.
+                </span>
+                
+                <div
+                  style={{
+                    maxHeight: '240px',
+                    overflowY: 'auto',
+                    border: 'var(--bd-thin) solid var(--outline)',
+                    borderRadius: '4px',
+                    fontSize: '12px',
+                    background: 'var(--paper)',
+                  }}
+                >
+                  {accessUsers.length === 0 ? (
+                    <div style={{ padding: '12px', textAlign: 'center', color: 'var(--muted)' }}>
+                      Chưa có yêu cầu truy cập nào.
+                    </div>
+                  ) : (
+                    <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                      <thead>
+                        <tr style={{ borderBottom: 'var(--bd-thin) solid var(--outline)', background: 'var(--inset)', color: 'var(--muted)', fontSize: '11px' }}>
+                          <th style={{ padding: '6px 8px' }}>Tên</th>
+                          <th style={{ padding: '6px 8px' }}>IP / Thời gian</th>
+                          <th style={{ padding: '6px 8px', textAlign: 'right' }}>Thao tác</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {accessUsers.map((u) => {
+                          const dateStr = new Date(u.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                          return (
+                            <tr key={u.id} style={{ borderBottom: 'var(--bd-thin) solid var(--outline)' }}>
+                              <td style={{ padding: '6px 8px', fontWeight: 'bold' }}>
+                                <div>{u.name}</div>
+                                {u.apiOrigin && (
+                                  <span style={{
+                                    fontSize: '9px',
+                                    padding: '1px 4px',
+                                    borderRadius: '3px',
+                                    background: u.apiOrigin.includes('4002') ? 'var(--brass)' : u.apiOrigin.includes('4001') ? 'var(--hairline)' : 'var(--inset)',
+                                    color: u.apiOrigin.includes('4002') ? 'var(--on-brass)' : 'var(--muted)',
+                                    display: 'inline-block',
+                                    marginTop: '2px'
+                                  }}>
+                                    {u.apiOrigin.includes('4002') ? 'Collab' : u.apiOrigin.includes('4001') ? 'Safe' : 'Dev'}
+                                  </span>
+                                )}
+                              </td>
+                              <td style={{ padding: '6px 8px', color: 'var(--muted)', fontSize: '11px' }}>
+                                <div>{u.ip}</div>
+                                <div>{dateStr}</div>
+                              </td>
+                              <td style={{ padding: '6px 8px', textAlign: 'right' }}>
+                                {u.status === 'pending' && (
+                                  <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
+                                    <button
+                                      className="btn allow"
+                                      onClick={() => handleApproveAccess(u.id, u.apiOrigin)}
+                                      style={{ padding: '2px 6px', fontSize: '11px' }}
+                                    >
+                                      Duyệt
+                                    </button>
+                                    <button
+                                      className="btn deny"
+                                      onClick={() => handleRejectAccess(u.id, u.apiOrigin)}
+                                      style={{ padding: '2px 6px', fontSize: '11px' }}
+                                    >
+                                      Từ chối
+                                    </button>
+                                  </div>
+                                )}
+                                {u.status === 'approved' && (
+                                  <button
+                                    className="btn deny"
+                                    onClick={() => handleRevokeAccess(u.id, u.apiOrigin)}
+                                    style={{ padding: '2px 6px', fontSize: '11px' }}
+                                  >
+                                    Thu hồi
+                                  </button>
+                                )}
+                                {u.status === 'rejected' && (
+                                  <div style={{ display: 'flex', gap: '4px', alignItems: 'center', justifyContent: 'flex-end' }}>
+                                    <span style={{ color: 'var(--muted)', fontSize: '11px', marginRight: '4px' }}>Bị chặn</span>
+                                    <button
+                                      className="btn allow"
+                                      onClick={() => handleApproveAccess(u.id, u.apiOrigin)}
+                                      style={{ padding: '2px 6px', fontSize: '11px' }}
+                                    >
+                                      Cho vào
+                                    </button>
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+
               {activeTab === 'clients' ? (
                 <>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -3308,6 +4232,37 @@ export function App() {
                 Đóng
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      
+      {cfg?.isAdmin && pendingAccessCount > 0 && !activeClientsOpen && (
+        <div
+          className="access-notification-toast"
+          onClick={openActiveClientsPanel}
+          style={{
+            position: 'fixed',
+            bottom: '24px',
+            right: '24px',
+            background: 'var(--paper)',
+            border: '1px solid var(--brass)',
+            borderRadius: '6px',
+            padding: '12px 16px',
+            boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
+            zIndex: 1000,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            cursor: 'pointer',
+            borderLeft: '4px solid var(--brass)',
+          }}
+        >
+          <div style={{ fontSize: '20px' }}>🔔</div>
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            <strong style={{ fontSize: '13px', color: 'var(--brass)' }}>Yêu cầu truy cập LAN mới</strong>
+            <span style={{ fontSize: '11px', color: 'var(--muted)' }}>
+              Có {pendingAccessCount} máy đang chờ duyệt. Bấm để mở panel.
+            </span>
           </div>
         </div>
       )}

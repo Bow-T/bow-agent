@@ -242,3 +242,106 @@ export function getSession(id: string): Session | undefined {
 export function removeSession(id: string): void {
   sessions.delete(id);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Admin approval bus (Collab Mode — duyệt từ xa)
+//
+// Ở Collab Mode, cộng tác viên (CTV) qua LAN code gần như dev nhưng lệnh HỦY HOẠI
+// (rm -rf, deploy, ghi ngoài repo…) không được tự chạy. Vì CTV không có quyền tự
+// duyệt, yêu cầu duyệt được ĐỊNH TUYẾN LÊN ADMIN (localhost): admin thấy trên một
+// kênh SSE riêng (/api/admin/events) và bấm cho phép/từ chối thay CTV.
+//
+// Bus này TÁCH khỏi Session: một phiên CTV chỉ có 1 consumer SSE (chính CTV), nên
+// không thể nhét nút duyệt vào stream của CTV. Bus là kênh toàn cục riêng cho admin.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Một yêu cầu duyệt Collab hiển thị cho admin. */
+export interface AdminApprovalRequest {
+  id: string;
+  /** Phiên CTV phát yêu cầu — để audit/hiển thị. */
+  sessionId: string;
+  /** IP của CTV yêu cầu — admin biết ai đang xin. */
+  clientIp: string;
+  toolName: string;
+  input: Record<string, unknown>;
+  title?: string;
+  description?: string;
+  decisionReason?: string;
+  /** Thời điểm tạo (ISO) — để admin biết yêu cầu cũ/mới. */
+  createdAt: string;
+}
+
+/** Event đẩy tới admin qua SSE. */
+export type AdminEvent =
+  | { type: 'admin-approval-request'; request: AdminApprovalRequest }
+  // Yêu cầu đã được giải quyết (bởi admin khác, hoặc phiên đóng) → admin gỡ khỏi UI.
+  | { type: 'admin-approval-resolved'; id: string };
+
+interface PendingAdminApproval {
+  resolve: (approved: boolean) => void;
+  request: AdminApprovalRequest;
+}
+
+class AdminBus {
+  private pending = new Map<string, PendingAdminApproval>();
+  private subscribers = new Set<(event: AdminEvent) => void>();
+
+  /** Admin mở SSE: nhận callback nhận event mới. Trả hàm huỷ đăng ký. */
+  subscribe(fn: (event: AdminEvent) => void): () => void {
+    this.subscribers.add(fn);
+    return () => this.subscribers.delete(fn);
+  }
+
+  /** Snapshot các yêu cầu đang treo — admin mới kết nối phát lại ngay. */
+  snapshot(): AdminApprovalRequest[] {
+    return [...this.pending.values()].map((p) => p.request);
+  }
+
+  private emit(event: AdminEvent): void {
+    this.subscribers.forEach((sub) => sub(event));
+  }
+
+  /**
+   * Phiên CTV xin duyệt một thao tác hủy hoại → đẩy lên admin rồi treo Promise
+   * chờ admin bấm. Nếu KHÔNG có admin nào đang nghe, vẫn treo (admin có thể mở
+   * sau) — phiên đóng sẽ tự resolve(false) qua rejectForSession().
+   */
+  requestApproval(
+    meta: Omit<AdminApprovalRequest, 'id' | 'createdAt'>,
+  ): Promise<boolean> {
+    const id = randomUUID();
+    const request: AdminApprovalRequest = {
+      ...meta,
+      id,
+      createdAt: new Date().toISOString(),
+    };
+    return new Promise<boolean>((resolve) => {
+      this.pending.set(id, { resolve, request });
+      this.emit({ type: 'admin-approval-request', request });
+    });
+  }
+
+  /** Admin bấm cho phép/từ chối. Trả false nếu id lạ (đã giải quyết/hết hạn). */
+  resolve(id: string, approved: boolean): boolean {
+    const p = this.pending.get(id);
+    if (!p) return false;
+    this.pending.delete(id);
+    p.resolve(approved);
+    this.emit({ type: 'admin-approval-resolved', id });
+    return true;
+  }
+
+  /** Phiên đóng giữa chừng: từ chối mọi yêu cầu treo của phiên đó. */
+  rejectForSession(sessionId: string): void {
+    for (const [id, p] of this.pending) {
+      if (p.request.sessionId === sessionId) {
+        this.pending.delete(id);
+        p.resolve(false);
+        this.emit({ type: 'admin-approval-resolved', id });
+      }
+    }
+  }
+}
+
+/** Bus duyệt admin toàn cục (một instance cho cả tiến trình). */
+export const adminBus = new AdminBus();

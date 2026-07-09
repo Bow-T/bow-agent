@@ -10,7 +10,17 @@ import { pdfToText } from '../input/pdf.js';
 import { getProfile } from '../profiles/index.js';
 import { detectSource } from '../profiles/detect.js';
 import { generateProfile, analyzeStructure } from '../profiles/generate.js';
-import { createSession, getSession, removeSession } from './session.js';
+import { createSession, getSession, removeSession, adminBus } from './session.js';
+import {
+  requestAccess,
+  approveAccess,
+  rejectAccess,
+  revokeAccess,
+  getUserByToken,
+  isValidToken,
+  listAccessUsers,
+  accessBus,
+} from './access.js';
 import {
   listConversations,
   getConversation,
@@ -18,6 +28,14 @@ import {
   renameConversation,
   deleteConversation,
 } from './conversations.js';
+import {
+  listGroups,
+  getGroup,
+  getOrCreateGroup,
+  addMessage,
+  normalizeGroupId,
+  chatBus,
+} from './chat.js';
 import { loadClaudeCodeMcp, listGlobalMcp, addGlobalMcp, removeGlobalMcp } from '../tools/mcp.js';
 import { parseJiraRef } from '../input/jira-ref.js';
 import { fetchJiraTicketImages, fetchJiraTicketVideos } from '../input/jira-attachments.js';
@@ -41,15 +59,22 @@ app.use(express.json({ limit: '2mb' }));
 
 const activeClients = new Map<string, { lastSeen: Date; userAgent?: string }>();
 
+/** IP client đã chuẩn hoá (::1 / ::ffff:127.0.0.1 → 127.0.0.1, lấy IP đầu nếu qua proxy). */
+function getCleanIp(req: express.Request): string {
+  let ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  if (Array.isArray(ip)) ip = ip[0];
+  let cleanIp = typeof ip === 'string' ? ip : '';
+  if (cleanIp.includes(',')) {
+    cleanIp = cleanIp.split(',')[0].trim();
+  }
+  if (cleanIp === '::1' || cleanIp === '::ffff:127.0.0.1') return '127.0.0.1';
+  if (cleanIp.startsWith('::ffff:')) return cleanIp.slice(7);
+  return cleanIp;
+}
+
 app.use((req, res, next) => {
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-  if (typeof ip === 'string') {
-    let cleanIp = ip;
-    if (cleanIp === '::1' || cleanIp === '::ffff:127.0.0.1') {
-      cleanIp = '127.0.0.1';
-    } else if (cleanIp.startsWith('::ffff:')) {
-      cleanIp = cleanIp.slice(7);
-    }
+  const cleanIp = getCleanIp(req);
+  if (cleanIp) {
     activeClients.set(cleanIp, {
       lastSeen: new Date(),
       userAgent: req.headers['user-agent']
@@ -67,6 +92,15 @@ const isSafeMode = process.env.BOW_SAFE_MODE === 'true';
 let safeCwdOverride: string | null = null;
 const safeCwd = () => resolve(safeCwdOverride || process.env.BOW_SAFE_CWD || process.cwd());
 
+// Collab Mode: cộng tác viên (CTV) qua LAN code gần như dev, nhưng lệnh HỦY HOẠI
+// (rm -rf, deploy, ghi ngoài repo…) phải được ADMIN (localhost) duyệt từ xa. Git
+// được tự do. Không đổi được MCP/workspace config (như Safe Mode). Khác Safe Mode ở
+// chỗ: Safe Mode = read-only tuyệt đối; Collab = ghi được, chỉ gác thao tác nguy hiểm.
+//   BOW_COLLAB_MODE=true BOW_COLLAB_CWD=/path/to/repo npm run ui:collab
+const isCollabMode = process.env.BOW_COLLAB_MODE === 'true';
+// Repo cố định cho Collab (tương tự BOW_SAFE_CWD). Mặc định = cwd chạy server.
+const collabCwd = () => resolve(process.env.BOW_COLLAB_CWD || process.cwd());
+
 function getLocalIp(): string {
   const interfaces = os.networkInterfaces();
   for (const name of Object.keys(interfaces)) {
@@ -79,14 +113,15 @@ function getLocalIp(): string {
   return 'localhost';
 }
 
-const logAudit = (message: string, clientIp?: string) => {
+const logAudit = (message: string, clientIp?: string, username?: string) => {
   try {
     const logDir = join(process.cwd(), 'memory');
     if (!fs.existsSync(logDir)) {
       fs.mkdirSync(logDir, { recursive: true });
     }
     const timestamp = new Date().toISOString();
-    const formattedMsg = `[${timestamp}] ${message}\n`;
+    const userSuffix = username ? ` (User: ${username})` : '';
+    const formattedMsg = `[${timestamp}]${userSuffix} ${message}\n`;
     
     // Ghi vào log chung
     const globalLogPath = join(logDir, 'audit_share.log');
@@ -103,25 +138,18 @@ const logAudit = (message: string, clientIp?: string) => {
   }
 };
 
+// Chặn đổi cấu hình (MCP/workspace) ở CẢ Safe Mode LẪN Collab Mode — cả hai đều không
+// cho client đổi hạ tầng agent. (Safe = read-only; Collab = ghi code nhưng khoá config.)
 const checkSafeMode = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-  if (isSafeMode) {
-    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-    const cleanIp = typeof ip === 'string' ? ip : 'unknown';
-    logAudit(`IP: ${cleanIp} - BỊ CHẶN: Thao tác ${req.method} ${req.originalUrl} bị chặn trong Safe Mode.`, cleanIp);
-    res.status(403).json({ error: 'Thao tác bị chặn trong chế độ Safe Mode (chỉ đọc).' });
+  if (isSafeMode || isCollabMode) {
+    const cleanIp = getCleanIp(req);
+    const modeName = isSafeMode ? 'Safe Mode' : 'Collab Mode';
+    logAudit(`IP: ${cleanIp} - BỊ CHẶN: Thao tác ${req.method} ${req.originalUrl} bị chặn trong ${modeName}.`, cleanIp);
+    res.status(403).json({ error: `Thao tác bị chặn trong chế độ ${modeName} (không đổi được cấu hình).` });
     return;
   }
   next();
 };
-
-/** IP client đã chuẩn hoá (::1 / ::ffff:127.0.0.1 → 127.0.0.1). */
-function getCleanIp(req: express.Request): string {
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-  let cleanIp = typeof ip === 'string' ? ip : '';
-  if (cleanIp === '::1' || cleanIp === '::ffff:127.0.0.1') return '127.0.0.1';
-  if (cleanIp.startsWith('::ffff:')) return cleanIp.slice(7);
-  return cleanIp;
-}
 
 /** Admin = truy cập từ localhost. Chỉ admin xem/đổi cấu hình LAN, log, chọn source. */
 function isAdminReq(req: express.Request): boolean {
@@ -136,6 +164,125 @@ const requireAdmin = (req: express.Request, res: express.Response, next: express
   }
   next();
 };
+
+/** Token client gửi: header 'x-bow-token' (fetch) hoặc query '?token=' (SSE — EventSource
+ *  không set được header). Trả '' nếu không có. */
+function getReqToken(req: express.Request): string {
+  const h = req.headers['x-bow-token'];
+  if (typeof h === 'string' && h) return h;
+  const q = req.query.token;
+  if (typeof q === 'string' && q) return q;
+  return '';
+}
+
+/** Client này đã được phép chưa: admin (localhost) luôn OK; cổng tắt → OK; còn lại cần
+ *  token hợp lệ. */
+function isAccessAllowed(req: express.Request): boolean {
+  if (isAdminReq(req)) return true;
+  return isValidToken(getReqToken(req));
+}
+
+function getClientName(req: express.Request): string {
+  if (isAdminReq(req)) return 'Admin';
+  const token = getReqToken(req);
+  const user = getUserByToken(token);
+  return user ? user.name : 'Unknown';
+}
+
+// ── Cổng duyệt truy cập theo tên (xem access.ts) ──────────────────────────────
+// Các route access KHÔNG qua cổng (nếu không client sẽ không bao giờ xin duyệt được).
+
+/** POST /api/access/request — client gửi yêu cầu truy cập kèm tên. */
+app.post('/api/access/request', (req, res) => {
+  const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+  if (!name) {
+    res.status(400).json({ error: 'Tên không được để trống.' });
+    return;
+  }
+  const cleanIp = getCleanIp(req);
+  const user = requestAccess(name, cleanIp);
+  
+  logAudit(`Yêu cầu truy cập mới: Tên="${name}", IP="${cleanIp}"`, cleanIp, name);
+  res.json({ token: user.token, status: user.status });
+});
+
+/** GET /api/access/status — client/admin kiểm tra trạng thái quyền truy cập hiện tại. */
+app.get('/api/access/status', (req, res) => {
+  const isAdmin = isAdminReq(req);
+  if (isAdmin) {
+    res.json({ allowed: true, isAdmin: true, status: 'approved' });
+    return;
+  }
+  const token = getReqToken(req);
+  const user = getUserByToken(token);
+  if (!user) {
+    res.json({ allowed: false, isAdmin: false, status: 'none' });
+    return;
+  }
+  res.json({
+    allowed: user.status === 'approved',
+    isAdmin: false,
+    status: user.status,
+  });
+});
+
+/** GET /api/access/users — admin xem danh sách tất cả các thiết bị kết nối. */
+app.get('/api/access/users', requireAdmin, (_req, res) => {
+  res.json({ users: listAccessUsers() });
+});
+
+/** POST /api/access/approve — admin duyệt yêu cầu truy cập. */
+app.post('/api/access/approve', requireAdmin, (req, res) => {
+  const id = typeof req.body?.id === 'string' ? req.body.id : '';
+  const ok = approveAccess(id);
+  res.json({ ok });
+});
+
+/** POST /api/access/reject — admin từ chối yêu cầu truy cập. */
+app.post('/api/access/reject', requireAdmin, (req, res) => {
+  const id = typeof req.body?.id === 'string' ? req.body.id : '';
+  const ok = rejectAccess(id);
+  res.json({ ok });
+});
+
+/** POST /api/access/revoke — admin thu hồi quyền truy cập. */
+app.post('/api/access/revoke', requireAdmin, (req, res) => {
+  const id = typeof req.body?.id === 'string' ? req.body.id : '';
+  const ok = revokeAccess(id);
+  res.json({ ok });
+});
+
+/** GET /api/access/events — SSE kênh realtime cho admin nhận yêu cầu truy cập. */
+app.get('/api/access/events', requireAdmin, (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+
+  // Phát lại tất cả các yêu cầu đang pending cho admin vừa kết nối
+  const pendings = listAccessUsers().filter((u) => u.status === 'pending');
+  for (const user of pendings) {
+    res.write(`data: ${JSON.stringify({ type: 'access-request', user })}\n\n`);
+  }
+
+  const unsubscribe = accessBus.subscribe((event) => {
+    res.write(`data: ${JSON.stringify(event)}\n\n`);
+  });
+
+  req.on('close', () => {
+    unsubscribe();
+  });
+});
+
+// Middleware cổng: chặn mọi /api/* nghiệp vụ nếu chưa được phép. Đặt SAU các route
+// /api/access/* ở trên (chúng đã khớp trước) nên chỉ các route còn lại phải qua cổng.
+app.use('/api', (req, res, next) => {
+  if (isAccessAllowed(req)) {
+    next();
+    return;
+  }
+  res.status(401).json({ error: 'Cần được Admin phê duyệt để truy cập hệ thống.' });
+});
 
 // Phục vụ frontend đã build (dist-web). Trong dev, Vite chạy riêng ở cổng khác.
 const webDist = join(__dirname, '..', '..', 'dist-web');
@@ -165,15 +312,11 @@ app.post('/api/run', async (req, res) => {
       resumeContext,
     } = req.body ?? {};
 
-    const workdir = isSafeMode ? safeCwd() : (cwd || process.cwd());
-    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-    let cleanIp = typeof ip === 'string' ? ip : 'unknown';
-    if (cleanIp === '::1' || cleanIp === '::ffff:127.0.0.1') {
-      cleanIp = '127.0.0.1';
-    } else if (cleanIp.startsWith('::ffff:')) {
-      cleanIp = cleanIp.slice(7);
-    }
-    logAudit(`IP: ${cleanIp} - YÊU CẦU CHẠY: CWD=${workdir}, Mode=${isSafeMode ? 'plan' : mode}, Brief=${JSON.stringify(text || jiraRef || 'N/A')}`, cleanIp);
+    // Repo cố định theo mode: Safe → safeCwd, Collab → collabCwd; thường → cwd client gửi.
+    const workdir = isSafeMode ? safeCwd() : isCollabMode ? collabCwd() : (cwd || process.cwd());
+    const cleanIp = getCleanIp(req);
+    const auditMode = isSafeMode ? 'plan' : isCollabMode ? 'auto (collab)' : mode;
+    logAudit(`IP: ${cleanIp} - YÊU CẦU CHẠY: CWD=${workdir}, Mode=${auditMode}, Brief=${JSON.stringify(text || jiraRef || 'N/A')}`, cleanIp);
 
     let activeJiraRef = jiraRef;
     if (!activeJiraRef && text) {
@@ -287,8 +430,10 @@ app.post('/api/run', async (req, res) => {
     }
 
     const session = createSession();
+    const clientName = getClientName(req);
     (session as any).clientIp = cleanIp;
-    logAudit(`IP: ${cleanIp} - Session khởi tạo: id=${session.id}`, cleanIp);
+    (session as any).clientName = clientName;
+    logAudit(`IP: ${cleanIp} - Session khởi tạo: id=${session.id}`, cleanIp, clientName);
     // sessionId (lớp web/SSE) trả ngay để client mở stream. conversationId THẬT của SDK
     // đến sau qua event 'conversation' (bắt từ system/init) — client lưu để resume lượt sau.
     res.json({ sessionId: session.id });
@@ -299,8 +444,10 @@ app.post('/api/run', async (req, res) => {
 
     // 4 mode kiểu Claude. Nhận cả tên cũ 'execute' (→ 'manual') để tương thích client cũ.
     // Mọi mode ngoài 'plan' đều là "đang thực thi" (có cổng duyệt theo policy của runner).
+    // Safe Mode → ép 'plan' (read-only). Collab Mode → ép 'auto' (ghi tự do, chỉ gác lệnh
+    // hủy hoại — được định tuyến duyệt lên admin bên dưới).
     const VALID_MODES = new Set(['plan', 'manual', 'edit-auto', 'auto']);
-    const requestedMode = isSafeMode ? 'plan' : mode;
+    const requestedMode = isSafeMode ? 'plan' : isCollabMode ? 'auto' : mode;
     const runMode: 'plan' | 'manual' | 'edit-auto' | 'auto' =
       requestedMode === 'execute'
         ? 'manual'
@@ -309,11 +456,36 @@ app.post('/api/run', async (req, res) => {
           : 'plan';
     const isExecuting = runMode !== 'plan';
 
+    // Safe/QC Mode chỉ hỏi đáp read-only → luôn ép Sonnet (nhẹ/rẻ), KHÔNG tin model
+    // client gửi. Tránh lỡ dùng Opus 4.8 khi client cũ/lỗi hoặc localStorage còn Opus.
+    const effectiveModel = isSafeMode ? 'claude-sonnet-5' : model;
+
+    // Cổng duyệt cho phiên này. Collab Mode + CTV (không phải admin localhost): lệnh hủy
+    // hoại được ĐỊNH TUYẾN lên ADMIN qua adminBus — CTV không tự duyệt được. Còn lại
+    // (mọi mode thường, hoặc chính admin chạy Collab tại localhost) dùng cổng của phiên.
+    const routeToAdmin = isCollabMode && cleanIp !== '127.0.0.1';
+    const approvalHandler = routeToAdmin
+      ? (toolName: string, input: Record<string, unknown>, meta?: { title?: string; description?: string; blockedPath?: string; decisionReason?: string }) => {
+          logAudit(`IP: ${cleanIp} - COLLAB xin ADMIN duyệt: session=${session.id}, tool=${toolName}`, cleanIp, clientName);
+          return adminBus.requestApproval({
+            sessionId: session.id,
+            clientIp: cleanIp,
+            toolName,
+            input,
+            title: meta?.title,
+            description: meta?.description,
+            decisionReason: meta?.decisionReason,
+          });
+        }
+      : (toolName: string, input: Record<string, unknown>, meta?: { title?: string; description?: string; blockedPath?: string; decisionReason?: string }) =>
+          session.requestApproval(toolName, input, meta);
+
     // Chạy agent nền; đẩy sự kiện vào session queue.
     runAgent({
       brief,
       cwd: workdir,
       mode: runMode,
+      collabMode: isCollabMode,
       effort: effort ?? 'high',
       language: language === 'en' ? 'en' : 'vi',
       projectProfile,
@@ -321,27 +493,31 @@ app.post('/api/run', async (req, res) => {
       mcpServers: effectiveMcp.length > 0 ? effectiveMcp : undefined,
       abortSignal: session.abort.signal,
       onEvent: (ev) => session.push(ev),
-      onApproval: isExecuting
-        ? (toolName, input, meta) => session.requestApproval(toolName, input, meta)
-        : undefined,
+      onApproval: isExecuting ? approvalHandler : undefined,
       // AskUserQuestion hoạt động ở mọi mode (kể cả plan) để agent làm rõ yêu cầu.
       onQuestion: (questions) => session.requestQuestion(questions),
-      model,
+      model: effectiveModel,
       resumeSessionId,
       // Bắt session_id THẬT của SDK → đẩy lên client để lưu, lượt sau resume đúng phiên.
       onSessionId: (conversationId) => session.push({ type: 'conversation', conversationId }),
     })
       .then((result) => {
         const sessionIp = (session as any).clientIp;
-        logAudit(`IP: ${sessionIp || 'unknown'} - Session ${session.id} HOÀN THÀNH. Result length: ${result?.length ?? 0}`, sessionIp);
+        const sessionName = (session as any).clientName;
+        logAudit(`IP: ${sessionIp || 'unknown'} - Session ${session.id} HOÀN THÀNH. Result length: ${result?.length ?? 0}`, sessionIp, sessionName);
         session.push({ type: 'done', result });
       })
       .catch((err: unknown) => {
         const sessionIp = (session as any).clientIp;
-        logAudit(`IP: ${sessionIp || 'unknown'} - Session ${session.id} THẤT BẠI: ${(err as Error).message}`, sessionIp);
+        const sessionName = (session as any).clientName;
+        logAudit(`IP: ${sessionIp || 'unknown'} - Session ${session.id} THẤT BẠI: ${(err as Error).message}`, sessionIp, sessionName);
         session.push({ type: 'fatal', message: (err as Error).message });
       })
-      .finally(() => session.close());
+      .finally(() => {
+        session.close();
+        // Phiên đóng: gỡ mọi yêu cầu duyệt Collab còn treo trên admin bus (khỏi nút "ma").
+        if (routeToAdmin) adminBus.rejectForSession(session.id);
+      });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
@@ -384,16 +560,50 @@ app.get('/api/events/:id', async (req, res) => {
   res.end();
 });
 
+/**
+ * GET /api/admin/events — SSE kênh riêng cho ADMIN (localhost) trong Collab Mode.
+ * Nhận realtime các yêu cầu duyệt lệnh hủy hoại do CTV phát lên (admin-approval-request)
+ * và tín hiệu đã giải quyết (admin-approval-resolved). Chỉ admin mới mở được kênh này.
+ */
+app.get('/api/admin/events', requireAdmin, (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  });
+  res.flushHeaders?.();
+
+  // Phát lại các yêu cầu đang treo cho admin vừa kết nối (vd mở tab muộn/reload).
+  for (const request of adminBus.snapshot()) {
+    res.write(`data: ${JSON.stringify({ type: 'admin-approval-request', request })}\n\n`);
+  }
+
+  const unsubscribe = adminBus.subscribe((event) => {
+    res.write(`data: ${JSON.stringify(event)}\n\n`);
+  });
+
+  // Keep-alive: comment ping mỗi 25s để proxy/LAN không tự đóng stream nhàn rỗi.
+  const ping = setInterval(() => res.write(': ping\n\n'), 25_000);
+
+  req.on('close', () => {
+    clearInterval(ping);
+    unsubscribe();
+  });
+});
+
+/** POST /api/admin/approve — ADMIN duyệt/từ chối một yêu cầu Collab. body: { id, approved } */
+app.post('/api/admin/approve', requireAdmin, (req, res) => {
+  const { id, approved } = req.body ?? {};
+  const cleanIp = getCleanIp(req);
+  logAudit(`ADMIN duyệt Collab: id=${id}, approved=${approved}`, cleanIp);
+  const ok = adminBus.resolve(String(id), Boolean(approved));
+  res.json({ ok });
+});
+
 /** POST /api/approve — duyệt/từ chối một thao tác ghi. body: { sessionId, id, approved } */
 app.post('/api/approve', (req, res) => {
   const { sessionId, id, approved } = req.body ?? {};
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-  let cleanIp = typeof ip === 'string' ? ip : 'unknown';
-  if (cleanIp === '::1' || cleanIp === '::ffff:127.0.0.1') {
-    cleanIp = '127.0.0.1';
-  } else if (cleanIp.startsWith('::ffff:')) {
-    cleanIp = cleanIp.slice(7);
-  }
+  const cleanIp = getCleanIp(req);
   logAudit(`IP: ${cleanIp} - Yêu cầu duyệt: sessionId=${sessionId}, toolUseId=${id}, approved=${approved}`, cleanIp);
   const session = getSession(sessionId);
   if (!session) {
@@ -411,13 +621,7 @@ app.post('/api/approve', (req, res) => {
  */
 app.post('/api/answer', (req, res) => {
   const { sessionId, id, answers } = req.body ?? {};
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-  let cleanIp = typeof ip === 'string' ? ip : 'unknown';
-  if (cleanIp === '::1' || cleanIp === '::ffff:127.0.0.1') {
-    cleanIp = '127.0.0.1';
-  } else if (cleanIp.startsWith('::ffff:')) {
-    cleanIp = cleanIp.slice(7);
-  }
+  const cleanIp = getCleanIp(req);
   logAudit(`IP: ${cleanIp} - Trả lời câu hỏi: sessionId=${sessionId}, toolUseId=${id}, answers=${JSON.stringify(answers)}`, cleanIp);
   const session = getSession(sessionId);
   if (!session) {
@@ -432,13 +636,7 @@ app.post('/api/answer', (req, res) => {
 
 /** POST /api/stop/:id — dừng agent giữa chừng. */
 app.post('/api/stop/:id', (req, res) => {
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-  let cleanIp = typeof ip === 'string' ? ip : 'unknown';
-  if (cleanIp === '::1' || cleanIp === '::ffff:127.0.0.1') {
-    cleanIp = '127.0.0.1';
-  } else if (cleanIp.startsWith('::ffff:')) {
-    cleanIp = cleanIp.slice(7);
-  }
+  const cleanIp = getCleanIp(req);
   logAudit(`IP: ${cleanIp} - Yêu cầu dừng session: id=${req.params.id}`, cleanIp);
   const session = getSession(req.params.id);
   if (session) {
@@ -455,16 +653,19 @@ app.get('/api/config', (req, res) => {
   
   const isAdmin = isAdminReq(req);
 
-  // Ở Safe Mode, source bị khoá vào safeCwd (có thể là monorepo qua BOW_SAFE_CWD).
-  const effectiveCwd = isSafeMode ? safeCwd() : process.cwd();
+  // Source bị khoá theo mode: Safe → safeCwd, Collab → collabCwd; thường → cwd server.
+  const effectiveCwd = isSafeMode ? safeCwd() : isCollabMode ? collabCwd() : process.cwd();
+  // Cổng web LAN theo bản đang chạy (BOW_WEB_PORT: dev 5173 / share 5174 / collab 5175).
+  const webPort = process.env.BOW_WEB_PORT || '5173';
   res.json({
     defaultCwd: effectiveCwd,
     // Tên repo (basename của cwd) — dùng cho banner "Đang hỏi đáp source: <repo>"
     // ở chế độ Safe Mode, để QC luôn biết mình đang hỏi ở source nào.
     repoName: basename(effectiveCwd),
     mcpServers: cc.names,
-    lanUrl: `http://${localIp}:5173`,
+    lanUrl: `http://${localIp}:${webPort}`,
     isSafeMode,
+    isCollabMode,
     isAdmin,
   });
 });
@@ -474,10 +675,6 @@ app.get('/api/config', (req, res) => {
  * body: { cwd }. Chỉ Admin (localhost) mới đổi được; không cần restart server.
  */
 app.post('/api/safe-cwd', requireAdmin, (req, res) => {
-  if (!isSafeMode) {
-    res.status(400).json({ error: 'Chỉ đổi source ở chế độ Safe Mode.' });
-    return;
-  }
   const raw = typeof req.body?.cwd === 'string' ? req.body.cwd.trim() : '';
   if (!raw) {
     res.status(400).json({ error: 'Thiếu đường dẫn thư mục.' });
@@ -489,7 +686,7 @@ app.post('/api/safe-cwd', requireAdmin, (req, res) => {
     return;
   }
   safeCwdOverride = dir;
-  logAudit(`ADMIN đổi source QC hỏi đáp → ${dir}`, '127.0.0.1');
+  logAudit(`ADMIN đổi source → ${dir}`, '127.0.0.1');
   res.json({ ok: true, cwd: dir, repoName: basename(dir) });
 });
 
@@ -600,7 +797,7 @@ app.delete('/api/mcp/:name', checkSafeMode, (req, res) => {
 });
 
 /** GET /api/browse-dirs?path=... — duyệt thư mục local. */
-app.get('/api/browse-dirs', (req, res) => {
+app.get('/api/browse-dirs', requireAdmin, (req, res) => {
   const queryPath = typeof req.query.path === 'string' ? req.query.path : '';
   const currentPath = resolve(queryPath || process.cwd());
   try {
@@ -853,6 +1050,104 @@ app.delete('/api/conversations/:id', (req, res) => {
   const ip = getCleanIp(req);
   const ok = deleteConversation(req.params.id, ip);
   res.json({ ok, conversations: listConversations(ip) });
+});
+
+// ── Chat nhóm người-với-người (qua LAN) — xem chat.ts ────────────────────────
+// Đồng nghiệp cùng mạng nhắn hỏi nhau ngay trong UI. Vào phòng bằng "mã phòng"
+// (id), mỗi người có ID cá nhân + biệt danh. Tin lưu bền ra đĩa; realtime qua SSE.
+
+/** GET /api/chat/groups — danh sách phòng chat (không kèm tin). */
+app.get('/api/chat/groups', (_req, res) => {
+  try {
+    res.json({ groups: listGroups() });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+/**
+ * POST /api/chat/groups — vào (hoặc tạo) một phòng theo mã. body: { id, name? }.
+ * Trả về phòng kèm lịch sử tin để client hiển thị ngay khi vào.
+ */
+app.post('/api/chat/groups', (req, res) => {
+  const rawId = typeof req.body?.id === 'string' ? req.body.id : '';
+  const name = typeof req.body?.name === 'string' ? req.body.name : '';
+  if (!normalizeGroupId(rawId)) {
+    res.status(400).json({ error: 'Thiếu mã phòng.' });
+    return;
+  }
+  try {
+    const group = getOrCreateGroup(rawId, name, Date.now());
+    logAudit(`IP: ${getCleanIp(req)} - CHAT: vào phòng "${group.id}"`, getCleanIp(req));
+    res.json({ group });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+/** GET /api/chat/groups/:id — lấy một phòng kèm toàn bộ tin (cho người vào sau). */
+app.get('/api/chat/groups/:id', (req, res) => {
+  const group = getGroup(req.params.id);
+  if (!group) {
+    res.status(404).json({ error: 'Phòng chat không tồn tại.' });
+    return;
+  }
+  res.json({ group });
+});
+
+/**
+ * POST /api/chat/groups/:id/messages — gửi một tin. body: { userId, nickname, text }.
+ * Lưu đĩa rồi broadcast realtime tới mọi người đang mở phòng.
+ */
+app.post('/api/chat/groups/:id/messages', (req, res) => {
+  const { userId, nickname, text } = req.body ?? {};
+  if (typeof text !== 'string' || !text.trim()) {
+    res.status(400).json({ error: 'Tin nhắn rỗng.' });
+    return;
+  }
+  try {
+    const { group, message } = addMessage(
+      req.params.id,
+      {
+        userId: typeof userId === 'string' ? userId : '',
+        nickname: typeof nickname === 'string' ? nickname : '',
+        text,
+      },
+      Date.now(),
+    );
+    // Bơm tin đã lưu tới mọi người trong phòng (kể cả chính người gửi → xác nhận đã gửi).
+    chatBus.publish(group.id, { type: 'message', message });
+    res.json({ ok: true, message });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+/** GET /api/chat/groups/:id/events — SSE realtime tin nhắn của một phòng. */
+app.get('/api/chat/groups/:id/events', (req, res) => {
+  const groupId = normalizeGroupId(req.params.id);
+  if (!groupId) {
+    res.status(400).json({ error: 'Thiếu mã phòng.' });
+    return;
+  }
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  });
+  res.flushHeaders?.();
+
+  const unsubscribe = chatBus.subscribe(groupId, (event) => {
+    res.write(`data: ${JSON.stringify(event)}\n\n`);
+  });
+
+  // Keep-alive: comment ping mỗi 25s để proxy/LAN không tự đóng stream nhàn rỗi.
+  const ping = setInterval(() => res.write(': ping\n\n'), 25_000);
+
+  req.on('close', () => {
+    clearInterval(ping);
+    unsubscribe();
+  });
 });
 
 const PORT = Number(process.env.BOW_AGENT_PORT ?? 4000);

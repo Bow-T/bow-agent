@@ -21,7 +21,7 @@ import {
 import { loadPromptSkills } from '../skills/index.js';
 import { deployBundledSkills } from '../skills/agentSkills.js';
 import { loadMonorepoContext } from '../skills/monorepo.js';
-import { buildMonorepoHooks } from '../skills/hooks.js';
+import { buildMonorepoHooks, buildReadAutoApproveHook } from '../skills/hooks.js';
 import { buildSubagents } from './subagents.js';
 import {
   resolveWorkspace,
@@ -165,6 +165,14 @@ export interface RunOptions {
   onQuestion?: QuestionRequest;
   /** Tín hiệu hủy (dừng agent giữa chừng). */
   abortSignal?: AbortSignal;
+  /**
+   * Collab Mode (cộng tác viên qua LAN). Khi bật, chạy như 'auto' nhưng:
+   * - Git (commit/push/reset…) được TỰ DO — bỏ khỏi danh sách RỦI RO.
+   * - Lệnh HỦY HOẠI còn lại (rm -rf, deploy, ghi ngoài repo…) vẫn qua onApproval,
+   *   nhưng caller (web server) định tuyến duyệt đó lên ADMIN chứ không phải CTV.
+   * Mode phải là 'auto' để cơ chế này có tác dụng; server đảm bảo điều đó.
+   */
+  collabMode?: boolean;
   /** Model sử dụng cho agent. */
   model?: string;
   /** ID phiên chạy cũ cần khôi phục lịch sử chat. */
@@ -256,10 +264,15 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
 
   const isSafeMode = process.env.BOW_SAFE_MODE === 'true';
 
-  // Lưu ý: KHÔNG đưa AskUserQuestion vào allowedTools — entry "trần" trong
-  // allowedTools auto-approve tool TRƯỚC khi tới canUseTool, khiến câu hỏi không
-  // bao giờ tới UI. Để nó rơi vào canUseTool (xử lý bên dưới) để render UI.
-  const allowedTools = [
+  // Các tool ĐỌC được auto-duyệt. KHÔNG đưa chúng (và AskUserQuestion) vào
+  // allowedTools: entry "trần" trong allowedTools auto-approve TRƯỚC khi tới
+  // canUseTool, khiến SDK cảnh báo CLAUDE_SDK_CAN_USE_TOOL_SHADOWED (callback bị
+  // che). Thay vào đó auto-duyệt qua PreToolUse hook (buildReadAutoApproveHook)
+  // để mọi tool khác vẫn rơi vào canUseTool. Xem hooks.ts.
+  //
+  // Safe Mode: KHÔNG auto-duyệt Read/Grep — để chúng rơi vào canUseTool kiểm
+  // tra file nhạy cảm / chặn Grep. Glob vẫn auto-duyệt như trước.
+  const readAutoTools = [
     ...(isSafeMode ? [] : ['Read', 'Grep']),
     'Glob',
     // Cho agent chính spawn subagent không kẹt cổng duyệt — subagent đều read-only /
@@ -267,6 +280,8 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     ...(subagents ? ['Agent'] : []),
     ...mcpReadToolPatterns(cc.names), // read tools của MCP Claude Code (write phải duyệt)
   ];
+  // allowedTools để rỗng: toàn bộ auto-duyệt read đã chuyển sang PreToolUse hook.
+  const allowedTools: string[] = [];
 
   // System prompt = quy trình chung + skill dùng chung + (nếu có) kiến thức dự án.
   let appendText = BOW_AGENT_APPEND;
@@ -344,9 +359,18 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     /:\s*\(\s*\)\s*\{.*\}\s*;/,      // fork bomb
   ];
 
-  /** True nếu lệnh bash bị coi là rủi ro → luôn hỏi ngay cả ở mode 'auto'. */
+  // Các mẫu RỦI RO thuộc Git — ở Collab Mode được MIỄN (CTV toàn quyền Git). Mọi mẫu
+  // hủy hoại khác (rm, dd, deploy, sudo…) vẫn giữ. Nhận diện bằng /\bgit\b/ trong mẫu.
+  const GIT_RISKY = new Set(
+    RISKY_COMMANDS.filter((re) => /git/.test(re.source)),
+  );
+  const activeRisky =
+    opts.collabMode ? RISKY_COMMANDS.filter((re) => !GIT_RISKY.has(re)) : RISKY_COMMANDS;
+
+  /** True nếu lệnh bash bị coi là rủi ro → luôn qua cổng duyệt ngay cả ở mode 'auto'.
+   *  Ở Collab Mode, các lệnh Git đã được loại khỏi danh sách nên tự do chạy. */
   const isRiskyCommand = (cmd: string): boolean =>
-    RISKY_COMMANDS.some((re) => re.test(cmd));
+    activeRisky.some((re) => re.test(cmd));
 
   /** Tool sửa/ghi file (trong repo). Ở 'edit-auto'/'auto' được auto-allow nếu đường dẫn nằm trong cwd. */
   const FILE_WRITE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
@@ -361,6 +385,19 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
 
   // Hook monorepo (guard-push/commit, self-verify, githooks) — chỉ khi cwd là monorepo.
   const monorepoHooks = buildMonorepoHooks(opts.cwd);
+
+  // Hợp nhất PreToolUse: hook auto-duyệt read tools (mọi repo) + hook monorepo
+  // (guard Bash, chỉ khi là monorepo). Matcher khác nhau nên nối chung vào một
+  // mảng PreToolUse không đụng nhau. Đặt read-approve TRƯỚC guard: read tools
+  // vô hại, còn guard chỉ nhắm Bash nên thứ tự không ảnh hưởng lẫn nhau.
+  const readApproveHooks = buildReadAutoApproveHook(readAutoTools);
+  const hooks = {
+    ...monorepoHooks,
+    ...(readApproveHooks.length > 0
+      ? { PreToolUse: [...readApproveHooks, ...(monorepoHooks?.PreToolUse ?? [])] }
+      : {}),
+  };
+  const hasHooks = Object.keys(hooks).length > 0;
 
   // Trải Agent Skills bundle (vd /watch — xem video) vào <cwd>/.claude/skills/ để SDK
   // auto-discover. Idempotent, không đụng skill người dùng tự đặt. Xem DESIGN §7.2.
@@ -387,7 +424,7 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     ...(opts.resumeSessionId ? { resume: opts.resumeSessionId } : {}),
     // Multi-agent (opt-in): định nghĩa subagent để agent chính giao việc qua tool Agent.
     ...(subagents ? { agents: subagents } : {}),
-    ...(monorepoHooks ? { hooks: monorepoHooks } : {}),
+    ...(hasHooks ? { hooks } : {}),
     pathToClaudeCodeExecutable: findClaudeCodeExecutable(opts.cwd || process.cwd()),
     ...(opts.abortSignal ? { abortController: toController(opts.abortSignal) } : {}),
     ...(hasMcp ? { mcpServers } : {}),

@@ -1,6 +1,8 @@
 # Memory Index
 
 - [Working style — cách giao việc](working-style-agent-delegation.md) — mặc định 1 agent, giao gom 1 lượt, plan mode; chỉ bung subagent cho việc lớn kiểm chứng được
+- [Văn phong ra lệnh](user-command-style.md) — lệnh ngắn ẩn chủ ngữ kèm lý do; "hay dùng" = tín hiệu nên tự động hóa (hook/command)
 - [Ngôn ngữ](user-communicates-in-vietnamese.md) — user trao đổi bằng tiếng Việt, trả lời bằng tiếng Việt
 - [Không dính Co-Authored-By Claude trong commit](no-claude-coauthor-trailer.md) — commit message không kèm trailer ghi công Claude; có hook .claude/hooks/block-claude-coauthor.py chặn tự động
-- [Safe Mode cho QC](bow-safe-mode-qc.md) — npm run ui:qc: ẩn UI kỹ thuật, khoá source read-only, banner "Đang hỏi đáp source: <repo>"
+- [Safe Mode chia sẻ hỏi đáp (QC/BA/PM)](bow-safe-mode-qc.md) — npm run ui:share: read-only cho người non-dev, ẩn UI kỹ thuật, khoá source, chạy song song dev ở cổng riêng 4001/5174
+- [Collab Mode (CTV code có duyệt)](bow-collab-mode.md) — npm run ui:collab (4002/5175): CTV qua LAN code như dev, Git tự do, lệnh hủy hoại phải admin duyệt từ xa qua adminBus + /api/admin/events

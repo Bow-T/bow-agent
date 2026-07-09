@@ -50,10 +50,10 @@
       }
     },
     {
-      "label": "web: chạy QC (khoá monorepo)",
-      "detail": "Safe Mode + khoá source vào /monorepo (script ui:qc).",
+      "label": "web: chạy Safe Mode chia sẻ (khoá monorepo)",
+      "detail": "Safe Mode chia sẻ hỏi đáp cho QC/BA/PM + khoá source vào /monorepo (script ui:share).",
       "type": "npm",
-      "script": "ui:qc",
+      "script": "ui:share",
       "isBackground": true,
       "problemMatcher": {
         "owner": "vite",
@@ -63,7 +63,7 @@
         "background": {
           "activeOnStart": true,
           "beginsPattern": ".*",
-          "endsPattern": "Local:\\s+http://localhost:5173"
+          "endsPattern": "Local:\\s+http://localhost:5174"
         }
       },
       "presentation": {
@@ -73,7 +73,30 @@
       }
     },
     {
-      "label": "web: dừng (:4000 + :5173)",
+      "label": "web: chạy Collab Mode (CTV code có duyệt)",
+      "detail": "CTV qua LAN code như dev; lệnh hủy hoại phải admin duyệt từ xa; Git tự do (script ui:collab).",
+      "type": "npm",
+      "script": "ui:collab",
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "vite",
+        "pattern": {
+          "regexp": "^$"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": "Local:\\s+http://localhost:5175"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "web: dừng (mọi cổng dev/share/collab)",
       "detail": "Kill tiến trình đang chiếm cổng api/web (script ui:stop).",
       "type": "npm",
       "script": "ui:stop",

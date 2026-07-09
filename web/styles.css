@@ -1395,6 +1395,52 @@ a { color: var(--brass); text-underline-offset: 2px; }
 .approval-actions .btn.allow { flex: 1; }
 .approval-actions .btn { padding: 7px 16px; }
 
+/* ─────────────────────  Collab Mode  ───────────────────── */
+/* Banner đầu trang: CTV/admin luôn biết đang ở Collab Mode và ranh giới quyền. */
+.collab-banner {
+  padding: 8px 16px;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+  color: #7a4b00;
+  background: color-mix(in srgb, #ffb020 22%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, #ffb020 55%, transparent);
+}
+@media (prefers-color-scheme: dark) {
+  .collab-banner { color: #ffd27a; }
+}
+/* Panel admin duyệt lệnh hủy hoại của CTV — xếp chồng nhiều yêu cầu, cuộn nếu dài. */
+.collab-approvals {
+  gap: 8px;
+  max-height: 42vh;
+  overflow-y: auto;
+}
+.collab-approval { border-color: color-mix(in srgb, #ffb020 60%, var(--hairline)); }
+.collab-approval .approval-who {
+  padding: 4px 13px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.collab-approval .approval-who code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--surface-2);
+}
+.collab-approval .approval-reason {
+  padding: 4px 13px 0;
+  font-size: 12px;
+  color: #b8860b;
+}
+.collab-approval .approval-cmd {
+  margin: 6px 13px;
+  padding: 8px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  overflow-x: auto;
+}
+.collab-approval .approval-path { padding: 4px 13px; font-size: 12px; }
+
 /* ─────────────────────  Câu hỏi (AskUserQuestion)  ───────────────────── */
 .question-card {
   align-self: stretch;
@@ -2000,4 +2046,152 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* ── Cổng mã truy cập (màn khoá cho client LAN chưa nhập mã) ──────────────── */
+.access-gate {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--paper);
+}
+.access-gate-card {
+  width: 100%;
+  max-width: 360px;
+  border: var(--bd-thin, 1px) solid var(--outline);
+  background: var(--surface, var(--inset));
+  padding: 28px 24px;
+  text-align: center;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+}
+.access-gate-icon {
+  font-size: 40px;
+  line-height: 1;
+  margin-bottom: 8px;
+}
+.access-gate-card h1 {
+  font-size: 18px;
+  margin: 0 0 6px;
+  color: var(--ink);
+}
+.access-gate-hint {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0 0 16px;
+}
+.access-gate-input {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 14px;
+  border: var(--bd-thin, 1px) solid var(--outline);
+  background: var(--paper);
+  color: var(--ink);
+  margin-bottom: 10px;
+  box-sizing: border-box;
+}
+.access-gate-input:focus {
+  outline: none;
+  border-color: var(--brass);
+}
+.access-gate-error {
+  font-size: 12px;
+  color: var(--danger, #c0392b);
+  margin-bottom: 10px;
+}
+.access-gate-btn {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 14px;
+  border: var(--bd-thin, 1px) solid var(--brass);
+  background: var(--brass);
+  color: var(--on-brass, #fff);
+  cursor: pointer;
+}
+.access-gate-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Chat nhóm (người-với-người qua LAN) ──────────────────────────────────── */
+.chat-panel .modal-body { display: flex; flex-direction: column; }
+
+.chat-field { display: block; }
+.chat-field > span {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 5px;
+}
+
+.chat-room { display: flex; flex-direction: column; }
+.chat-room-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.chat-leave-btn { padding: 5px 12px; font-size: 12px; }
+
+/* Khung danh sách tin — cuộn riêng, cao cố định */
+.chat-messages {
+  height: 46vh;
+  min-height: 240px;
+  overflow-y: auto;
+  border: var(--bd-thin) solid var(--outline);
+  background: var(--inset);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Bong bóng tin — mặc định căn trái (tin người khác) */
+.chat-msg {
+  max-width: 80%;
+  align-self: flex-start;
+  padding: 7px 10px;
+  border: var(--bd-thin) solid var(--outline);
+  background: var(--surface);
+  border-radius: 4px;
+}
+/* Tin của chính mình — căn phải, tô accent nhẹ */
+.chat-msg-mine {
+  align-self: flex-end;
+  background: color-mix(in srgb, var(--brass) 14%, var(--surface));
+  border-color: color-mix(in srgb, var(--brass) 40%, var(--outline));
+}
+.chat-msg-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+.chat-msg-nick {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--brass);
+}
+.chat-msg-mine .chat-msg-nick { color: var(--text); }
+.chat-msg-time { font-size: 10px; color: var(--muted); }
+.chat-msg-text {
+  font-size: 13px;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.4;
+}
+
+/* Ô soạn tin */
+.chat-composer {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.chat-send-btn {
+  padding: 8px 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }

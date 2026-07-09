@@ -25,12 +25,14 @@
       }
     },
     {
-      // Safe/QC Mode — chia sẻ LAN cho QC (chỉ hỏi đáp/lập kế hoạch).
-      "name": "🔒 Chạy Web Safe/QC Mode",
+      // Safe Mode — chia sẻ LAN cho người non-dev (QC, BA, PM…) hỏi đáp read-only.
+      // Chạy `ui:share` ở CẶP CỔNG RIÊNG (api :4001, web :5174) nên bật ĐỒNG THỜI với
+      // "▶ Chạy Web" (dev :4000/:5173) mà không đụng cổng. Mở http://localhost:5174.
+      "name": "🔒 Chạy Web Safe Mode (chia sẻ hỏi đáp)",
       "type": "node",
       "request": "launch",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "ui:safe"],
+      "runtimeArgs": ["run", "ui:share"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "skipFiles": ["<node_internals>/**"],
@@ -39,7 +41,30 @@
         "order": 2
       },
       "serverReadyAction": {
-        "pattern": "Local:\\s+(https?://localhost:5173)",
+        "pattern": "Local:\\s+(https?://localhost:5174)",
+        "uriFormat": "%s",
+        "action": "openExternally"
+      }
+    },
+    {
+      // Collab Mode — cộng tác viên (CTV) qua LAN code gần như dev, nhưng lệnh HỦY HOẠI
+      // (rm -rf, deploy, ghi ngoài repo…) phải được ADMIN (localhost) duyệt từ xa; Git tự do.
+      // Chạy `ui:collab` ở CẶP CỔNG RIÊNG (api :4002, web :5175) nên bật ĐỒNG THỜI với dev
+      // (:4000/:5173) và share (:4001/:5174). Mở http://localhost:5175.
+      "name": "🤝 Chạy Web Collab Mode (CTV code có duyệt)",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "ui:collab"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"],
+      "presentation": {
+        "group": "1_run",
+        "order": 3
+      },
+      "serverReadyAction": {
+        "pattern": "Local:\\s+(https?://localhost:5175)",
         "uriFormat": "%s",
         "action": "openExternally"
       }

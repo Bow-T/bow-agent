@@ -32,6 +32,8 @@ interface Particle {
   phase: number;
   brightness: number;
   isSun?: boolean;
+  /** Hạt cánh nền có thể nhuốm theo màu accent người dùng chọn (thay cho cyan/xanh cứng). */
+  accentTint?: boolean;
 }
 
 function makeGalaxyParticles(n: number): Particle[] {
@@ -115,14 +117,16 @@ function makeGalaxyParticles(n: number): Particle[] {
       const phase = rnd() * Math.PI * 2;
       const sparkleSpeed = 0.8 + rnd() * 1.8;
       
-      // Cánh thiên hà trẻ trung: Xanh dương, Cyan, hồng tím tinh vân và sao trắng
+      // Cánh thiên hà trẻ trung. ~75% hạt (cyan/xanh nhạt) được đánh dấu accentTint để nhuốm
+      // theo màu người dùng chọn lúc vẽ; hồng tinh vân + sao trắng giữ nguyên làm điểm nhấn.
       let color = '';
+      let accentTint = false;
       const roll = rnd();
-      if (roll < 0.45) color = '56, 189, 248'; // Cyan
-      else if (roll < 0.75) color = '147, 197, 253'; // Xanh nhạt
-      else if (roll < 0.9) color = '236, 72, 153'; // Hồng/Đỏ tía tinh vân
-      else color = '255, 255, 255'; // Sao trắng
-      
+      if (roll < 0.45) { color = '56, 189, 248'; accentTint = true; } // Cyan → nhuốm accent
+      else if (roll < 0.75) { color = '147, 197, 253'; accentTint = true; } // Xanh nhạt → nhuốm accent
+      else if (roll < 0.9) color = '236, 72, 153'; // Hồng/Đỏ tía tinh vân (giữ)
+      else color = '255, 255, 255'; // Sao trắng (giữ)
+
       particles.push({
         r,
         theta,
@@ -134,10 +138,36 @@ function makeGalaxyParticles(n: number): Particle[] {
         sparkleSpeed,
         phase,
         brightness: 0.3 + rnd() * 0.7,
+        accentTint,
       });
     }
   }
   return particles;
+}
+
+/**
+ * Đọc màu accent thực (var(--brass)) từ CSS đã áp trên <html> và trả về "r, g, b".
+ * --brass tự đổi theo theme (sáng/tối) + data-accent (blue/teal/…) nên galaxy chỉ cần
+ * bám vào token này là đồng bộ với màu người dùng chọn. Fallback = brass dark nếu parse lỗi.
+ */
+function readAccentRGB(): string {
+  const fallback = '214, 164, 65'; // brass dark
+  if (typeof window === 'undefined') return fallback;
+  const raw = getComputedStyle(document.documentElement).getPropertyValue('--brass').trim();
+  if (!raw) return fallback;
+  // #rgb / #rrggbb
+  if (raw.startsWith('#')) {
+    let hex = raw.slice(1);
+    if (hex.length === 3) hex = hex.split('').map((c) => c + c).join('');
+    if (hex.length !== 6) return fallback;
+    const n = parseInt(hex, 16);
+    if (Number.isNaN(n)) return fallback;
+    return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
+  }
+  // rgb(...) / rgba(...)
+  const m = raw.match(/(\d+)[,\s]+(\d+)[,\s]+(\d+)/);
+  if (m) return `${m[1]}, ${m[2]}, ${m[3]}`;
+  return fallback;
 }
 
 /** Màu RGB theo loại bước */
@@ -323,22 +353,30 @@ export function NeuralBrain({
   selectedId,
   onSelect,
   theme,
+  accent,
 }: {
   active: boolean;
   steps: BrainStep[];
   selectedId: string | null;
   onSelect: (step: BrainStep) => void;
   theme?: string;
+  accent?: string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const activeRef = useRef(active);
   const stepsRef = useRef(steps);
   const selRef = useRef(selectedId);
   const themeRef = useRef(theme);
+  // Key theme|accent để draw biết khi nào cần đọc lại token --brass. Không đọc trong useEffect
+  // vì effect của component con chạy TRƯỚC effect cha (App set data-accent lên <html>) → đọc
+  // trễ 1 nhịp, galaxy kẹt màu cũ. Đọc ngay trong draw, cache theo key này, luôn đúng.
+  const accentKeyRef = useRef('');
+  const accentRGBRef = useRef(readAccentRGB());
   activeRef.current = active;
   stepsRef.current = steps;
   selRef.current = selectedId;
   themeRef.current = theme;
+  accentKeyRef.current = `${theme ?? ''}|${accent ?? ''}`;
 
   const hitsRef = useRef<{ id: string; x: number; y: number; r: number }[]>([]);
   const [hoverId, setHoverId] = useState<string | null>(null);
@@ -362,6 +400,7 @@ export function NeuralBrain({
     const particles = makeGalaxyParticles(480);
     let raf = 0;
     let t = 0;
+    let lastAccentKey = ''; // theme|accent lần đọc token gần nhất — đọc lại --brass khi đổi
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
 
     const resize = () => {
@@ -456,6 +495,12 @@ export function NeuralBrain({
       const sel = selRef.current;
       const theme = themeRef.current;
       const isLight = theme !== 'dark';
+      // Đọc lại token --brass chỉ khi theme/accent đổi (getComputedStyle đắt, không gọi mỗi frame).
+      if (accentKeyRef.current !== lastAccentKey) {
+        lastAccentKey = accentKeyRef.current;
+        accentRGBRef.current = readAccentRGB();
+      }
+      const accentRGB = accentRGBRef.current; // "r, g, b" — màu nhấn người dùng chọn
 
       ctx.clearRect(0, 0, W, H);
       
@@ -490,14 +535,16 @@ export function NeuralBrain({
 
       // ── Lớp 0: Các đám mây bụi vũ trụ (Nebulae) trôi chậm ở nền ──
       ctx.globalCompositeOperation = isLight ? 'multiply' : 'screen';
+      // Một đám mây nền nhuốm accent để galaxy "ngả" về màu người dùng chọn (light dùng alpha
+      // thấp hơn vì nhân multiply đậm hơn trên giấy). Hai đám còn lại giữ tông trung tính/lạnh.
       const nebulae = isLight
         ? [
-            { color: 'rgba(120, 113, 108, 0.06)', x: Math.sin(t * 0.08) * 0.12, y: Math.cos(t * 0.1) * 0.12, size: 0.8 },
+            { color: `rgba(${accentRGB}, 0.05)`, x: Math.sin(t * 0.08) * 0.12, y: Math.cos(t * 0.1) * 0.12, size: 0.8 },
             { color: 'rgba(87, 83, 78, 0.05)', x: Math.cos(t * 0.07) * 0.15, y: Math.sin(t * 0.09) * 0.15, size: 0.95 },
             { color: 'rgba(68, 64, 60, 0.04)', x: Math.sin(t * 0.11) * 0.08, y: -Math.cos(t * 0.08) * 0.08, size: 0.7 }
           ]
         : [
-            { color: 'rgba(99, 102, 241, 0.09)', x: Math.sin(t * 0.08) * 0.12, y: Math.cos(t * 0.1) * 0.12, size: 0.8 },
+            { color: `rgba(${accentRGB}, 0.1)`, x: Math.sin(t * 0.08) * 0.12, y: Math.cos(t * 0.1) * 0.12, size: 0.8 },
             { color: 'rgba(217, 70, 239, 0.07)', x: Math.cos(t * 0.07) * 0.15, y: Math.sin(t * 0.09) * 0.15, size: 0.95 },
             { color: 'rgba(6, 182, 212, 0.08)', x: Math.sin(t * 0.11) * 0.08, y: -Math.cos(t * 0.08) * 0.08, size: 0.7 }
           ];
@@ -549,7 +596,9 @@ export function NeuralBrain({
           y: sy,
           size,
           alpha,
-           color: isLight ? '28, 25, 23' : p.color,
+          // Light: galaxy vẽ bằng mực nâu-đen. Dark: hạt cánh nền (accentTint) nhuốm màu người
+          // dùng chọn; hồng tinh vân / sao trắng / vùng nhân giữ màu gốc.
+          color: isLight ? '28, 25, 23' : (p.accentTint ? accentRGB : p.color),
           large: p.size > 1.25,
           z3, // store depth for classification
           isSun: p.isSun,
@@ -642,7 +691,8 @@ export function NeuralBrain({
           if (star.isSun && zoomRef.current > 1.25) {
             ctx.save();
             ctx.font = `700 ${8.5 * dpr * star.perspective}px 'Space Mono', ui-monospace, monospace`;
-            ctx.fillStyle = isLight ? 'rgba(147, 95, 18, 0.95)' : 'rgba(214, 164, 65, 0.95)';
+            // Nhãn Hệ Mặt Trời dùng chính màu accent (đã đổi theo theme + màu người dùng chọn).
+            ctx.fillStyle = `rgba(${accentRGB}, 0.95)`;
             ctx.textAlign = 'left';
             ctx.fillText('Hệ Mặt Trời ☀️', star.x + star.size + 3 * dpr, star.y + 2 * dpr);
             ctx.restore();
@@ -657,9 +707,10 @@ export function NeuralBrain({
 
       // ── RENDER PASS 2: Vẽ Nhân Thiên Hà 3D (Galactic Core) ──
       const coreGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, currentScale * 0.16);
+      // Nhân sáng trắng/mực ở tâm, quầng giữa & rìa nhuốm accent để đồng bộ màu người dùng chọn.
       coreGrad.addColorStop(0, isLight ? 'rgba(28, 25, 23, 0.7)' : 'rgba(255, 255, 255, 0.95)');
-      coreGrad.addColorStop(0.2, isLight ? 'rgba(87, 83, 78, 0.35)' : 'rgba(254, 240, 138, 0.65)');
-      coreGrad.addColorStop(0.5, isLight ? 'rgba(168, 162, 158, 0.12)' : 'rgba(236, 72, 153, 0.18)');
+      coreGrad.addColorStop(0.2, isLight ? `rgba(${accentRGB}, 0.32)` : `rgba(${accentRGB}, 0.6)`);
+      coreGrad.addColorStop(0.5, isLight ? `rgba(${accentRGB}, 0.1)` : `rgba(${accentRGB}, 0.18)`);
       coreGrad.addColorStop(1, isLight ? 'rgba(255, 255, 255, 0)' : 'rgba(0, 0, 0, 0)');
       ctx.fillStyle = coreGrad;
       ctx.beginPath();

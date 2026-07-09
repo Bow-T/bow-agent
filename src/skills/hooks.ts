@@ -64,6 +64,41 @@ function runHookScript(
 }
 
 /**
+ * PreToolUse hook auto-DUYỆT các tool ĐỌC (Read/Grep/Glob/Agent + MCP read).
+ *
+ * Vì sao dùng hook thay vì liệt kê "trần" trong allowedTools: entry trần trong
+ * allowedTools auto-approve TRƯỚC khi canUseTool chạy, khiến SDK cảnh báo
+ * CLAUDE_SDK_CAN_USE_TOOL_SHADOWED (callback bị "che"). Đưa read tools qua
+ * PreToolUse hook để: (1) hết cảnh báo, (2) mọi tool khác vẫn rơi vào canUseTool.
+ *
+ * Hook trả permissionDecision:'allow' cho tool nằm trong allowlist; tool khác trả
+ * output rỗng (pass-through) để không can thiệp cổng duyệt của canUseTool.
+ * Matcher để trống (match mọi tool) — allowlist được kiểm bên trong theo tool_name.
+ */
+export function buildReadAutoApproveHook(readTools: string[]): HookCallbackMatcher[] {
+  const allow = new Set(readTools);
+  if (allow.size === 0) return [];
+  return [
+    {
+      hooks: [
+        async (input) => {
+          const name = (input as { tool_name?: string }).tool_name;
+          if (name && allow.has(name)) {
+            return {
+              hookSpecificOutput: {
+                hookEventName: 'PreToolUse' as const,
+                permissionDecision: 'allow' as const,
+              },
+            };
+          }
+          return {}; // pass-through: để canUseTool/policy khác quyết định
+        },
+      ],
+    },
+  ];
+}
+
+/**
  * Dựng object hooks cho SDK query(). Trả undefined nếu cwd KHÔNG phải monorepo
  * (để runner không gắn hooks vô ích cho repo khác).
  */
