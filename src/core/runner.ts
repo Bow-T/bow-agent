@@ -40,7 +40,8 @@ export type AgentEvent =
   | { type: 'tool'; id?: string; name: string; describe: string; summary?: string }
   // Kết quả của một tool (khớp qua toolId) — hiển thị "→ exit 0 / 4 matches / lỗi...".
   | { type: 'tool-result'; toolId: string; text: string; isError: boolean }
-  | { type: 'result'; text: string; turns: number; outputTokens: number; costUsd: number }
+  // `durationMs` = tổng thời gian phiên do SDK đo (duration_ms) — bao gồm cả lúc chờ duyệt.
+  | { type: 'result'; text: string; turns: number; outputTokens: number; costUsd: number; durationMs: number }
   // Snapshot hạn mức tài khoản + độ dùng context window của phiên hiện tại. Phát ra
   // sau mỗi lượt `result` (đọc qua control request của SDK — xem readUsageSnapshot).
   | { type: 'usage'; usage: UsageSnapshot }
@@ -629,6 +630,7 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
             turns: message.num_turns,
             outputTokens: message.usage.output_tokens,
             costUsd: message.total_cost_usd,
+            durationMs: message.duration_ms,
           });
         } else {
           opts.onEvent({ type: 'error', subtype: message.subtype });

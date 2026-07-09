@@ -1,0 +1,79 @@
+{
+  // Nút "Run and Debug" (Cmd+Shift+D) → chọn 1 cấu hình rồi bấm ▶ (F5).
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // MẶC ĐỊNH — bấm ▶ (F5) là chạy cả api + web (chế độ thường). Không cần gõ terminal.
+      // Launch thẳng `npm run ui` để VS Code có tiến trình để chạy/dừng; khi bấm Stop
+      // thì cả concurrently (api + web) tắt theo. Mở http://localhost:5173 tự động.
+      "name": "▶ Chạy Web (api + web)",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "ui"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"],
+      "presentation": {
+        "group": "1_run",
+        "order": 1
+      },
+      "serverReadyAction": {
+        "pattern": "Local:\\s+(https?://localhost:5173)",
+        "uriFormat": "%s",
+        "action": "openExternally"
+      }
+    },
+    {
+      // Safe/QC Mode — chia sẻ LAN cho QC (chỉ hỏi đáp/lập kế hoạch).
+      "name": "🔒 Chạy Web Safe/QC Mode",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "ui:safe"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"],
+      "presentation": {
+        "group": "1_run",
+        "order": 2
+      },
+      "serverReadyAction": {
+        "pattern": "Local:\\s+(https?://localhost:5173)",
+        "uriFormat": "%s",
+        "action": "openExternally"
+      }
+    },
+    {
+      // Debug backend Express (src/web/server.ts) qua tsx — ĐẶT BREAKPOINT được ở code .ts.
+      // Chạy riêng phần api (:4000). Muốn xem UI thì chạy thêm "web: chạy" hoặc vite riêng.
+      "name": "🐛 Debug Backend API (:4000)",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["tsx", "src/web/server.ts"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"],
+      "presentation": {
+        "group": "2_debug",
+        "order": 1
+      }
+    },
+    {
+      // Debug CLI agent (src/cli/index.ts) — chạy agent ở terminal, đặt breakpoint được.
+      "name": "🐛 Debug CLI (dev)",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["tsx", "src/cli/index.ts"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"],
+      "presentation": {
+        "group": "2_debug",
+        "order": 2
+      }
+    }
+  ]
+}

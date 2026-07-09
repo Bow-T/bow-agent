@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { PixelSelect } from './PixelSelect.js';
+import { AccentPicker } from './AccentPicker.js';
 import { ModeSelect, modeDef } from './ModeSelect.js';
 import { NeuralBrain } from './NeuralBrain.js';
 import { Markdown } from './Markdown.js';
@@ -21,6 +22,24 @@ import type {
 } from './types.js';
 
 type Theme = 'light' | 'dark';
+
+/** Màu nhấn chọn ở header. 'brass' = mặc định (đồng thau), không đặt data-accent. */
+type Accent = 'brass' | 'blue' | 'teal' | 'purple' | 'pink' | 'red' | 'orange';
+
+/**
+ * 7 màu nhấn hiển thị thành swatch ở header — bảng đã kiểm định bằng dataviz palette
+ * (CVD-safe, tương phản ≥3:1). `swatch` chỉ tô chấm màu trong picker (dùng sắc DARK cho
+ * đẹp trên nút header tối); màu thật khi áp do CSS [data-accent] quyết định.
+ */
+const ACCENTS: { id: Accent; label: string; swatch: string }[] = [
+  { id: 'brass', label: 'Đồng thau', swatch: '#d6a441' },
+  { id: 'blue', label: 'Lam', swatch: '#5c9fea' },
+  { id: 'teal', label: 'Xanh vịt', swatch: '#3bb89d' },
+  { id: 'purple', label: 'Tím', swatch: '#9085e9' },
+  { id: 'pink', label: 'Hồng', swatch: '#e084ac' },
+  { id: 'red', label: 'Đỏ', swatch: '#e66767' },
+  { id: 'orange', label: 'Cam', swatch: '#e88f4c' },
+];
 
 /** Một node trong Activity Log / Star Chart. `ops` & `approval` phục vụ khung chi tiết mở rộng. */
 interface ActivityNode {
@@ -96,6 +115,17 @@ function formatResetIn(iso: string | null): string {
   return `Còn ${Math.round(hours / 24)}d`;
 }
 
+/** Format thời lượng ms → chuỗi gọn kiểu "1g 23p 45s" / "3p 42s" / "58s". */
+function fmtDuration(ms: number): string {
+  const total = Math.round(ms / 1000);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}g ${m}p ${s}s`;
+  if (m > 0) return `${m}p ${s}s`;
+  return `${s}s`;
+}
+
 /** Gọn số token: 21592 → "21.6k", 1000000 → "1M". */
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`;
@@ -121,6 +151,8 @@ export function App() {
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   // Item Activity Log đang mở rộng để xem chi tiết (từng thao tác/lệnh/kết quả).
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
+  // Nhóm tool liên tiếp trong khung chat đang được mở (bung ra xem từng thao tác).
+  const [expandedChatGroups, setExpandedChatGroups] = useState<Set<string>>(new Set());
   const [language, setLanguage] = useState(() => localStorage.getItem('bow-language') || 'vi');
   const [selectedMcps, setSelectedMcps] = useState<string[]>(() => {
     try {
@@ -153,6 +185,11 @@ export function App() {
   // Câu hỏi AskUserQuestion đang chờ người dùng chọn (thường chỉ có 1 tại một thời điểm).
   const [questions, setQuestions] = useState<PendingQuestion[]>([]);
   const [running, setRunning] = useState(false);
+  // Đồng hồ phiên: mốc bắt đầu lượt chạy hiện tại + thời lượng lượt gần nhất (đo phía
+  // client — bao gồm cả thời gian chờ duyệt; dòng "Xong · …" trong chat dùng duration_ms
+  // chính xác của SDK). Render tick nhờ đồng hồ UTC đã setInterval 1s sẵn.
+  const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
+  const [lastRunMs, setLastRunMs] = useState<number | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(
     () => localStorage.getItem('bow-conversation-id') || null
@@ -628,7 +665,7 @@ export function App() {
       setActiveConvId(id);
     }
     try {
-      await fetch(`/api/conversations/${id}`, {
+      const res = await fetch(`/api/conversations/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -638,8 +675,11 @@ export function App() {
           cwd: cwd.trim(),
         }),
       });
+      // Lưu thất bại (backend từ chối) → báo cho caller biết để không dọn màn hình.
+      if (!res.ok) return null;
     } catch {
-      // Lưu thất bại → bỏ qua, không chặn UI (thử lại ở lượt sau).
+      // Lưu thất bại (mạng/đứt kết nối) → trả null, không chặn UI ở lượt auto-lưu.
+      return null;
     }
     return id;
   };
@@ -832,6 +872,11 @@ export function App() {
     if (saved === 'light' || saved === 'dark') return saved;
     return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   });
+  // Màu nhấn (accent) — độc lập với sáng/tối. 'brass' = mặc định (không đặt data-accent).
+  const [accent, setAccent] = useState<Accent>(() => {
+    const saved = localStorage.getItem('bow-accent');
+    return ACCENTS.some((a) => a.id === saved) ? (saved as Accent) : 'brass';
+  });
 
   // Đồng hồ UTC sống ở header (chi tiết "bảng điều khiển đài quan sát").
   const [utc, setUtc] = useState('');
@@ -841,6 +886,19 @@ export function App() {
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
   }, []);
+
+  // Đồng hồ phiên: bấm giờ khi running bật, chốt thời lượng khi tắt (kể cả kết thúc
+  // bất thường/stop — nên đo phía client thay vì chỉ dựa event 'result'). runStartedAt
+  // đọc qua closure của render hiện tại, KHÔNG đưa vào deps (tránh vòng lặp tự kích).
+  useEffect(() => {
+    if (running) {
+      setRunStartedAt(Date.now());
+    } else if (runStartedAt != null) {
+      setLastRunMs(Date.now() - runStartedAt);
+      setRunStartedAt(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const [isScrolled, setIsScrolled] = useState(false);
@@ -856,6 +914,42 @@ export function App() {
   // sống — nếu không, StrictMode (dev chạy effect 2 lần) hoặc reconnect chồng lấn sẽ
   // mở 2 SSE cùng session, backend phát event cho cả hai → mọi tin bị nhân đôi.
   const eventSourceRef = useRef<EventSource | null>(null);
+
+  // ── Kéo giãn ô nhập (INPUT CHANNEL) ──
+  // Chiều cao ô nhập task (px) người dùng tự kéo. null = mặc định (co theo nội dung).
+  // Kéo dải mỏng ngay trên ô nhập; .chat phía trên tự co/giãn nhường chỗ.
+  const [taskHeight, setTaskHeight] = useState<number | null>(() => {
+    const saved = Number(localStorage.getItem('bow-task-height'));
+    return Number.isFinite(saved) && saved > 0 ? saved : null;
+  });
+  // Kéo lên = ô nhập cao thêm, xuống = thấp lại. Đo từ chiều cao THẬT lúc bắt đầu kéo
+  // (getBoundingClientRect) để không nhảy giật. Kẹp trong [60, 55% cửa sổ] — chừa chỗ
+  // cho phần đầu khung (chế độ/model…) + nút Chạy + vùng chat, không đẩy gì ra ngoài.
+  const startTaskResize = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = taskRef.current?.getBoundingClientRect().height ?? 60;
+    const maxH = () => Math.round(window.innerHeight * 0.55);
+    const onMove = (ev: PointerEvent) => {
+      const next = Math.min(Math.max(startH + (startY - ev.clientY), 60), maxH());
+      setTaskHeight(next);
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+    };
+    // Chặn bôi đen text + đổi con trỏ toàn trang trong lúc kéo cho mượt.
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'ns-resize';
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+  useEffect(() => {
+    if (taskHeight == null) localStorage.removeItem('bow-task-height');
+    else localStorage.setItem('bow-task-height', String(taskHeight));
+  }, [taskHeight]);
 
   /** Bấm một gợi ý nhanh: điền sẵn task. */
   function applyQuickPrompt(qp: { text: string }) {
@@ -881,6 +975,14 @@ export function App() {
     localStorage.setItem('bow-theme', theme);
   }, [theme]);
 
+  // Áp màu nhấn lên <html data-accent> và nhớ. 'brass' = mặc định → gỡ attribute
+  // để :root/[data-theme] chi phối (không cần block CSS riêng cho brass).
+  useEffect(() => {
+    if (accent === 'brass') document.documentElement.removeAttribute('data-accent');
+    else document.documentElement.setAttribute('data-accent', accent);
+    localStorage.setItem('bow-accent', accent);
+  }, [accent]);
+
   // Migrate 1 lần: cuộc trò chuyện đang có trong localStorage (từ trước khi có tính năng
   // lịch sử) mà chưa gắn activeConvId → tạo thành bản ghi cuộc đầu tiên ở backend, không
   // để mất. persistActiveConversation tự sinh id + set activeConvId.
@@ -899,6 +1001,11 @@ export function App() {
       .then((c) => {
         setCfg(c);
         if (!cwd) setCwd(c.defaultCwd);
+        // Safe/QC Mode mặc định dùng Sonnet (nhẹ/rẻ để hỏi đáp) — chỉ áp khi người
+        // dùng CHƯA từng tự chọn model; nếu đã chọn thì tôn trọng lựa chọn của họ.
+        if (c.isSafeMode && !localStorage.getItem('bow-selectedModel')) {
+          setSelectedModel('claude-sonnet-5');
+        }
         if (c.mcpServers) {
           const saved = localStorage.getItem('bow-selectedMcps');
           if (!saved) {
@@ -1152,7 +1259,7 @@ export function App() {
         case 'result':
           addItem(
             'result',
-            `Xong · ${ev.turns} lượt · ${ev.outputTokens} tokens · $${ev.costUsd.toFixed(4)}`,
+            `Xong · ${fmtDuration(ev.durationMs)} · ${ev.turns} lượt · ${ev.outputTokens} tokens · $${ev.costUsd.toFixed(4)}`,
           );
           setAccumulatedCost((prev) => prev + ev.costUsd);
           break;
@@ -1283,7 +1390,15 @@ export function App() {
       }
     }
     // Lưu chốt cuộc hiện tại lần cuối (auto-lưu có thể chưa kịp chạy debounce).
-    await persistActiveConversation(items, conversationId);
+    // CHỈ dọn màn hình khi lưu thành công — nếu lưu lỗi, giữ nguyên tin nhắn để
+    // người dùng không mất dữ liệu, và báo cho họ biết.
+    if (items.length > 0) {
+      const savedId = await persistActiveConversation(items, conversationId);
+      if (!savedId) {
+        addItem('error', 'Không lưu được cuộc trò chuyện hiện tại (mất kết nối tới máy chủ). Đã giữ nguyên tin nhắn — hãy thử lại khi có kết nối để tránh mất dữ liệu.');
+        return;
+      }
+    }
     setItems([]);
     setPending([]);
     setQuestions([]);
@@ -1567,7 +1682,13 @@ export function App() {
   // Safe Mode (QC hỏi đáp read-only): ẩn bớt các nút/điều khiển kỹ thuật, khoá repo.
   // Bật bằng cách chạy `npm run ui:safe` (đặt BOW_SAFE_MODE=true ở backend).
   const safe = !!cfg?.isSafeMode;
-  const repoLabel = cfg?.repoName || (cfg?.defaultCwd ? cfg.defaultCwd.split('/').filter(Boolean).pop() : '') || 'monorepo';
+  // Tên repo hiển thị ở badge "Source" trên header:
+  // - Safe Mode: repo bị khoá vào cfg (safeCwd) → dùng repoName/defaultCwd từ backend.
+  // - Thường: repo là cwd người dùng đang chọn ở composer (thứ lượt chạy sẽ dùng) →
+  //   lấy tên thư mục từ chính cwd, để QC/mọi người luôn biết đang hỏi source nào.
+  const cwdRepoLabel = cwd.trim() ? cwd.trim().split('/').filter(Boolean).pop() : '';
+  const safeRepoLabel = cfg?.repoName || (cfg?.defaultCwd ? cfg.defaultCwd.split('/').filter(Boolean).pop() : '') || 'monorepo';
+  const repoLabel = safe ? safeRepoLabel : (cwdRepoLabel || '(chưa chọn)');
 
   return (
     <div className={`app${safe ? ' safe-mode' : ''}`}>
@@ -1584,8 +1705,10 @@ export function App() {
           <span className="brand-tag">Observatory</span>
         </div>
         <div className="obs-readouts">
-          {/* Safe Mode: source QC đang hỏi — gọn trên header. Admin bấm để đổi repo. */}
-          {safe && (
+          {/* Badge Source — luôn hiện để mọi người biết đang hỏi/làm việc trên repo nào.
+              - Safe Mode: repo bị khoá; chỉ Admin (localhost) bấm đổi được (target 'safe-cwd').
+              - Thường: repo là cwd đang chọn ở composer; ai cũng bấm đổi được (target 'cwd'). */}
+          {safe ? (
             cfg?.isAdmin ? (
               <button
                 className="readout readout-btn"
@@ -1601,11 +1724,39 @@ export function App() {
                 <span className="rv" style={{ color: 'var(--brass)' }}>{repoLabel}</span>
               </span>
             )
+          ) : (
+            <button
+              className="readout readout-btn"
+              title={`Đang làm việc trên repo: ${cwd.trim() || '(chưa chọn thư mục)'} — bấm để đổi`}
+              onClick={() => openPicker(cwd.trim() || cfg?.defaultCwd || '', 'cwd')}
+            >
+              <span className="rl">Source</span>
+              <span className="rv" style={{ color: 'var(--brass)' }}>{repoLabel}</span>
+            </button>
           )}
           <span className="readout" title="Giờ UTC">
             <span className="rl">UTC</span>
             <span className="rv">{utc}</span>
           </span>
+          {/* Đồng hồ phiên: đang chạy → tick mỗi giây (nhờ interval UTC); xong → đứng ở
+              tổng thời lượng lượt gần nhất. Ẩn khi chưa chạy lượt nào. */}
+          {(running && runStartedAt != null) || lastRunMs != null ? (
+            <span
+              className="readout"
+              title={
+                running
+                  ? 'Thời gian lượt chạy hiện tại (tính cả lúc chờ duyệt)'
+                  : 'Thời lượng lượt chạy gần nhất'
+              }
+            >
+              <span className="rl">Time</span>
+              <span className="rv" style={{ color: running ? 'var(--brass)' : undefined }}>
+                {running && runStartedAt != null
+                  ? fmtDuration(Date.now() - runStartedAt)
+                  : fmtDuration(lastRunMs!)}
+              </span>
+            </span>
+          ) : null}
           {!safe && (
             <span className="readout" title="Chi phí tích lũy phiên này">
               <span className="rl">Cost</span>
@@ -1741,6 +1892,7 @@ export function App() {
               <Icon name="users" size={18} />
             </button>
           )}
+          <AccentPicker value={accent} options={ACCENTS} onChange={(id) => setAccent(id as Accent)} />
           <button
             className="theme-btn"
             title={theme === 'light' ? 'Chuyển giao diện tối' : 'Chuyển giao diện sáng'}
@@ -1923,10 +2075,31 @@ export function App() {
 
         <div className="chat-container">
           {isScrolled && activeQuery && (
-            <div className="chat-pinned-query" key={activeQuery} title={activeQuery}>
+            <button
+              type="button"
+              className="chat-pinned-query"
+              key={activeQuery}
+              title={`${activeQuery}\n(bấm để cuộn tới câu hỏi này)`}
+              onClick={() => {
+                // Cuộn tới ĐÚNG câu user đang hiển thị trên pill. Tìm item 'user' cuối
+                // cùng có text khớp activeQuery (khớp bản đã gom khoảng trắng để an toàn),
+                // rồi đưa phần tử data-id của nó lên đầu vùng cuộn.
+                const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
+                const target = [...items]
+                  .reverse()
+                  .find((it) => it.kind === 'user' && norm(it.text) === norm(activeQuery));
+                const container = scrollRef.current;
+                if (!target || !container) return;
+                const el = container.querySelector<HTMLElement>(`[data-id="${target.id}"]`);
+                if (!el) return;
+                // Chừa 8px phía trên cho thoáng; cuộn mượt trong khung chat.
+                container.scrollTo({ top: Math.max(0, el.offsetTop - 8), behavior: 'smooth' });
+              }}
+            >
               <span className="pinned-icon"><Icon name="pin" size={14} /></span>
               <span className="pinned-text">{activeQuery.replace(/\s+/g, ' ')}</span>
-            </div>
+              <span className="pinned-up"><Icon name="caretUp" size={14} /></span>
+            </button>
           )}
           <div
             className="chat"
@@ -1971,25 +2144,108 @@ export function App() {
             Agent tự nhận diện <b>source</b> từ thư mục repo.
           </div>
         )}
-        {items.map((it, idx) => {
-          // Dòng tool cuối cùng khi agent đang chạy = tool ĐANG thực thi → gắn class
-          // `running` để CSS hiện spinner quay + chấm nhấp nháy, phân biệt với dòng đã xong.
-          const isLastToolRunning =
-            running &&
-            it.kind === 'tool' &&
-            pending.length === 0 &&
-            questions.length === 0 &&
-            !items.slice(idx + 1).some((n) => n.kind === 'tool');
-          return (
-            <div
-              key={it.id}
-              data-id={it.id}
-              className={`bubble ${it.kind}${isLastToolRunning ? ' running' : ''}`}
-            >
-              {it.kind === 'agent' ? <Markdown text={it.text} /> : it.text}
-            </div>
-          );
-        })}
+        {(() => {
+          // Gộp các dòng tool LIÊN TIẾP (đọc file, tìm code, chạy lệnh…) thành MỘT
+          // nhóm gấp/mở gọn, thay vì đổ hàng chục dòng "đọc file…" ra khung chat.
+          // Các dòng khác (user hỏi / agent trả lời / kết quả) vẫn hiện inline như cũ.
+          // Riêng "gọi agent phụ" giữ nguyên là 1 dòng riêng vì đó là mốc đáng chú ý.
+          const isAgentCall = (it: ChatItem) =>
+            it.kind === 'tool' && it.text.includes('agent phụ');
+
+          type Row =
+            | { kind: 'item'; it: ChatItem }
+            | { kind: 'group'; id: string; tools: ChatItem[] };
+          const rows: Row[] = [];
+          let buf: ChatItem[] = [];
+          const flush = () => {
+            if (buf.length === 0) return;
+            if (buf.length === 1) {
+              // 1 tool đơn lẻ: không cần gộp, hiện thẳng cho gọn.
+              rows.push({ kind: 'item', it: buf[0] });
+            } else {
+              rows.push({ kind: 'group', id: `tg-${buf[0].id}`, tools: buf });
+            }
+            buf = [];
+          };
+          items.forEach((it) => {
+            if (it.kind === 'tool' && !isAgentCall(it)) {
+              buf.push(it);
+            } else {
+              flush();
+              rows.push({ kind: 'item', it });
+            }
+          });
+          flush();
+
+          const lastToolItem = running && pending.length === 0 && questions.length === 0
+            ? [...items].reverse().find((n) => n.kind === 'tool')
+            : undefined;
+
+          return rows.map((row) => {
+            if (row.kind === 'group') {
+              const open = expandedChatGroups.has(row.id);
+              const groupRunning = lastToolItem
+                ? row.tools.some((t) => t.id === lastToolItem.id)
+                : false;
+              // Đếm theo nhãn để hiện "đọc file… ×3" cho gọn.
+              const counts: Record<string, number> = {};
+              row.tools.forEach((t) => {
+                counts[t.text] = (counts[t.text] || 0) + 1;
+              });
+              const summary = Object.entries(counts)
+                .map(([txt, c]) => (c > 1 ? `${txt} ×${c}` : txt))
+                .join(' · ');
+              return (
+                <div
+                  key={row.id}
+                  className={`bubble tool tool-group${groupRunning ? ' running' : ''}`}
+                >
+                  <button
+                    type="button"
+                    className="tool-group-head"
+                    onClick={() =>
+                      setExpandedChatGroups((prev) => {
+                        const next = new Set(prev);
+                        next.has(row.id) ? next.delete(row.id) : next.add(row.id);
+                        return next;
+                      })
+                    }
+                  >
+                    <Icon name={open ? 'caretDown' : 'caretRight'} size={13} />
+                    <span className="tool-group-title">
+                      ⚙️ {row.tools.length} thao tác mã nguồn
+                    </span>
+                    {!open && <span className="tool-group-preview">{summary}</span>}
+                  </button>
+                  {open && (
+                    <ul className="tool-group-list">
+                      {row.tools.map((t) => (
+                        <li key={t.id} className="tool-group-row">
+                          <span className="tg-name">{t.text}</span>
+                          {t.tool?.summary && (
+                            <span className="tg-summary">{t.tool.summary}</span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              );
+            }
+
+            const it = row.it;
+            const isLastToolRunning = lastToolItem?.id === it.id;
+            return (
+              <div
+                key={it.id}
+                data-id={it.id}
+                className={`bubble ${it.kind}${isLastToolRunning ? ' running' : ''}`}
+              >
+                {it.kind === 'agent' ? <Markdown text={it.text} /> : it.text}
+              </div>
+            );
+          });
+        })()}
         {running && pending.length === 0 && questions.length === 0 && (
           <div className="thinking">
             Agent đang làm việc
@@ -2112,12 +2368,15 @@ export function App() {
           onFiles(e.dataTransfer.files);
         }}
       >
-        {!safe && (
         <div className="controls">
+          {/* Safe/QC Mode: backend ép chế độ 'plan' → ẩn ô Chế độ (chọn cũng vô nghĩa).
+              Vẫn cho QC đổi Model/Profile/Effort để chọn model nhẹ hơn khi hỏi. */}
+          {!safe && (
           <div className="field">
             Chế độ:
             <ModeSelect value={mode} onChange={setMode} disabled={running} />
           </div>
+          )}
           <label>
             Model:
             <PixelSelect
@@ -2158,8 +2417,41 @@ export function App() {
               ]}
             />
           </label>
+          {/* Ô chọn thư mục repo (cwd) — thu gọn, nằm cuối hàng bên phải Effort.
+              Chỉ HIỂN THỊ tên folder (basename, vd "monorepo"); cwd đầy đủ vẫn giữ ở state
+              để gửi backend, và hiện qua tooltip khi hover.
+              Ẩn ở Safe/QC Mode: repo bị khoá vào safeCwd, chỉ Admin đổi được (chỗ khác). */}
+          {!safe && (
+          <div
+            className="cwd-container"
+            style={{ display: 'flex', gap: '6px', alignItems: 'stretch', marginLeft: 'auto', flexShrink: 0 }}
+            title={cwd || 'Chưa chọn thư mục repo (cwd)'}
+          >
+            <input
+              className="cwd"
+              placeholder="Chọn repo"
+              value={cwd.trim() ? (cwd.trim().split('/').filter(Boolean).pop() ?? cwd) : ''}
+              readOnly
+              onClick={() => { if (!running) openPicker(cwd); }}
+              disabled={running}
+              style={{
+                width: '130px',
+                cursor: running ? 'not-allowed' : 'pointer',
+              }}
+            />
+            <button
+              className="btn folder-picker-btn"
+              type="button"
+              disabled={running}
+              onClick={() => openPicker(cwd)}
+              title="Chọn thư mục"
+              style={{ padding: '0 10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            >
+              <Icon name="folder" size={16} />
+            </button>
+          </div>
+          )}
         </div>
-        )}
 
         {!safe && detected && (
           <div className="detected">
@@ -2171,32 +2463,6 @@ export function App() {
               </button>
             )}
           </div>
-        )}
-
-        {!safe && (
-        <div className="row">
-          <div className="cwd-container" style={{ display: 'flex', flex: 1, gap: '6px', alignItems: 'stretch' }}>
-            <input
-              className="cwd"
-              placeholder="Thư mục repo (cwd)"
-              value={cwd}
-              readOnly
-              onClick={() => { if (!running) openPicker(cwd); }}
-              disabled={running}
-              style={{ flex: 1, cursor: running ? 'not-allowed' : 'pointer' }}
-            />
-            <button
-              className="btn folder-picker-btn"
-              type="button"
-              disabled={running}
-              onClick={() => openPicker(cwd)}
-              title="Chọn thư mục"
-              style={{ padding: '0 12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-            >
-              <Icon name="folder" size={18} />
-            </button>
-          </div>
-        </div>
         )}
 
         {/* Chỉ báo workspace: cwd này thuộc sản phẩm nào, gồm những repo anh em nào.
@@ -2264,10 +2530,24 @@ export function App() {
           </div>
         )}
 
+        {/* Tay kéo giãn ô nhập: kéo lên = cao ra, xuống = thấp lại; bấm đúp = trả về
+            mặc định. Đặt trong luồng ngay trên ô nhập nên không che phần đầu khung. */}
+        <div
+          className="composer-resize-handle"
+          onPointerDown={startTaskResize}
+          onDoubleClick={() => setTaskHeight(null)}
+          role="separator"
+          aria-orientation="horizontal"
+          title="Kéo để đổi chiều cao ô nhập · bấm đúp để trả về mặc định"
+        >
+          <span className="composer-resize-grip" />
+        </div>
+
         <div className="composer-input">
           <textarea
             ref={taskRef}
             className="task"
+            style={taskHeight != null ? { height: taskHeight, maxHeight: 'none' } : undefined}
             placeholder="Mô tả task / đề tài…  ·  Ctrl+Enter để chạy  ·  kéo-thả file/ảnh vào đây"
             value={task}
             onChange={(e) => setTask(e.target.value)}
@@ -2833,9 +3113,11 @@ export function App() {
                     <br />
                   </>
                 )}
-                Xóa toàn bộ <strong>{items.length}</strong> tin nhắn và bắt đầu hội thoại mới?
+                Cuộc trò chuyện hiện tại (<strong>{items.length}</strong> tin nhắn) sẽ được{' '}
+                <strong>lưu vào Lịch sử</strong> và màn hình được dọn để bắt đầu cuộc mới.
                 <br />
-                Thao tác này không thể hoàn tác.
+                Bạn có thể mở lại và chat tiếp bất cứ lúc nào từ panel{' '}
+                <Icon name="history" size={13} /> Lịch sử.
               </p>
             </div>
             <div className="modal-footer" style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '16px' }}>

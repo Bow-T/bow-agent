@@ -146,6 +146,17 @@ function requireValue(flag: string, value: string | undefined): string {
   return value as string;
 }
 
+/** Format thời lượng ms → chuỗi gọn kiểu "1g 23p 45s" / "3p 42s" / "58s". */
+function fmtDuration(ms: number): string {
+  const total = Math.round(ms / 1000);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}g ${m}p ${s}s`;
+  if (m > 0) return `${m}p ${s}s`;
+  return `${s}s`;
+}
+
 function fail(msg: string): never {
   process.stderr.write(`Lỗi: ${msg}\n\n${USAGE}\n`);
   process.exit(1);
@@ -254,7 +265,7 @@ async function main(): Promise<void> {
           break;
         case 'result':
           process.stdout.write(
-            `✅ Xong sau ${ev.turns} lượt · ${ev.outputTokens} output tokens · $${ev.costUsd.toFixed(4)}\n`,
+            `✅ Xong sau ${fmtDuration(ev.durationMs)} · ${ev.turns} lượt · ${ev.outputTokens} output tokens · $${ev.costUsd.toFixed(4)}\n`,
           );
           break;
         case 'error':
