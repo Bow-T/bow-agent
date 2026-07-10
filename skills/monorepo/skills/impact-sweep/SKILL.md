@@ -90,6 +90,20 @@ need the full mapping below.
   returns null forever — the id now lives in a different table. A re-point is
   Cross-cutting: `grep -rn "<column>" apps/ supabase/` and fix every read site,
   not only the write path that triggered the migration.
+- **Derived accessors re-expose a value under a DIFFERENT name — grep the
+  projections, not just the base field.** When you change *how* a stored value
+  must be READ (not the value itself), a getter/computed-prop that projects it is
+  named for its USE, not the column, so a base-name grep skips it. <PROJECT_KEY>-833:
+  locking the `deliveries` bucket private meant every read of `proof_of_delivery_url`
+  had to be re-signed; grepping `proofOfDeliveryUrl` covered the query layer + VMs
+  but **missed `DeliveryBookingDetailModel.proofImageUrls`** — a getter that
+  concatenates the booking-level + per-stop `proof_of_delivery_url` into one list
+  the inline strip rendered RAW → broken images on the now-private bucket, shipped
+  green and merged. When you change a field's read-contract (signing, format,
+  nullability, source table), follow the base field to **every accessor that
+  returns/derives it** (`grep -rn "<field>\|<UseName>Url\|<UseName>Urls\|<UseName>Images"`)
+  and fix at the accessor or its source — a grep for the column name alone is not
+  the site list.
 
 ## 4. Make it self-enforcing so the NEXT change can't miss
 - Prefer `switch` with **no `default`** / full `Record` → a new member becomes a
@@ -127,6 +141,18 @@ declare a cross-cutting change safe post-merge):
 - **Then re-run the ground truth on the merged tree**: `analyze` + full suite +
   the pgTAP the object is pinned by. A merge that auto-resolved cleanly can still
   be logically wrong; the suite (and "am I the latest definer") is what proves it.
+
+**After shipping a cross-cutting change you could NOT runtime-test, adversarially
+self-review your own diff before trusting it.** Your sweep is blind to the site
+you didn't think to grep — an independent skeptic isn't. Spawn per-change review
+agents (opt-in, §6) told to *break* the diff: hunt read-path misses (the derived
+accessor you skipped), shadowed branches (a new early-return that makes a later
+one unreachable — <PROJECT_KEY>-834: a terminal-status guard placed above the
+already-used-PIN check made the dedicated "already used" branch dead for
+single-stop), and guard/validation regressions (<PROJECT_KEY>-836: a new required-field
+check that blocked editing a locked record). A batch of DB/storage/RPC changes
+that all passed `analyze`+tests can still carry these; the self-review catches
+them before QC — or before a merged regression does.
 
 ## 6. Large radius → fan out (opt-in)
 If the site set is large, offer a multi-agent workflow: parallel finders per
