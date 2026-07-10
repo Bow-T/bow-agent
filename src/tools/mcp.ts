@@ -2,10 +2,11 @@ import { existsSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import { config } from '../config/env.js';
 
 /** Đường dẫn file cấu hình Claude Code (chứa block mcpServers dùng chung). */
 function claudeJsonPath(): string {
-  return join(homedir(), '.claude.json');
+  return config.claudeJsonPath;
 }
 
 /**

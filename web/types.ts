@@ -35,7 +35,16 @@ export type WebEvent =
   | { type: 'tool-result'; toolId: string; text: string; isError: boolean }
   | { type: 'result'; text: string; turns: number; outputTokens: number; costUsd: number; durationMs: number }
   | { type: 'usage'; usage: UsageSnapshot }
-  | { type: 'error'; subtype: string }
+  | { type: 'error'; subtype: string; isSessionLimit?: boolean; resetsAt?: string | null }
+  | {
+      // Server đã lên lịch tự chạy tiếp sau khi hết hạn mức phiên (5h).
+      type: 'auto-resume-scheduled';
+      resetsAt: string | null;
+      retryAt: string;
+      attempt: number;
+      maxAttempts: number;
+    }
+  | { type: 'auto-resume-cancelled'; reason: 'user' | 'exhausted' | 'done' }
   | {
       type: 'approval-request';
       id: string;

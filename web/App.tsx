@@ -201,6 +201,18 @@ function formatResetIn(iso: string | null): string {
   return `Còn ${Math.round(hours / 24)}d`;
 }
 
+/** Đếm ngược tới thời điểm ISO → "1:23:45" / "12:07" / "0:09". Rỗng nếu đã qua. */
+function formatCountdown(iso: string): string {
+  const ms = new Date(iso).getTime() - Date.now();
+  if (!Number.isFinite(ms) || ms <= 0) return '0:00';
+  const total = Math.floor(ms / 1000);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
 /** Format thời lượng ms → chuỗi gọn kiểu "1g 23p 45s" / "3p 42s" / "58s". */
 function fmtDuration(ms: number): string {
   const total = Math.round(ms / 1000);
@@ -234,9 +246,24 @@ export function App() {
     repoName?: string;
     mcpServers?: string[];
     lanUrl?: string;
+    lanUrls?: string[];
     isSafeMode?: boolean;
     isCollabMode?: boolean;
     isAdmin?: boolean;
+    claudeProfiles?: { name: string; tokenSet: boolean }[];
+    currentClaudeProfile?: string;
+    hasAuth?: boolean;
+    tokenSet?: boolean;
+    otherModes?: {
+      dev: { repoName: string; defaultCwd: string };
+      safe: { repoName: string; defaultCwd: string };
+      collab: { repoName: string; defaultCwd: string };
+    };
+  } | null>(null);
+  const [otherModes, setOtherModes] = useState<{
+    dev: { repoName: string; defaultCwd: string };
+    safe: { repoName: string; defaultCwd: string };
+    collab: { repoName: string; defaultCwd: string };
   } | null>(null);
   const [task, setTask] = useState(() => localStorage.getItem('bow-task') || '');
   const [cwd, setCwd] = useState(() => localStorage.getItem('bow-cwd') || '');
@@ -271,6 +298,19 @@ export function App() {
   const [usage, setUsage] = useState<UsageSnapshot | null>(null);
   const [usageLoading, setUsageLoading] = useState(false);
 
+  const getActiveOrigins = useCallback(() => {
+    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    if (!isLocal) return [''];
+    const origins = ['http://localhost:4000'];
+    if (otherModes?.safe?.defaultCwd) {
+      origins.push('http://localhost:4001');
+    }
+    if (otherModes?.collab?.defaultCwd) {
+      origins.push('http://localhost:4002');
+    }
+    return origins;
+  }, [otherModes]);
+
   const [docs, setDocs] = useState<DocAttachment[]>([]);
   const [pdfs, setPdfs] = useState<{ name: string; base64: string }[]>([]);
   const [images, setImages] = useState<ImageAttachment[]>([]);
@@ -297,6 +337,23 @@ export function App() {
   const [conversationId, setConversationId] = useState<string | null>(
     () => localStorage.getItem('bow-conversation-id') || null
   );
+
+  // ── Tự chạy tiếp khi hết hạn mức phiên (5h) ──
+  // Khi phiên dừng vì "You've hit your session limit", server lên lịch chạy tiếp lúc reset.
+  // `autoResume` giữ thông tin lịch để hiện thẻ đếm ngược + nút huỷ. null = không có lịch.
+  const [autoResume, setAutoResume] = useState<{
+    retryAt: string;
+    resetsAt: string | null;
+    attempt: number;
+    maxAttempts: number;
+    conversationId: string | null;
+  } | null>(null);
+  // Đồng hồ tick 1s để đếm ngược tới retryAt (chỉ chạy khi có lịch).
+  const [resumeTick, setResumeTick] = useState(0);
+  // Timer fallback client-side: nếu tới giờ mà server IM (đã tắt?), client tự gọi lại.
+  const clientResumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Giữ payload lượt vừa chạy để client-side fallback gửi lại được (resume + prompt tiếp tục).
+  const lastRunPayloadRef = useRef<Record<string, unknown> | null>(null);
 
   // ── Lịch sử nhiều cuộc trò chuyện (lưu bền ở backend) ──
   // id cuộc đang mở. Mọi item/agent hiện trên màn hình thuộc về cuộc này; auto-lưu đẩy
@@ -378,6 +435,120 @@ export function App() {
   const [pickerDirs, setPickerDirs] = useState<string[]>([]);
   const [pickerError, setPickerError] = useState('');
   const [confirmClearOpen, setConfirmClearOpen] = useState(false);
+
+  // State for Custom Claude Account Modal
+  const [claudeModal, setClaudeModal] = useState<{
+    type: 'prompt' | 'alert';
+    title: string;
+    message: string;
+    onConfirm: (val?: string) => void;
+    onCancel?: () => void;
+  } | null>(null);
+  const [claudeModalInput, setClaudeModalInput] = useState('');
+
+  const showClaudePrompt = (title: string, message: string, defaultValue = ''): Promise<string | null> => {
+    return new Promise((resolve) => {
+      setClaudeModalInput(defaultValue);
+      setClaudeModal({
+        type: 'prompt',
+        title,
+        message,
+        onConfirm: (val) => {
+          resolve(val || null);
+        },
+        onCancel: () => {
+          resolve(null);
+        }
+      });
+    });
+  };
+
+  const showClaudeAlert = (title: string, message: string): Promise<void> => {
+    return new Promise((resolve) => {
+      setClaudeModal({
+        type: 'alert',
+        title,
+        message,
+        onConfirm: () => {
+          resolve();
+        }
+      });
+    });
+  };
+
+  const [authModal, setAuthModal] = useState<{
+    profile: string;
+    mode: 'select' | 'oauth' | 'token';
+    oauthUrl?: string;
+    oauthCode?: string;
+    oauthLoading?: boolean;
+    oauthError?: string;
+    tokenValue?: string;
+    tokenLoading?: boolean;
+    tokenError?: string;
+  } | null>(null);
+
+  const [copiedUrl, setCopiedUrl] = useState(false);
+
+  const submitOauthCode = async () => {
+    if (!authModal || authModal.mode !== 'oauth') return;
+    setAuthModal(prev => prev ? { ...prev, oauthLoading: true, oauthError: '' } : null);
+    try {
+      const res = await apiFetch('/api/profiles/login/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile: authModal.profile, code: authModal.oauthCode }),
+      });
+      if (res.ok) {
+        setAuthModal(null);
+        const configRes = await apiFetch('/api/config');
+        if (configRes.ok) {
+          const newCfg = await configRes.json();
+          setCfg(newCfg);
+          if (newCfg.mcpServers) {
+            setSelectedMcps(newCfg.mcpServers);
+          }
+        }
+        await showClaudeAlert('Đăng nhập thành công', `Tài khoản 'claude-${authModal.profile}' đã được đăng nhập thành công.`);
+      } else {
+        const err = await res.json();
+        setAuthModal(prev => prev ? { ...prev, oauthLoading: false, oauthError: err.error || 'Xác thực thất bại.' } : null);
+      }
+    } catch (e) {
+      console.error(e);
+      setAuthModal(prev => prev ? { ...prev, oauthLoading: false, oauthError: 'Lỗi kết nối.' } : null);
+    }
+  };
+
+  const submitManualToken = async () => {
+    if (!authModal || authModal.mode !== 'token') return;
+    setAuthModal(prev => prev ? { ...prev, tokenLoading: true, tokenError: '' } : null);
+    try {
+      const res = await apiFetch('/api/profiles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile: authModal.profile, token: authModal.tokenValue }),
+      });
+      if (res.ok) {
+        setAuthModal(null);
+        const configRes = await apiFetch('/api/config');
+        if (configRes.ok) {
+          const newCfg = await configRes.json();
+          setCfg(newCfg);
+          if (newCfg.mcpServers) {
+            setSelectedMcps(newCfg.mcpServers);
+          }
+        }
+        await showClaudeAlert('Thành công', 'Đã cập nhật token cấu hình cho tài khoản này.');
+      } else {
+        const err = await res.json();
+        setAuthModal(prev => prev ? { ...prev, tokenLoading: false, tokenError: err.error || 'Lưu token thất bại.' } : null);
+      }
+    } catch (e) {
+      console.error(e);
+      setAuthModal(prev => prev ? { ...prev, tokenLoading: false, tokenError: 'Lỗi kết nối.' } : null);
+    }
+  };
 
   // ── Panel quản lý MCP server ──
   const [mcpPanelOpen, setMcpPanelOpen] = useState(false);
@@ -1000,27 +1171,17 @@ export function App() {
     if (!cfg?.isAdmin) return;
     
     const fetchConfigs = () => {
-      fetch('http://localhost:4000/api/config')
+      apiFetch('/api/config')
         .then((r) => r.json())
         .then((c) => {
-          setDevRepoLabel(c.repoName);
-          setDevCwd(c.defaultCwd);
-        })
-        .catch(() => {});
-
-      fetch('http://localhost:4001/api/config')
-        .then((r) => r.json())
-        .then((c) => {
-          setSafeRepoLabel(c.repoName);
-          setSafeCwd(c.defaultCwd);
-        })
-        .catch(() => {});
-
-      fetch('http://localhost:4002/api/config')
-        .then((r) => r.json())
-        .then((c) => {
-          setCollabRepoLabel(c.repoName);
-          setCollabCwd(c.defaultCwd);
+          if (c.otherModes) {
+            setDevRepoLabel(c.otherModes.dev.repoName);
+            setDevCwd(c.otherModes.dev.defaultCwd);
+            setSafeRepoLabel(c.otherModes.safe.repoName);
+            setSafeCwd(c.otherModes.safe.defaultCwd);
+            setCollabRepoLabel(c.otherModes.collab.repoName);
+            setCollabCwd(c.otherModes.collab.defaultCwd);
+          }
         })
         .catch(() => {});
     };
@@ -1103,7 +1264,7 @@ export function App() {
 
   const refreshAccessUsers = useCallback(() => {
     if (!cfg?.isAdmin) return;
-    const origins = getAdminApiOrigins();
+    const origins = getActiveOrigins();
     setAccessUsers([]);
     origins.forEach((origin) => {
       fetch(`${origin}/api/access/users`)
@@ -1119,7 +1280,7 @@ export function App() {
         })
         .catch(() => {});
     });
-  }, [cfg?.isAdmin]);
+  }, [cfg?.isAdmin, getActiveOrigins]);
 
   // Kiểm tra cổng lúc mở app và định kỳ 2s/lần
   useEffect(() => {
@@ -1161,9 +1322,14 @@ export function App() {
     setCodeBusy(true);
     setCodeError('');
     try {
+      // Gửi kèm token đã lưu (nếu có) để server nhận lại ĐÚNG bản ghi của chính mình khi
+      // reload — server che token của người khác cùng tên+IP (chống rò token, M6).
+      const savedToken = localStorage.getItem(ACCESS_TOKEN_KEY) || '';
+      const reqHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (savedToken) reqHeaders['x-bow-token'] = savedToken;
       const res = await fetch('/api/access/request', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: reqHeaders,
         body: JSON.stringify({ name }),
       });
       const data = await res.json();
@@ -1229,10 +1395,10 @@ export function App() {
     }
   }, [cfg?.isAdmin, refreshAccessUsers]);
 
-  // Nhận sự kiện realtime về yêu cầu truy cập từ LAN (trên cả 3 cổng)
+  // Nhận sự kiện realtime về yêu cầu truy cập từ LAN (trên cả các cổng đang hoạt động)
   useEffect(() => {
     if (!cfg?.isAdmin) return;
-    const origins = getAdminApiOrigins();
+    const origins = getActiveOrigins();
     const sources: EventSource[] = [];
 
     origins.forEach((origin) => {
@@ -1262,7 +1428,7 @@ export function App() {
     return () => {
       sources.forEach((s) => s.close());
     };
-  }, [cfg?.isAdmin]);
+  }, [cfg?.isAdmin, getActiveOrigins]);
 
   // Collab Mode: yêu cầu duyệt lệnh hủy hoại do CTV phát lên, admin (localhost) duyệt.
   const [collabApprovals, setCollabApprovals] = useState<
@@ -1286,14 +1452,18 @@ export function App() {
   const [auditLogs, setAuditLogs] = useState<string[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
 
-  const [copied, setCopied] = useState(false);
+  // URL vừa được copy (để hiện "ĐÃ COPY!"); null = chưa copy gì.
+  const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
+  // Dropdown danh sách host LAN đang mở hay không.
+  const [lanMenuOpen, setLanMenuOpen] = useState(false);
 
-  const copyLanUrl = () => {
-    if (cfg?.lanUrl) {
-      navigator.clipboard.writeText(cfg.lanUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
+  // Tất cả host LAN của máy. Ưu tiên lanUrls (nhiều host); fallback lanUrl (bản cũ).
+  const lanUrls = cfg?.lanUrls?.length ? cfg.lanUrls : cfg?.lanUrl ? [cfg.lanUrl] : [];
+
+  const copyLanUrl = (url: string) => {
+    navigator.clipboard.writeText(url);
+    setCopiedUrl(url);
+    setTimeout(() => setCopiedUrl((c) => (c === url ? null : c)), 2000);
   };
 
   const fetchActiveClients = () => {
@@ -1349,6 +1519,18 @@ export function App() {
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
+  }, []);
+
+  // Tick 1s để đếm ngược tới giờ tự-chạy-tiếp — chỉ chạy khi có lịch (đỡ tốn khi rảnh).
+  useEffect(() => {
+    if (!autoResume) return;
+    const id = setInterval(() => setResumeTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [autoResume]);
+
+  // Dọn timer fallback client khi component unmount.
+  useEffect(() => () => {
+    if (clientResumeTimerRef.current) clearTimeout(clientResumeTimerRef.current);
   }, []);
 
   // Đồng hồ phiên: bấm giờ khi running bật, chốt thời lượng khi tắt (kể cả kết thúc
@@ -1461,10 +1643,16 @@ export function App() {
   // Nạp cấu hình backend.
   useEffect(() => {
     apiFetch('/api/config')
-      .then((r) => r.json())
+      .then((r) => (r.ok ? r.json() : null))
       .then((c) => {
+        // LAN chưa được duyệt → /api/config trả 401; c=null. Bỏ qua để cổng
+        // truy cập tự hiện (đừng setCfg bằng body lỗi → tránh setCwd(undefined)).
+        if (!c) return;
         setCfg(c);
-        if (!cwd) setCwd(c.defaultCwd);
+        if (c.otherModes) {
+          setOtherModes(c.otherModes);
+        }
+        if (!cwd && c.defaultCwd) setCwd(c.defaultCwd);
         // Safe/QC Mode chỉ hỏi đáp read-only → LUÔN dùng Sonnet (nhẹ/rẻ), bất kể
         // localStorage. Backend cũng ép Sonnet ở mode này nên UI phải khớp để không
         // hiển thị Opus mà thực chất chạy Sonnet.
@@ -1485,10 +1673,10 @@ export function App() {
   }, []);
 
   // Collab Mode + admin (localhost): mở kênh SSE riêng nhận yêu cầu duyệt lệnh hủy hoại
-  // từ CTV. Kênh toàn cục /api/admin/events (trên cả 3 cổng).
+  // từ CTV. Kênh toàn cục /api/admin/events (trên cả các cổng đang hoạt động).
   useEffect(() => {
     if (!cfg?.isAdmin) return;
-    const origins = getAdminApiOrigins();
+    const origins = getActiveOrigins();
     const sources: EventSource[] = [];
 
     origins.forEach((origin) => {
@@ -1514,7 +1702,7 @@ export function App() {
     return () => {
       sources.forEach((s) => s.close());
     };
-  }, [cfg?.isAdmin]);
+  }, [cfg?.isAdmin, getActiveOrigins]);
 
   // Khôi phục phiên chạy cũ nếu có và đang hoạt động
   useEffect(() => {
@@ -1537,6 +1725,32 @@ export function App() {
         .catch(() => {
           localStorage.removeItem('bow-session-id');
         });
+    }
+    // Không có phiên sống nhưng có conversationId → hỏi server còn lịch tự-chạy-tiếp treo
+    // không (server còn giữ dù client từng đóng tab), để dựng lại thẻ đếm ngược.
+    const savedConv = localStorage.getItem('bow-conversation-id');
+    if (!savedSessionId && savedConv) {
+      apiFetch(`/api/resume/pending?conversationId=${encodeURIComponent(savedConv)}`)
+        .then((r) => r.json())
+        .then((d: { pending: boolean; retryAt?: string }) => {
+          if (d.pending && d.retryAt) {
+            setAutoResume({
+              retryAt: d.retryAt,
+              resetsAt: null,
+              attempt: 1,
+              maxAttempts: 3,
+              conversationId: savedConv,
+            });
+            // Đặt lại fallback client theo retryAt server báo.
+            if (clientResumeTimerRef.current) clearTimeout(clientResumeTimerRef.current);
+            const delay = Math.max(0, new Date(d.retryAt).getTime() - Date.now()) + 20_000;
+            clientResumeTimerRef.current = setTimeout(() => {
+              clientResumeTimerRef.current = null;
+              triggerClientResume(savedConv);
+            }, delay);
+          }
+        })
+        .catch(() => { /* server có thể đã tắt — bỏ qua */ });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1595,6 +1809,74 @@ export function App() {
     await addFiles(files);
   }
 
+  // Prompt "tiếp tục" — khớp AUTO_RESUME_PROMPT ở server (dùng cho client-side fallback).
+  const RESUME_PROMPT =
+    'Phiên trước bị ngắt do hết hạn mức sử dụng. Hãy tiếp tục công việc đang làm dở từ chỗ ' +
+    'bạn dừng lại, không cần hỏi lại từ đầu.';
+
+  // Xoá mọi trạng thái lịch tự-chạy-tiếp: ẩn thẻ đếm ngược + huỷ timer fallback client.
+  function clearAutoResume() {
+    setAutoResume(null);
+    if (clientResumeTimerRef.current) {
+      clearTimeout(clientResumeTimerRef.current);
+      clientResumeTimerRef.current = null;
+    }
+  }
+
+  // Người dùng bấm "Huỷ tự chạy tiếp": báo server huỷ lịch + xoá trạng thái client.
+  async function cancelAutoResume() {
+    const cid = autoResume?.conversationId || conversationId;
+    clearAutoResume();
+    if (cid) {
+      try {
+        await apiFetch('/api/resume/cancel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ conversationId: cid }),
+        });
+      } catch {
+        // Server có thể đã tắt — thẻ đã ẩn phía client là đủ.
+      }
+    }
+    addItem('system', 'Đã huỷ tự động chạy tiếp.');
+  }
+
+  // Gửi một lượt "tiếp tục" resume phiên cũ. Dùng cho CLIENT-SIDE FALLBACK: khi tới giờ
+  // reset mà server IM (đã tắt), client tự khởi động lại từ localStorage cấu hình đã lưu.
+  async function triggerClientResume(cid: string) {
+    if (running) return; // server đã tự chạy tiếp rồi → thôi
+    const cfg = lastRunPayloadRef.current ?? {};
+    setRunning(true);
+    addItem('system', '⏳ Hết hạn mức đã reset — tự chạy tiếp phiên dở…');
+    let res: Response;
+    try {
+      res = await apiFetch('/api/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...cfg, text: RESUME_PROMPT, conversationId: cid }),
+      });
+    } catch (err) {
+      addItem('error', `Không tự chạy tiếp được: ${(err as Error).message}`);
+      setRunning(false);
+      return;
+    }
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: 'lỗi không rõ' }));
+      addItem('error', body.error ?? `HTTP ${res.status}`);
+      setRunning(false);
+      return;
+    }
+    const { sessionId: sid } = await res.json();
+    setSessionId(sid);
+    localStorage.setItem('bow-session-id', sid);
+    setItems((prev) => {
+      sessionBaselineRef.current = prev.length;
+      localStorage.setItem('bow-session-baseline', String(prev.length));
+      return prev;
+    });
+    streamEvents(sid);
+  }
+
   async function start() {
     if (running) return;
     const hasInput = task.trim() || docs.length || pdfs.length || images.length;
@@ -1649,6 +1931,22 @@ export function App() {
     setDocs([]);
     setPdfs([]);
     setImages([]);
+
+    // Nếu đang có lịch tự-chạy-tiếp treo (từ lượt trước), người dùng gửi tay = đã tiếp tục —
+    // xoá thẻ đếm ngược + huỷ timer fallback client (server tự huỷ theo conversationId).
+    clearAutoResume();
+
+    // Lưu cấu hình chạy (không kèm file đính kèm/tài liệu — resume chỉ cần "tiếp tục") để
+    // client-side fallback gửi lại được nếu server im lúc tới giờ reset.
+    lastRunPayloadRef.current = {
+      mcpServers: selectedMcps,
+      mode,
+      profile,
+      effort,
+      language,
+      cwd: cwd.trim() || undefined,
+      model: selectedModel,
+    };
 
     let res: Response;
     try {
@@ -1765,7 +2063,41 @@ export function App() {
           setUsage(ev.usage);
           break;
         case 'error':
-          addItem('error', `Kết thúc bất thường: ${ev.subtype}`);
+          if (ev.isSessionLimit) {
+            // Hết hạn mức phiên (5h). Server sẽ gửi 'auto-resume-scheduled' ngay sau đây
+            // (nếu đủ điều kiện) — thẻ đếm ngược dựng từ event đó. Ở đây chỉ báo ngắn gọn.
+            const when = ev.resetsAt ? formatResetIn(ev.resetsAt) : '';
+            addItem('system', `⏸️ Hết hạn mức phiên (5h)${when ? ` · reset ${when.toLowerCase()}` : ''}. Đang chờ lịch tự chạy tiếp…`);
+          } else {
+            addItem('error', `Kết thúc bất thường: ${ev.subtype}`);
+          }
+          break;
+        case 'auto-resume-scheduled': {
+          // Server đã lên lịch tự chạy tiếp. Lưu để hiện thẻ đếm ngược + đặt fallback client.
+          setAutoResume({
+            retryAt: ev.retryAt,
+            resetsAt: ev.resetsAt,
+            attempt: ev.attempt,
+            maxAttempts: ev.maxAttempts,
+            conversationId,
+          });
+          addItem('system', `🕒 Sẽ tự chạy tiếp lúc ${new Date(ev.retryAt).toLocaleTimeString('vi-VN')} (lần ${ev.attempt}/${ev.maxAttempts}).`);
+          // Fallback client: nếu tới giờ + 20s mà server chưa khởi động lại (running vẫn false),
+          // client tự gọi. Server-first nên đệm thêm 20s để không chạy trùng.
+          if (clientResumeTimerRef.current) clearTimeout(clientResumeTimerRef.current);
+          const cid = conversationId;
+          const delay = Math.max(0, new Date(ev.retryAt).getTime() - Date.now()) + 20_000;
+          clientResumeTimerRef.current = setTimeout(() => {
+            clientResumeTimerRef.current = null;
+            if (cid) triggerClientResume(cid);
+          }, delay);
+          break;
+        }
+        case 'auto-resume-cancelled':
+          clearAutoResume();
+          if (ev.reason === 'exhausted') {
+            addItem('error', `Đã tự chạy tiếp tối đa số lần cho phép mà vẫn hết hạn mức. Hãy tiếp tục thủ công khi hạn mức mở lại.`);
+          }
           break;
         case 'approval-request':
           // Dedup theo id: replay lịch sử hoặc 2 EventSource chồng lấn (StrictMode /
@@ -1800,6 +2132,20 @@ export function App() {
           // session_id THẬT của SDK. Lưu để lượt sau gửi lại làm conversationId →
           // agent resume đúng phiên và nhớ toàn bộ hội thoại trước.
           setConversationId(ev.conversationId);
+          // Phiên tự-chạy-tiếp đã KHỞI ĐỘNG (resume đúng hội thoại đang chờ) → xoá thẻ đếm
+          // ngược + huỷ timer fallback client (tránh gọi trùng). setRunning(true) để UI khoá
+          // ô nhập như một lượt chạy bình thường.
+          setAutoResume((prev) => {
+            if (prev && prev.conversationId === ev.conversationId) {
+              if (clientResumeTimerRef.current) {
+                clearTimeout(clientResumeTimerRef.current);
+                clientResumeTimerRef.current = null;
+              }
+              setRunning(true);
+              return null;
+            }
+            return prev;
+          });
           break;
         case 'done':
           setRunning(false);
@@ -2197,7 +2543,7 @@ export function App() {
   // - Safe Mode: repo bị khoá vào cfg (safeCwd) → dùng repoName/defaultCwd từ backend.
   // - Thường: repo là cwd người dùng đang chọn ở composer (thứ lượt chạy sẽ dùng) →
   //   lấy tên thư mục từ chính cwd, để QC/mọi người luôn biết đang hỏi source nào.
-  const cwdRepoLabel = cwd.trim() ? cwd.trim().split('/').filter(Boolean).pop() : '';
+  const cwdRepoLabel = cwd?.trim() ? cwd.trim().split('/').filter(Boolean).pop() : '';
   const localSafeRepoLabel = cfg?.repoName || (cfg?.defaultCwd ? cfg.defaultCwd.split('/').filter(Boolean).pop() : '') || 'monorepo';
   const repoLabel = safe ? localSafeRepoLabel : (cwdRepoLabel || '(chưa chọn)');
 
@@ -2374,17 +2720,67 @@ export function App() {
               </span>
             </span>
           )}
-          {cfg?.lanUrl && (
-            <button
-              className="readout readout-btn"
-              title="Địa chỉ mạng LAN của trang này. Bấm để copy."
-              onClick={copyLanUrl}
-            >
-              <span className="rl">LAN URL</span>
-              <span className="rv" style={{ color: copied ? 'var(--teal)' : 'var(--brass)', textDecoration: copied ? 'none' : 'underline' }}>
-                {copied ? 'ĐÃ COPY!' : cfg.lanUrl}
-              </span>
-            </button>
+          {lanUrls.length > 0 && (
+            <div className="lan-url-wrap">
+              <button
+                className="readout readout-btn"
+                title={
+                  lanUrls.length > 1
+                    ? `Máy có ${lanUrls.length} địa chỉ LAN. Bấm để chọn/copy đúng địa chỉ máy khách dùng.`
+                    : 'Địa chỉ mạng LAN của trang này. Bấm để copy.'
+                }
+                onClick={() => {
+                  // 1 host → copy luôn. Nhiều host → mở menu cho chọn.
+                  if (lanUrls.length === 1) copyLanUrl(lanUrls[0]);
+                  else setLanMenuOpen((o) => !o);
+                }}
+              >
+                <span className="rl">LAN</span>
+                <span
+                  className="rv"
+                  style={{
+                    color: copiedUrl && lanUrls.includes(copiedUrl) ? 'var(--teal)' : 'var(--brass)',
+                    textDecoration:
+                      copiedUrl && lanUrls.includes(copiedUrl) ? 'none' : lanUrls.length > 1 ? 'none' : 'underline',
+                  }}
+                >
+                  {/* Nhiều host: chỉ hiện số host (địa chỉ đầy đủ nằm trong dropdown) → gọn header. */}
+                  {copiedUrl && lanUrls.includes(copiedUrl)
+                    ? 'ĐÃ COPY!'
+                    : lanUrls.length > 1
+                    ? `${lanUrls.length} host`
+                    : lanUrls[0].replace(/^https?:\/\//, '')}
+                  {lanUrls.length > 1 && <span className="lan-url-caret">{lanMenuOpen ? '▴' : '▾'}</span>}
+                </span>
+              </button>
+              {lanMenuOpen && lanUrls.length > 1 && (
+                <>
+                  {/* Backdrop trong suốt: bấm ra ngoài để đóng menu. */}
+                  <div className="lan-url-backdrop" onClick={() => setLanMenuOpen(false)} />
+                  <div className="lan-url-menu" role="menu">
+                    <div className="lan-url-menu-head">
+                      Máy có nhiều địa chỉ mạng — chọn địa chỉ khớp mạng của máy khách
+                    </div>
+                    {lanUrls.map((url) => {
+                      const isCopied = copiedUrl === url;
+                      return (
+                        <button
+                          key={url}
+                          className="lan-url-item"
+                          onClick={() => copyLanUrl(url)}
+                          title="Bấm để copy"
+                        >
+                          <span className="lan-url-item-addr">{url.replace(/^https?:\/\//, '')}</span>
+                          <span className={`lan-url-item-copy${isCopied ? ' copied' : ''}`}>
+                            {isCopied ? 'ĐÃ COPY!' : 'Copy'}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
           )}
           {/* Hạn mức phiên 5 giờ (Session) — gọn trên header. Bấm để làm mới. */}
           {!safe && (() => {
@@ -2878,6 +3274,31 @@ export function App() {
         )}
       </div>
 
+      {/* Thẻ tự-chạy-tiếp: hiện khi phiên dừng vì hết hạn mức 5h và server đã lên lịch.
+          Đếm ngược tới giờ reset; người dùng có thể huỷ để tự tiếp tục thủ công. */}
+      {autoResume && (
+        <div className="chat-action-dock">
+          <div className="auto-resume-card" data-tick={resumeTick}>
+            <div className="auto-resume-head">
+              <Icon name="pending" size={16} /> Hết hạn mức phiên (5h) — sẽ tự chạy tiếp
+            </div>
+            <div className="auto-resume-body">
+              Tự động resume phiên và tiếp tục việc dở sau{' '}
+              <strong className="auto-resume-count">{formatCountdown(autoResume.retryAt)}</strong>
+              {' '}(lần {autoResume.attempt}/{autoResume.maxAttempts}).
+              {autoResume.resetsAt && (
+                <span className="auto-resume-when">
+                  {' '}Hạn mức reset lúc {new Date(autoResume.resetsAt).toLocaleTimeString('vi-VN')}.
+                </span>
+              )}
+            </div>
+            <div className="auto-resume-actions">
+              <button className="btn deny" onClick={cancelAutoResume}>Huỷ tự chạy tiếp</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Bến neo hành động — khung duyệt / câu hỏi ghim ngay trên composer, LUÔN
           hiển thị (không nằm trong vùng cuộn) nên nút bấm không bao giờ bị khuất.
 
@@ -3071,6 +3492,143 @@ export function App() {
               ]}
             />
           </label>
+          {cfg?.claudeProfiles && cfg.claudeProfiles.length > 0 && (
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+              Tài khoản:
+              <PixelSelect
+                value={cfg.currentClaudeProfile || 'default'}
+                disabled={running}
+                onDelete={async (profileToDelete) => {
+                  setTimeout(async () => {
+                    const confirmDel = await showClaudePrompt(
+                      'Xác nhận Xóa',
+                      `Bạn có chắc chắn muốn xóa tài khoản 'claude-${profileToDelete}'? Nhập chữ "xoa" để xác nhận:`
+                    );
+                    if (confirmDel !== 'xoa') {
+                      if (confirmDel !== null) {
+                        await showClaudeAlert('Lỗi', 'Xác nhận xóa không chính xác.');
+                      }
+                      return;
+                    }
+                    try {
+                      const res = await apiFetch('/api/profiles', {
+                        method: 'DELETE',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ profile: profileToDelete }),
+                      });
+                      if (res.ok) {
+                        const configRes = await apiFetch('/api/config');
+                        if (configRes.ok) {
+                          const newCfg = await configRes.json();
+                          setCfg(newCfg);
+                          if (newCfg.mcpServers) {
+                            setSelectedMcps(newCfg.mcpServers);
+                          }
+                        }
+                        await showClaudeAlert('Thành công', `Đã xóa tài khoản 'claude-${profileToDelete}'.`);
+                      } else {
+                        const err = await res.json();
+                        await showClaudeAlert('Lỗi', `Lỗi: ${err.error || 'Không thể xóa tài khoản'}`);
+                      }
+                    } catch (e) {
+                      console.error('Lỗi khi xóa tài khoản:', e);
+                    }
+                  }, 100);
+                }}
+                onChange={async (newProfile) => {
+                  if (running) return;
+                  if (newProfile === '__new__') {
+                    setTimeout(async () => {
+                      const name = await showClaudePrompt('Tài khoản mới', 'Nhập tên tài khoản Claude mới (chỉ dùng chữ thường không dấu, số, gạch ngang, ví dụ: personal, work):');
+                      if (!name) return;
+                      const cleaned = name.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
+                      if (!cleaned) {
+                        await showClaudeAlert('Lỗi', 'Tên tài khoản không hợp lệ.');
+                        return;
+                      }
+                      try {
+                        const res = await apiFetch('/api/profiles', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ profile: cleaned }),
+                        });
+                        if (res.ok) {
+                          const configRes = await apiFetch('/api/config');
+                          if (configRes.ok) {
+                            const newCfg = await configRes.json();
+                            setCfg(newCfg);
+                            if (newCfg.mcpServers) {
+                              setSelectedMcps(newCfg.mcpServers);
+                            }
+                          }
+                          setAuthModal({
+                            profile: cleaned,
+                            mode: 'select',
+                          });
+                        } else {
+                          const err = await res.json();
+                          await showClaudeAlert('Lỗi', `Lỗi: ${err.error || 'Không thể tạo tài khoản'}`);
+                        }
+                      } catch (e) {
+                        console.error('Lỗi khi tạo profile Claude:', e);
+                      }
+                    }, 100);
+                  } else {
+                    try {
+                      const res = await apiFetch('/api/profiles', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ profile: newProfile }),
+                      });
+                      if (res.ok) {
+                        const configRes = await apiFetch('/api/config');
+                        if (configRes.ok) {
+                          const newCfg = await configRes.json();
+                          setCfg(newCfg);
+                          if (newCfg.mcpServers) {
+                            setSelectedMcps(newCfg.mcpServers);
+                          }
+                        }
+                      } else {
+                        const err = await res.json();
+                        await showClaudeAlert('Lỗi', `Lỗi: ${err.error || 'Không thể chuyển đổi'}`);
+                      }
+                    } catch (e) {
+                      console.error('Lỗi khi chuyển profile Claude:', e);
+                    }
+                  }
+                }}
+                options={[
+                  ...cfg.claudeProfiles.map((p) => ({
+                    value: p.name,
+                    label: p.name === 'default' 
+                      ? `claude (Default)${p.tokenSet ? ' (Token)' : ''}` 
+                      : `claude-${p.name}${p.tokenSet ? ' (Token)' : ''}`,
+                  })),
+                  { value: '__new__', label: '+ Thêm tài khoản...' },
+                ]}
+              />
+              {cfg.hasAuth ? (
+                <span title="Đã đăng nhập" style={{ color: '#00e676', fontWeight: 'bold', fontSize: '14px', cursor: 'help' }}>✓</span>
+              ) : (
+                <span title="Chưa đăng nhập! Vui lòng cấu hình token hoặc chọn Đăng nhập." style={{ color: '#ff1744', fontWeight: 'bold', fontSize: '14px', cursor: 'help' }}>⚠️</span>
+              )}
+              <button
+                type="button"
+                className={`btn${cfg.hasAuth ? '' : ' allow'}`}
+                style={{ padding: '2px 8px', fontSize: '11px', marginLeft: '4px' }}
+                disabled={running}
+                onClick={() => {
+                  setAuthModal({
+                    profile: cfg.currentClaudeProfile || 'default',
+                    mode: 'select',
+                  });
+                }}
+              >
+                {cfg.hasAuth ? 'Cài đặt Login' : 'Đăng nhập / Cài Token'}
+              </button>
+            </label>
+          )}
           <label>
             Effort:
             <PixelSelect
@@ -4235,7 +4793,343 @@ export function App() {
           </div>
         </div>
       )}
-      
+
+      {claudeModal && (
+        <div className="modal-overlay" onClick={() => {
+          if (claudeModal.type === 'prompt' && claudeModal.onCancel) {
+            claudeModal.onCancel();
+          }
+          setClaudeModal(null);
+        }}>
+          <div
+            className="modal-content pixel-panel"
+            style={{ maxWidth: '400px' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <span className="modal-title">
+                <Icon name="users" size={16} /> {claudeModal.title}
+              </span>
+              <button
+                className="close-btn"
+                onClick={() => {
+                  if (claudeModal.type === 'prompt' && claudeModal.onCancel) {
+                    claudeModal.onCancel();
+                  }
+                  setClaudeModal(null);
+                }}
+              >
+                <Icon name="close" size={16} />
+              </button>
+            </div>
+            <div className="modal-body">
+              <p style={{ margin: '0 0 12px 0', lineHeight: 1.6 }}>{claudeModal.message}</p>
+              {claudeModal.type === 'prompt' && (
+                <input
+                  type="text"
+                  value={claudeModalInput}
+                  onChange={(e) => setClaudeModalInput(e.target.value)}
+                  placeholder="ví dụ: work"
+                  style={{
+                    width: '100%',
+                    padding: '8px 10px',
+                    boxSizing: 'border-box',
+                    marginTop: '6px'
+                  }}
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      claudeModal.onConfirm(claudeModalInput);
+                      setClaudeModal(null);
+                    } else if (e.key === 'Escape') {
+                      if (claudeModal.onCancel) claudeModal.onCancel();
+                      setClaudeModal(null);
+                    }
+                  }}
+                />
+              )}
+            </div>
+            <div className="modal-footer" style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '16px' }}>
+              {claudeModal.type === 'prompt' && (
+                <button
+                  className="btn deny"
+                  onClick={() => {
+                    if (claudeModal.onCancel) claudeModal.onCancel();
+                    setClaudeModal(null);
+                  }}
+                >
+                  Hủy
+                </button>
+              )}
+              <button
+                className="btn allow"
+                onClick={() => {
+                  claudeModal.onConfirm(claudeModal.type === 'prompt' ? claudeModalInput : undefined);
+                  setClaudeModal(null);
+                }}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {authModal && (
+        <div className="modal-overlay" onClick={() => {
+          if (!authModal.oauthLoading && !authModal.tokenLoading) setAuthModal(null);
+        }}>
+          <div
+            className="modal-content pixel-panel"
+            style={{ maxWidth: '450px' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <span className="modal-title">
+                <Icon name="users" size={16} /> {authModal.mode === 'oauth' ? 'Continue in browser' : `Đăng nhập tài khoản '${authModal.profile}'`}
+              </span>
+              <button
+                className="close-btn"
+                disabled={authModal.oauthLoading || authModal.tokenLoading}
+                onClick={() => setAuthModal(null)}
+              >
+                <Icon name="close" size={16} />
+              </button>
+            </div>
+
+            {authModal.mode === 'select' && (
+              <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '14px', padding: '10px 0' }}>
+                <p style={{ margin: 0, fontSize: '13px', color: 'var(--muted)', lineHeight: 1.5 }}>
+                  Chọn phương thức đăng nhập và xác thực cho tài khoản này:
+                </p>
+                
+                <button
+                  type="button"
+                  className="btn allow"
+                  style={{ padding: '12px', fontSize: '14px', textAlign: 'center', display: 'block', width: '100%', cursor: 'pointer' }}
+                  onClick={async () => {
+                    setAuthModal(prev => prev ? { ...prev, oauthLoading: true } : null);
+                    try {
+                      const res = await apiFetch('/api/profiles/login/start', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ profile: authModal.profile }),
+                      });
+                      if (res.ok) {
+                        const data = await res.json();
+                        setAuthModal({
+                          profile: authModal.profile,
+                          mode: 'oauth',
+                          oauthUrl: data.url,
+                          oauthCode: '',
+                          oauthLoading: false,
+                          oauthError: '',
+                        });
+                      } else {
+                        const err = await res.json();
+                        await showClaudeAlert('Lỗi', err.error || 'Không thể bắt đầu đăng nhập OAuth.');
+                        setAuthModal(prev => prev ? { ...prev, oauthLoading: false } : null);
+                      }
+                    } catch (e) {
+                      console.error(e);
+                      await showClaudeAlert('Lỗi', 'Lỗi kết nối.');
+                      setAuthModal(prev => prev ? { ...prev, oauthLoading: false } : null);
+                    }
+                  }}
+                >
+                  <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>Cách 1: Đăng nhập OAuth (Khuyên dùng)</div>
+                  <div style={{ fontSize: '11px', opacity: 0.8, fontWeight: 'normal' }}>
+                    Tự động mở trình duyệt xác thực thông qua tài khoản Claude sẵn có của bạn
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  className="btn"
+                  style={{ padding: '12px', fontSize: '14px', textAlign: 'center', display: 'block', width: '100%', cursor: 'pointer' }}
+                  onClick={() => {
+                    setAuthModal({
+                      profile: authModal.profile,
+                      mode: 'token',
+                      tokenValue: '',
+                      tokenLoading: false,
+                      tokenError: '',
+                    });
+                  }}
+                >
+                  <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>Cách 2: Dùng API Key hoặc Token thủ công</div>
+                  <div style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 'normal' }}>
+                    Nhập trực tiếp API Key (sk-ant-...) hoặc OAuth Token riêng biệt
+                  </div>
+                </button>
+              </div>
+            )}
+
+            {authModal.mode === 'oauth' && (
+              <div className="modal-body" style={{ lineHeight: 1.6 }}>
+                <p style={{ margin: '0 0 8px 0', fontSize: '13px', color: 'var(--muted)' }}>
+                  If the browser didn't open, visit this URL:
+                </p>
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+                  <input
+                    type="text"
+                    readOnly
+                    value={authModal.oauthUrl || ''}
+                    style={{
+                      flex: 1,
+                      padding: '8px 10px',
+                      background: 'var(--surface-2)',
+                      border: '1px solid var(--hairline)',
+                      borderRadius: '4px',
+                      fontFamily: 'monospace',
+                      fontSize: '12px',
+                      color: 'var(--muted)',
+                      textOverflow: 'ellipsis',
+                    }}
+                    onClick={(e) => {
+                      (e.target as HTMLInputElement).select();
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="btn"
+                    style={{ padding: '0 10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    title="Copy URL"
+                    onClick={() => {
+                      if (authModal.oauthUrl) {
+                        navigator.clipboard.writeText(authModal.oauthUrl);
+                        setCopiedUrl(true);
+                        setTimeout(() => setCopiedUrl(false), 2000);
+                      }
+                    }}
+                  >
+                    <Icon name={copiedUrl ? 'success' : 'copy'} size={16} />
+                  </button>
+                </div>
+                
+                <p style={{ margin: '0 0 8px 0', fontSize: '13px', color: 'var(--muted)' }}>
+                  Or, paste your authorization code manually:
+                </p>
+                <input
+                  type="text"
+                  value={authModal.oauthCode}
+                  disabled={authModal.oauthLoading}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setAuthModal(prev => prev ? { ...prev, oauthCode: val } : null);
+                  }}
+                  placeholder="012345"
+                  style={{
+                    width: '100%',
+                    padding: '8px 10px',
+                    boxSizing: 'border-box'
+                  }}
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && authModal.oauthCode?.trim() && !authModal.oauthLoading) {
+                      submitOauthCode();
+                    }
+                  }}
+                />
+                {authModal.oauthError && (
+                  <div style={{ color: '#ff1744', marginTop: '10px', fontSize: '13px' }}>
+                    ⚠️ {authModal.oauthError}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {authModal.mode === 'token' && (
+              <div className="modal-body" style={{ lineHeight: 1.6 }}>
+                <p style={{ margin: '0 0 8px 0' }}>
+                  Nhập API Key (sk-ant-...) hoặc OAuth Token cho tài khoản này (hoặc để trống để xoá token và dùng CLI login):
+                </p>
+                <input
+                  type="text"
+                  value={authModal.tokenValue}
+                  disabled={authModal.tokenLoading}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setAuthModal(prev => prev ? { ...prev, tokenValue: val } : null);
+                  }}
+                  placeholder="Dán API Key hoặc Token tại đây"
+                  style={{
+                    width: '100%',
+                    padding: '8px 10px',
+                    boxSizing: 'border-box'
+                  }}
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !authModal.tokenLoading) {
+                      submitManualToken();
+                    }
+                  }}
+                />
+                {authModal.tokenError && (
+                  <div style={{ color: '#ff1744', marginTop: '10px', fontSize: '13px' }}>
+                    ⚠️ {authModal.tokenError}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="modal-footer" style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '16px' }}>
+              {authModal.mode === 'oauth' ? (
+                <>
+                  <button
+                    className="btn deny"
+                    disabled={authModal.oauthLoading}
+                    onClick={() => {
+                      setAuthModal(prev => prev ? { ...prev, mode: 'select', oauthError: '', tokenError: '' } : null);
+                    }}
+                  >
+                    Back
+                  </button>
+                  <button
+                    className="btn allow"
+                    disabled={!authModal.oauthCode?.trim() || authModal.oauthLoading}
+                    onClick={submitOauthCode}
+                  >
+                    {authModal.oauthLoading ? 'Verifying...' : 'Continue'}
+                  </button>
+                </>
+              ) : (
+                <>
+                  {authModal.mode !== 'select' && (
+                    <button
+                      className="btn deny"
+                      disabled={authModal.tokenLoading}
+                      onClick={() => {
+                        setAuthModal(prev => prev ? { ...prev, mode: 'select', tokenError: '' } : null);
+                      }}
+                    >
+                      Quay lại
+                    </button>
+                  )}
+                  {authModal.mode === 'select' && (
+                    <button
+                      className="btn deny"
+                      onClick={() => setAuthModal(null)}
+                    >
+                      Hủy
+                    </button>
+                  )}
+                  {authModal.mode === 'token' && (
+                    <button
+                      className="btn allow"
+                      disabled={authModal.tokenLoading}
+                      onClick={submitManualToken}
+                    >
+                      {authModal.tokenLoading ? 'Đang lưu...' : 'Lưu'}
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {cfg?.isAdmin && pendingAccessCount > 0 && !activeClientsOpen && (
         <div
           className="access-notification-toast"

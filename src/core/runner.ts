@@ -6,8 +6,8 @@ import {
   type SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { MessageParam } from '@anthropic-ai/sdk/resources/messages';
-import { existsSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { existsSync, realpathSync } from 'node:fs';
+import { resolve, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from '../config/env.js';
 import { BOW_AGENT_APPEND } from './systemPrompt.js';
@@ -45,7 +45,10 @@ export type AgentEvent =
   // Snapshot hạn mức tài khoản + độ dùng context window của phiên hiện tại. Phát ra
   // sau mỗi lượt `result` (đọc qua control request của SDK — xem readUsageSnapshot).
   | { type: 'usage'; usage: UsageSnapshot }
-  | { type: 'error'; subtype: string };
+  // Phiên kết thúc bất thường. `isSessionLimit` = do hết hạn mức phiên (5h) — kèm `resetsAt`
+  // (ISO) là thời điểm hạn mức reset, để caller LÊN LỊCH tự chạy tiếp. Lỗi thường thì hai
+  // field này vắng.
+  | { type: 'error'; subtype: string; isSessionLimit?: boolean; resetsAt?: string | null };
 
 /** Một cửa sổ hạn mức (5 giờ / 7 ngày / theo model) — % đã dùng + thời điểm reset. */
 export interface UsageWindow {
@@ -166,13 +169,19 @@ export interface RunOptions {
   /** Tín hiệu hủy (dừng agent giữa chừng). */
   abortSignal?: AbortSignal;
   /**
-   * Collab Mode (cộng tác viên qua LAN). Khi bật, chạy như 'auto' nhưng:
-   * - Git (commit/push/reset…) được TỰ DO — bỏ khỏi danh sách RỦI RO.
-   * - Lệnh HỦY HOẠI còn lại (rm -rf, deploy, ghi ngoài repo…) vẫn qua onApproval,
-   *   nhưng caller (web server) định tuyến duyệt đó lên ADMIN chứ không phải CTV.
-   * Mode phải là 'auto' để cơ chế này có tác dụng; server đảm bảo điều đó.
+   * Collab Mode (cộng tác viên qua LAN). Khi bật, mode chạy là 'auto' nhưng an toàn
+   * được siết bằng requireApprovalForWrites (xem dưới) chứ không tự do như dev thường.
+   * Caller (web server) định tuyến mọi yêu cầu duyệt lên ADMIN qua onApproval.
    */
   collabMode?: boolean;
+  /**
+   * SIẾT DUYỆT GHI (M1–M5). Khi TRUE, MỌI thao tác ghi/side-effect đều phải qua onApproval
+   * kể cả ở mode 'auto': ghi/sửa file (cả trong repo), lệnh Bash không-safe, MCP write.
+   * Chỉ lệnh SAFE_COMMANDS đơn thuần (đọc/kiểm chứng) mới auto-allow. Dùng cho client
+   * KHÔNG phải admin (Collab CTV, hoặc khách LAN nếu server cho phép ghi) — caller định
+   * tuyến duyệt lên admin. Admin (localhost) chạy trực tiếp thì để FALSE → auto như cũ.
+   */
+  requireApprovalForWrites?: boolean;
   /** Model sử dụng cho agent. */
   model?: string;
   /** ID phiên chạy cũ cần khôi phục lịch sử chat. */
@@ -283,6 +292,20 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   // allowedTools để rỗng: toàn bộ auto-duyệt read đã chuyển sang PreToolUse hook.
   const allowedTools: string[] = [];
 
+  // R1: WHITELIST tool cho Safe Mode (read-only tuyệt đối). Chỉ các tool ĐỌC mới được
+  // chạy; canUseTool DENY mọi tool khác (kể cả MCP write execute_sql/jira_create…, Bash,
+  // Web*). Gồm: đọc file/liệt kê (Read/Glob/NotebookRead), tra cứu (WebSearch bị chặn —
+  // KHÔNG có ở đây), spawn subagent read-only (nếu bật), và các MCP READ pattern đã lọc.
+  // AskUserQuestion xử lý riêng (cần onQuestion). Grep bị tắt riêng (lộ nội dung file).
+  const SAFE_MODE_ALLOWED_TOOLS = new Set<string>([
+    'Read',
+    'Glob',
+    'NotebookRead',
+    'TodoWrite',
+    ...(subagents ? ['Agent'] : []),
+    ...mcpReadToolPatterns(cc.names),
+  ]);
+
   // System prompt = quy trình chung + skill dùng chung + (nếu có) kiến thức dự án.
   let appendText = BOW_AGENT_APPEND;
   // Ngôn ngữ trả lời người dùng (mặc định Tiếng Việt). Đặt SỚM để ưu tiên cao.
@@ -315,28 +338,57 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
 
   // Lệnh KIỂM CHỨNG an toàn: auto-allow ở MỌI mode thực thi (kể cả 'manual') để agent
   // tự chạy test/analyze/xem trạng thái mà không làm phiền người dùng. Chỉ đọc/không đổi trạng thái.
+  //
+  // QUAN TRỌNG (M1): các mẫu đều neo CẢ đầu `^` LẪN cuối `$` (cho phép cờ/đối số vô hại
+  // sau đó, nhưng KHÔNG cho toán tử nối lệnh). Fast-path 'safe' chỉ áp cho lệnh ĐƠN —
+  // hàm hasCommandChaining() bên dưới chặn mọi chuỗi `a; b`, `a && b`, `a | b`… trước khi
+  // xét SAFE, để `npm test; rm -rf ~` KHÔNG lọt qua như trước.
   const SAFE_COMMANDS = [
-    /^fvm flutter analyze/,
-    /^fvm flutter test/,
-    /^flutter analyze/,
-    /^flutter test/,
-    /^bun test/,
-    /^npm test/,
-    /^npm run test/,
-    /^(pnpm|yarn) test/,
-    /^(pnpm|yarn) run test/,
-    /^tsc --noEmit/,
-    /^git status/,
-    /^git diff/,
+    /^fvm flutter analyze(\s+[\w./@=-]+)*$/,
+    /^fvm flutter test(\s+[\w./@=-]+)*$/,
+    /^flutter analyze(\s+[\w./@=-]+)*$/,
+    /^flutter test(\s+[\w./@=-]+)*$/,
+    /^bun test(\s+[\w./@=-]+)*$/,
+    /^npm test(\s+[\w./@=-]+)*$/,
+    /^npm run test(\s+[\w./@=-]+)*$/,
+    /^(pnpm|yarn) test(\s+[\w./@=-]+)*$/,
+    /^(pnpm|yarn) run test(\s+[\w./@=-]+)*$/,
+    /^tsc --noEmit$/,
+    /^git status(\s+[\w./@=-]+)*$/,
+    /^git diff(\s+[\w./@=-]+)*$/,
   ];
+
+  /** Lệnh có TOÁN TỬ NỐI (chuỗi lệnh) → KHÔNG được đi fast-path 'safe'/'auto': phải xét
+   *  rủi ro từng phần / hỏi duyệt. Bắt: ; | & (kể cả && ||), backtick, $( ), newline, và
+   *  redirect ghi >/>>. Đây là chốt chặn M1 — trước đây `npm test; rm -rf ~` khớp tiền tố
+   *  `npm test` rồi auto-allow trước khi kịp xét `rm -rf`. */
+  const hasCommandChaining = (cmd: string): boolean =>
+    /[;&|`\n]|\$\(|>|<\(/.test(cmd);
 
   // Lệnh/mẫu RỦI RO: dù ở mode 'auto' cũng LUÔN hỏi duyệt. Đây là ranh giới an toàn của
   // 'auto' — mọi thứ không khớp mẫu này (mà cũng không nằm ngoài repo) được coi là an toàn.
   // Danh sách bao phủ: xóa dữ liệu, đẩy/viết lại lịch sử git, đổi quyền/chủ sở hữu,
   // tải-rồi-chạy script từ mạng, ghi đè thiết bị, tắt máy, và sudo.
+  //
+  // M3: danh sách được MỞ RỘNG để bịt các đường xóa/ghi-đè/exfil từng lọt trước đây —
+  // rm không cờ, find -delete/-exec, truncate/shred, redirect ghi đè `> file`, mv/cp file
+  // nhạy cảm, tạo symlink (ln -s), và chạy script inline (node -e / python -c / sh file /
+  // pipe vào bash). Regex không thể phủ MỌI biến thể shell; đây là mạng lưới rộng hợp lý,
+  // và mọi thứ không khớp mà nằm NGOÀI repo vẫn bị chặn bởi isPathInRepo ở nhánh file-write.
+  // R7: các lệnh xóa/di chuyển/ghi neo vào ĐẦU-TOKEN LỆNH (đầu chuỗi hoặc sau khoảng
+  // trắng/;/&/|/( ) và kết bằng ranh giới, tránh khớp nhầm hậu tố như 'npm run rm-cache',
+  // 'my-cp-tool', 'env-mv' (dấu '-' là \b nên \brm\b từng khớp oan).
   const RISKY_COMMANDS = [
-    /\brm\s+-[a-z]*[rf]/,           // rm -rf / rm -f / rm -r
-    /\brmdir\b/,
+    /(?:^|[\s;&|(])rm(?=$|[\s/])/,          // rm (kể cả không cờ) — xóa là luôn phải hỏi
+    /(?:^|[\s;&|(])rmdir(?=$|[\s/])/,
+    /(?:^|[\s;&|(])unlink(?=$|[\s/])/,
+    /\bfind\b[^\n]*-(delete|exec|execdir)\b/, // find … -delete / -exec rm …
+    /(?:^|[\s;&|(])(truncate|shred|srm|wipe)(?=$|[\s/])/,
+    /(?:^|[\s;&|(])ln\s+-s/,         // symlink (chặn M4 tận gốc — không tạo được symlink lách sandbox)
+    /(^|[^0-9<>])>>?\s*[^\s&|;]/,    // redirect ghi/ghi-nối `> file`, `>> file` (bỏ qua 2> dạng số)
+    /(?:^|[\s;&|(])tee(?=$|[\s/])/,  // tee ghi đè file
+    /(?:^|[\s;&|(])mv(?=$|[\s/])/,
+    /(?:^|[\s;&|(])cp(?=$|[\s/])/,
     /\bgit\s+push\b/,
     /\bgit\s+reset\s+--hard\b/,
     /\bgit\s+clean\b/,
@@ -348,10 +400,14 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     /\bchown\b/,
     /\bsudo\b/,
     /\bmkfs\b/,
-    /\bdd\s+if=/,
+    /\bdd\b/,
     /[>|]\s*\/dev\/sd/,
     /\b(shutdown|reboot|halt|poweroff)\b/,
-    /\b(curl|wget)\b[^\n]*\|\s*(sh|bash|zsh)\b/, // tải rồi chạy
+    /\b(curl|wget|fetch)\b[^\n]*\|\s*(sh|bash|zsh|python3?|node)\b/, // tải rồi chạy
+    /\|\s*(sh|bash|zsh)\b/,          // pipe bất kỳ vào shell (cat evil | bash)
+    /\b(node|deno|bun)\s+-e\b/,      // chạy script JS inline
+    /\bpython3?\s+-c\b/,             // chạy script Python inline
+    /\b(bash|sh|zsh)\s+[^\s-]/,      // sh/bash chạy file script
     /\bnpm\s+publish\b/,
     /\byarn\s+publish\b/,
     /\bkill\s+-9\b/,
@@ -359,28 +415,97 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     /:\s*\(\s*\)\s*\{.*\}\s*;/,      // fork bomb
   ];
 
-  // Các mẫu RỦI RO thuộc Git — ở Collab Mode được MIỄN (CTV toàn quyền Git). Mọi mẫu
-  // hủy hoại khác (rm, dd, deploy, sudo…) vẫn giữ. Nhận diện bằng /\bgit\b/ trong mẫu.
-  const GIT_RISKY = new Set(
-    RISKY_COMMANDS.filter((re) => /git/.test(re.source)),
-  );
-  const activeRisky =
-    opts.collabMode ? RISKY_COMMANDS.filter((re) => !GIT_RISKY.has(re)) : RISKY_COMMANDS;
+  // Collab siết chặt: MỌI lệnh rủi ro (kể cả Git) đều phải ADMIN duyệt — không còn miễn
+  // trừ Git như trước. Danh sách áp dụng nguyên vẹn ở mọi mode (M3 + chốt "Collab: mọi
+  // thay đổi phải duyệt"). Xem thêm requireApprovalForWrites bên dưới.
+  const activeRisky = RISKY_COMMANDS;
 
-  /** True nếu lệnh bash bị coi là rủi ro → luôn qua cổng duyệt ngay cả ở mode 'auto'.
-   *  Ở Collab Mode, các lệnh Git đã được loại khỏi danh sách nên tự do chạy. */
+  /** True nếu lệnh bash bị coi là rủi ro → luôn qua cổng duyệt ngay cả ở mode 'auto'. */
   const isRiskyCommand = (cmd: string): boolean =>
     activeRisky.some((re) => re.test(cmd));
 
   /** Tool sửa/ghi file (trong repo). Ở 'edit-auto'/'auto' được auto-allow nếu đường dẫn nằm trong cwd. */
   const FILE_WRITE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
+  /** True nếu đường dẫn trỏ tới file BÍ MẬT/nhạy cảm — chặn đọc/ghi trong Safe Mode (M9).
+   *  Danh sách được mở rộng để bịt các file từng lọt: .git-credentials, .ssh/*, .netrc,
+   *  credentials.json (GCP), .docker/config.json (registry token), secrets.yaml… */
+  const isSensitivePath = (p: string): boolean => {
+    const t = p.toLowerCase();
+    return (
+      t.includes('.env') ||
+      t.includes('.git/') ||
+      t.includes('.git\\') ||
+      t.includes('.git-credentials') ||
+      t.includes('.npmrc') ||
+      t.includes('.pypirc') ||
+      t.includes('.netrc') ||
+      t.endsWith('.pem') ||
+      t.endsWith('.key') ||
+      t.endsWith('.p12') ||
+      t.endsWith('.jks') ||
+      t.endsWith('.keystore') ||
+      t.includes('id_rsa') ||
+      t.includes('id_ed25519') ||
+      t.includes('/.ssh/') ||
+      t.includes('\\.ssh\\') ||
+      t.includes('.aws/') ||
+      t.includes('.aws\\') ||
+      t.includes('.kube/') ||
+      t.includes('.kube\\') ||
+      t.includes('.docker/config') ||
+      t.includes('.dockercfg') ||
+      t.includes('credentials.json') ||
+      t.includes('credentials.yaml') ||
+      t.includes('credentials.yml') ||
+      // R4: service-account key (GCP/Firebase), file cấu hình chứa mật khẩu DB/app.
+      t.includes('serviceaccount') ||
+      t.includes('service-account') ||
+      t.includes('service_account') ||
+      t.includes('firebase-admin') ||
+      t.endsWith('database.yml') ||
+      t.endsWith('database.yaml') ||
+      t.endsWith('application.properties') ||
+      t.endsWith('application.yml') ||
+      t.endsWith('application.yaml') ||
+      // Bất kỳ file NÀO trong thư mục secrets/ (không chỉ file tên "secret.*").
+      /(^|[\/\\])secrets?[\/\\]/.test(t) ||
+      /(^|[\/\\])secrets?\.(ya?ml|json|txt|env)$/.test(t)
+    );
+  };
+
   const workdir = resolve(opts.cwd || process.cwd());
-  /** True nếu path (từ input tool ghi) nằm TRONG repo cwd — ngoài repo thì coi là rủi ro, phải hỏi. */
+  // realpath của repo (theo symlink) — mốc so sánh THẬT để chống lách bằng symlink (M4).
+  const realWorkdir = (() => {
+    try { return realpathSync(workdir); } catch { return workdir; }
+  })();
+  /** True nếu path (từ input tool ghi) nằm TRONG repo cwd — ngoài repo thì coi là rủi ro, phải hỏi.
+   *  M4: resolve symlink bằng realpathSync trước khi so sánh. resolve('..') chỉ chuẩn hoá
+   *  chuỗi, KHÔNG đi theo symlink — nên `linkdir` (symlink trỏ ra ngoài) từng lọt. Ta lấy
+   *  realpath của path (hoặc thư mục cha nếu path chưa tồn tại) rồi so với realWorkdir. */
   const isPathInRepo = (p: unknown): boolean => {
     if (typeof p !== 'string' || !p) return false;
     const abs = resolve(workdir, p);
-    return abs === workdir || abs.startsWith(workdir + '/');
+    // Lấy realpath của path. Nếu path (hoặc thư mục cha) CHƯA tồn tại (ghi file/thư mục
+    // mới), lần LÊN tổ tiên gần nhất ĐANG tồn tại rồi realpath nó, ghép lại phần đuôi chưa
+    // tồn tại. R3: trước đây chỉ thử ĐÚNG 1 cấp cha — ghi vào thư mục MỚI (a/b/x.ts) dưới
+    // cwd có tổ tiên là symlink (vd /tmp→/private/tmp trên macOS) bị chặn oan.
+    let real = abs;
+    try {
+      real = realpathSync(abs);
+    } catch {
+      let d = dirname(abs);
+      while (!existsSync(d) && d !== dirname(d)) d = dirname(d);
+      try {
+        real = resolve(realpathSync(d), relative(d, abs));
+      } catch {
+        real = abs; // không lần được tổ tiên nào → dùng path chuẩn hoá chuỗi
+      }
+    }
+    const inReal = real === realWorkdir || real.startsWith(realWorkdir + '/');
+    const inRaw = abs === workdir || abs.startsWith(workdir + '/');
+    // Phải nằm trong repo theo CẢ hai cách tính — chặn symlink escape.
+    return inReal && inRaw;
   };
 
   // Hook monorepo (guard-push/commit, self-verify, githooks) — chỉ khi cwd là monorepo.
@@ -442,44 +567,42 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     ...(opts.onQuestion || (isExecuting && opts.onApproval) || isSafeMode
       ? {
           canUseTool: async (toolName, input, sdkOpts) => {
-            // Kiểm tra truy cập file nhạy cảm trong chế độ an toàn
-            if (isSafeMode && (toolName === 'Read' || toolName === 'Edit' || toolName === 'Write' || toolName === 'MultiEdit')) {
-              const target =
-                (input as Record<string, unknown>).file_path ??
-                (input as Record<string, unknown>).path ??
-                (input as Record<string, unknown>).notebook_path;
-              
-              if (typeof target === 'string') {
-                const lowerTarget = target.toLowerCase();
-                const isSensitive =
-                  lowerTarget.includes('.env') ||
-                  lowerTarget.includes('.git/') ||
-                  lowerTarget.includes('.git\\') ||
-                  lowerTarget.includes('.npmrc') ||
-                  lowerTarget.includes('.pypirc') ||
-                  lowerTarget.endsWith('.pem') ||
-                  lowerTarget.endsWith('.key') ||
-                  lowerTarget.endsWith('.p12') ||
-                  lowerTarget.endsWith('.jks') ||
-                  lowerTarget.includes('id_rsa') ||
-                  lowerTarget.includes('id_ed25519') ||
-                  lowerTarget.includes('.aws/') ||
-                  lowerTarget.includes('.kube/');
-                
-                if (isSensitive) {
+            // ── Safe Mode: read-only TUYỆT ĐỐI (WHITELIST) ─────────────────────
+            // R1: dùng WHITELIST thay vì blacklist. Trước đây chỉ chặn một số tool
+            // (Bash/WebFetch…) rồi cho mọi tool khác rơi xuống `return allow` ở nhánh
+            // isExecuting=false → MCP write (execute_sql, jira_create/update…) LỌT, phá
+            // "read-only tuyệt đối" + mở kênh exfil. Giờ: trong Safe Mode chỉ cho phép tool
+            // ĐỌC (Read/Glob/AskUserQuestion + MCP read patterns đã whitelist), DENY mọi
+            // thứ khác — kể cả MCP write, Bash, Web*, tool ghi file.
+            if (isSafeMode) {
+              // Grep bị tắt riêng (có thể lộ dữ liệu nhạy cảm qua nội dung khớp).
+              if (toolName === 'Grep') {
+                return {
+                  behavior: 'deny' as const,
+                  message: 'Grep bị vô hiệu hóa trong Safe Mode để bảo mật dữ liệu nhạy cảm. Vui lòng sử dụng Glob + Read.',
+                };
+              }
+              // Read (và các tool file nếu lọt): chặn file nhạy cảm (M9/R4).
+              if (toolName === 'Read' || toolName === 'Edit' || toolName === 'Write' || toolName === 'MultiEdit' || toolName === 'NotebookEdit') {
+                const target =
+                  (input as Record<string, unknown>).file_path ??
+                  (input as Record<string, unknown>).path ??
+                  (input as Record<string, unknown>).notebook_path;
+                if (typeof target === 'string' && isSensitivePath(target)) {
                   return {
                     behavior: 'deny' as const,
                     message: 'Truy cập bị chặn: Không được phép đọc/ghi file cấu hình nhạy cảm trong Safe Mode.',
                   };
                 }
               }
-            }
-
-            if (isSafeMode && toolName === 'Grep') {
-              return {
-                behavior: 'deny' as const,
-                message: 'Grep bị vô hiệu hóa trong Safe Mode để bảo mật dữ liệu nhạy cảm. Vui lòng sử dụng Glob + Read.',
-              };
+              // AskUserQuestion xử lý riêng ở khối bên dưới (cần onQuestion) — cho đi tiếp.
+              // Mọi tool KHÔNG thuộc allowlist đọc → DENY (chốt whitelist).
+              if (toolName !== 'AskUserQuestion' && !SAFE_MODE_ALLOWED_TOOLS.has(toolName)) {
+                return {
+                  behavior: 'deny' as const,
+                  message: `Safe Mode chỉ cho phép ĐỌC/LẬP KẾ HOẠCH — tool "${toolName}" bị chặn.`,
+                };
+              }
             }
             // AskUserQuestion: render UI câu hỏi, gắn câu trả lời vào input trả cho agent.
             if (toolName === 'AskUserQuestion' && opts.onQuestion) {
@@ -525,24 +648,37 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
                   };
             };
 
-            // Bash: lệnh kiểm chứng an toàn → auto-allow ở mọi mode. Lệnh rủi ro → luôn hỏi.
-            // Còn lại: 'auto' auto-allow, các mode khác hỏi.
+            // Bash. THỨ TỰ QUAN TRỌNG (M1): xét RỦI RO + lệnh-ghép TRƯỚC fast-path 'safe'.
+            // Trước đây SAFE được xét trước nên `npm test; rm -rf ~` khớp tiền tố rồi
+            // auto-allow, `rm -rf` không bao giờ tới isRiskyCommand. Giờ:
+            //   1) lệnh rủi ro → luôn hỏi (kể cả có tiền tố safe);
+            //   2) lệnh GHÉP (có ;/&&/||/pipe/redirect) → không đi fast-path, phải hỏi
+            //      (trừ khi mode cho auto và không rủi ro — vẫn qua requireApprovalForWrites);
+            //   3) lệnh SAFE ĐƠN thuần → auto-allow;
+            //   4) còn lại: siết-duyệt → hỏi; 'auto' → allow; khác → hỏi.
             if (toolName === 'Bash' && typeof input.command === 'string') {
               const cmd = input.command.trim();
-              if (SAFE_COMMANDS.some((re) => re.test(cmd))) return allow;
               if (isRiskyCommand(cmd)) {
                 return gate({ decisionReason: 'Lệnh có thể gây hại/không thể hoàn tác — cần bạn xác nhận.' });
+              }
+              // Fast-path 'safe' CHỈ cho lệnh đơn (không toán tử nối) — chốt chặn M1.
+              if (!hasCommandChaining(cmd) && SAFE_COMMANDS.some((re) => re.test(cmd))) return allow;
+              if (opts.requireApprovalForWrites) {
+                return gate({ decisionReason: 'Chạy lệnh cần được duyệt (chế độ cộng tác/không phải admin).' });
               }
               return mode === 'auto' ? allow : gate();
             }
 
-            // Sửa/ghi file: 'edit-auto' & 'auto' tự duyệt NẾU file nằm TRONG repo.
-            // Ghi ra ngoài repo luôn phải hỏi (kể cả 'auto'). 'manual' luôn hỏi.
+            // Sửa/ghi file: siết-duyệt → luôn hỏi (M5, Collab CTV). Ngược lại: 'edit-auto'
+            // & 'auto' tự duyệt NẾU file nằm TRONG repo; ghi ngoài repo luôn hỏi; 'manual' hỏi.
             if (FILE_WRITE_TOOLS.has(toolName)) {
               const target =
                 (input as Record<string, unknown>).file_path ??
                 (input as Record<string, unknown>).path ??
                 (input as Record<string, unknown>).notebook_path;
+              if (opts.requireApprovalForWrites) {
+                return gate({ decisionReason: 'Sửa/ghi file cần được duyệt (chế độ cộng tác/không phải admin).' });
+              }
               const inRepo = isPathInRepo(target);
               if ((mode === 'edit-auto' || mode === 'auto') && inRepo) return allow;
               if ((mode === 'edit-auto' || mode === 'auto') && !inRepo) {
@@ -551,7 +687,12 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
               return gate(); // manual
             }
 
-            // Mọi tool ghi/side-effect còn lại (MCP write, v.v.): 'auto' tự duyệt, khác thì hỏi.
+            // Mọi tool ghi/side-effect còn lại (MCP write như execute_sql/apply_migration,
+            // jira_create…). M5: ở chế độ siết-duyệt LUÔN hỏi — trước đây 'auto' tự duyệt
+            // khiến CTV Collab gọi được DROP TABLE trên DB thật mà admin không thấy.
+            if (opts.requireApprovalForWrites) {
+              return gate({ decisionReason: `Thao tác "${toolName}" có side-effect — cần được duyệt.` });
+            }
             return mode === 'auto' ? allow : gate();
           },
         }
@@ -603,6 +744,9 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   const prompt = streamingPrompt(firstContent, inputDone);
 
   let finalText: string | null = null;
+  // Thời điểm reset hạn mức 5h GẦN NHẤT mà SDK báo (qua message 'rate_limit'), dạng ISO.
+  // Dùng khi phiên kết thúc bằng lỗi hết hạn mức → caller lên lịch tự chạy tiếp đúng giờ.
+  let lastFiveHourResetsAt: string | null = null;
 
   const q = query({ prompt, options });
   try {
@@ -613,6 +757,17 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
         // lịch sử. Báo ra ngoài để caller lưu → lượt sau resume đúng phiên (agent nhớ).
         if (message.subtype === 'init') {
           opts.onSessionId?.(message.session_id);
+        }
+        break;
+      }
+      case 'rate_limit_event': {
+        // SDK báo hạn mức đổi. Giữ lại resetsAt của cửa sổ 5h GẦN NHẤT: nếu phiên chốt
+        // bằng lỗi hết hạn mức, đây là nguồn giờ reset CHÍNH XÁC nhất (epoch từ server,
+        // không phụ thuộc giờ máy). resetsAt có thể tính bằng giây → chuẩn hoá về ms.
+        const rl = (message as { rate_limit_info?: { resetsAt?: number; rateLimitType?: string } }).rate_limit_info;
+        if (rl && typeof rl.resetsAt === 'number' && rl.rateLimitType === 'five_hour') {
+          const ms = rl.resetsAt < 1e12 ? rl.resetsAt * 1000 : rl.resetsAt;
+          lastFiveHourResetsAt = new Date(ms).toISOString();
         }
         break;
       }
@@ -669,13 +824,24 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
             costUsd: message.total_cost_usd,
             durationMs: message.duration_ms,
           });
-        } else {
-          opts.onEvent({ type: 'error', subtype: message.subtype });
         }
         // Đọc snapshot hạn mức + context ngay khi query CÒN SỐNG (control request cần
         // transport chưa đóng). Lỗi/không hỗ trợ → bỏ qua, không chặn kết thúc lượt.
         const usage = await readUsageSnapshot(q);
         if (usage) opts.onEvent({ type: 'usage', usage });
+        if (!success) {
+          // Phân loại lỗi: có phải hết hạn mức phiên (5h) không? SDKResultError có mảng
+          // `errors` — dò chuỗi trong đó. Giờ reset ưu tiên: rate_limit_event 5h > cửa sổ
+          // 'Session (5hr)' trong snapshot vừa đọc. Nếu là session limit → phát kèm cờ +
+          // resetsAt để caller tự lên lịch chạy tiếp.
+          const errors = (message as { errors?: string[] }).errors;
+          const isSessionLimit = looksLikeSessionLimit(errors, message.subtype);
+          const resetsAt =
+            lastFiveHourResetsAt ??
+            usage?.rateLimits.find((w) => /5\s*hr|5hr|five/i.test(w.label))?.resetsAt ??
+            null;
+          opts.onEvent({ type: 'error', subtype: message.subtype, isSessionLimit, resetsAt });
+        }
         // Giải phóng streaming input → SDK kết thúc query, vòng for..of thoát.
         releaseInput();
         break;
@@ -737,6 +903,22 @@ async function* streamingPrompt(
     session_id: '',
   } as SDKUserMessage;
   await done;
+}
+
+/**
+ * Nhận diện lỗi "hết hạn mức phiên" từ các chuỗi lỗi mà SDK trả về khi phiên chốt bằng
+ * error. Bắt cả biến thể tiếng Anh của Claude Code ("session limit", "usage limit",
+ * "rate limit ... resets"). Dùng để quyết định có LÊN LỊCH tự chạy tiếp hay không.
+ */
+function looksLikeSessionLimit(errors: string[] | undefined, subtype: string): boolean {
+  const hay = [(subtype ?? ''), ...(errors ?? [])].join(' ').toLowerCase();
+  if (!hay) return false;
+  return (
+    hay.includes('session limit') ||
+    hay.includes('usage limit') ||
+    (hay.includes('rate limit') && hay.includes('reset')) ||
+    hay.includes("you've hit your")
+  );
 }
 
 /** Chuyển một cửa sổ rate-limit của SDK → UsageWindow (bỏ qua nếu thiếu). */
