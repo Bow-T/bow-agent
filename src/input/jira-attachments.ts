@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSy
 import { homedir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { config } from '../config/env.js';
 
 /**
  * Tải ẢNH đính kèm của một ticket Jira để agent NHÌN được.
@@ -71,7 +72,7 @@ interface JiraAuth {
  * (chưa cấu hình MCP jira, hoặc thiếu biến) → caller bỏ qua ảnh, không kéo sập.
  */
 function readJiraAuth(): JiraAuth | null {
-  const file = join(homedir(), '.claude.json');
+  const file = config.claudeJsonPath;
   if (!existsSync(file)) return null;
   let data: { mcpServers?: Record<string, { env?: Record<string, string> }> };
   try {

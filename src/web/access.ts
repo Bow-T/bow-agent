@@ -16,6 +16,9 @@ export interface AccessUser {
   ip: string;
   token: string;
   status: 'pending' | 'approved' | 'rejected';
+  /** M10: bị admin THU HỒI vĩnh viễn. Khác 'rejected' (có thể xin lại): banned=true thì
+   *  requestAccess KHÔNG tái sinh về pending, không spam được hàng đợi admin. */
+  banned?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -70,21 +73,49 @@ export const accessBus = new AccessBus();
 // Các API Nghiệp vụ
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Yêu cầu truy cập mới từ máy khách. */
-export function requestAccess(name: string, ip: string): AccessUser {
+/**
+ * Yêu cầu truy cập mới từ máy khách. `ip` PHẢI là IP socket thật (getSocketIp) — không
+ * phải x-forwarded-for — để ràng buộc theo IP có ý nghĩa.
+ *
+ * M6 (không rò token): nếu đã có bản ghi APPROVED trùng name+ip, KHÔNG trả token của bản
+ * ghi đó cho người gọi mới. Chỉ khi client gửi kèm ĐÚNG token cũ (đã là chủ) mới nhận lại
+ * token (luồng reload trang). Người gọi không có token → coi như request mới (pending).
+ * M10 (ban bền): bản ghi banned KHÔNG tái sinh về pending.
+ *
+ * @param knownToken token client tự gửi kèm (nếu có) — để nhận lại đúng bản ghi của mình.
+ */
+export function requestAccess(name: string, ip: string, knownToken?: string): AccessUser {
   const data = load();
-  
-  // Kiểm tra nếu IP và Tên trùng khớp đã có request, trả lại bản ghi cũ hoặc cập nhật
-  const existing = data.users.find((u) => u.name.toLowerCase() === name.toLowerCase() && u.ip === ip);
+
+  const existing = data.users.find(
+    (u) => u.name.toLowerCase() === name.toLowerCase() && u.ip === ip,
+  );
   if (existing) {
-    if (existing.status === 'rejected') {
-      // Đổi trạng thái về pending để admin duyệt lại
-      existing.status = 'pending';
-      existing.updatedAt = Date.now();
-      save(data);
-      accessBus.emit({ type: 'access-request', user: existing });
+    // Chủ hợp lệ của bản ghi (gửi đúng token cũ): trả nguyên trạng, kể cả token.
+    const isOwner = Boolean(knownToken) && knownToken === existing.token;
+
+    if (existing.banned) {
+      // Đã bị thu hồi vĩnh viễn — không tái sinh, không cấp token, không spam admin.
+      return { ...existing, token: isOwner ? existing.token : '' };
     }
-    return existing;
+    if (isOwner) {
+      // Chủ reload: nếu đang rejected thì cho xin lại (về pending); trả token thật.
+      if (existing.status === 'rejected') {
+        existing.status = 'pending';
+        existing.updatedAt = Date.now();
+        save(data);
+        accessBus.emit({ type: 'access-request', user: existing });
+      }
+      return existing;
+    }
+    // KHÔNG phải chủ:
+    // - Bản ghi đang APPROVED của người khác → KHÔNG rò token, VÀ không kẹt: tạo bản ghi
+    //   MỚI (pending) để người thứ hai thật sự cùng name+IP (sau NAT) xin duyệt riêng (R8).
+    // - Bản ghi đang pending/rejected → trả token rỗng, không tạo trùng (tránh spam admin).
+    if (existing.status !== 'approved') {
+      return { ...existing, token: '' };
+    }
+    // (approved, không phải chủ) → rơi xuống dưới tạo bản ghi mới pending.
   }
 
   const user: AccessUser = {
@@ -96,10 +127,10 @@ export function requestAccess(name: string, ip: string): AccessUser {
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
-  
+
   data.users.push(user);
   save(data);
-  
+
   accessBus.emit({ type: 'access-request', user });
   return user;
 }
@@ -111,9 +142,12 @@ export function approveAccess(id: string): boolean {
   if (!user) return false;
   
   user.status = 'approved';
+  // R5: duyệt = gỡ ban. Nếu không clear, user từng bị revoke (banned=true) sẽ kẹt vĩnh
+  // viễn dù admin bấm "Cho vào" (isValidToken vẫn false vì banned). Cho admin đường un-ban.
+  user.banned = false;
   user.updatedAt = Date.now();
   save(data);
-  
+
   accessBus.emit({ type: 'access-resolved', id, status: 'approved' });
   return true;
 }
@@ -132,9 +166,20 @@ export function rejectAccess(id: string): boolean {
   return true;
 }
 
-/** Admin thu hồi quyền truy cập (chuyển trạng thái sang rejected). */
+/** Admin thu hồi quyền truy cập VĨNH VIỄN. M10: đặt banned=true để bản ghi không tự tái
+ *  sinh về pending khi client gửi lại request (chống spam hàng đợi admin + ban thật sự). */
 export function revokeAccess(id: string): boolean {
-  return rejectAccess(id);
+  const data = load();
+  const user = data.users.find((u) => u.id === id);
+  if (!user) return false;
+
+  user.status = 'rejected';
+  user.banned = true;
+  user.updatedAt = Date.now();
+  save(data);
+
+  accessBus.emit({ type: 'access-resolved', id, status: 'rejected' });
+  return true;
 }
 
 /** Lấy thông tin user bằng token. */
@@ -143,10 +188,10 @@ export function getUserByToken(token: string | undefined | null): AccessUser | u
   return load().users.find((u) => u.token === token);
 }
 
-/** Token có hợp lệ với trạng thái approved không. */
+/** Token có hợp lệ với trạng thái approved không (và chưa bị ban). */
 export function isValidToken(token: string | undefined | null): boolean {
   const user = getUserByToken(token);
-  return user ? user.status === 'approved' : false;
+  return user ? user.status === 'approved' && !user.banned : false;
 }
 
 /** Danh sách tất cả các user xin truy cập. */

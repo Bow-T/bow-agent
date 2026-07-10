@@ -28,6 +28,10 @@ const CHAT_FILE = join(CHAT_DIR, 'chat-groups.json');
 
 /** Giới hạn tin nhắn giữ lại mỗi phòng (cắt cũ nhất) — tránh file phình vô hạn. */
 const MAX_MESSAGES_PER_GROUP = 1000;
+/** Trần độ dài TÊN phòng (ký tự) — chống DoS phình file (trước đây name không bị cắt). */
+const MAX_GROUP_NAME_LEN = 80;
+/** Trần TỔNG số phòng — chống spam tạo phòng vô hạn làm phình registry + khuếch đại I/O. */
+const MAX_GROUPS = 500;
 
 /** Một tin nhắn trong phòng chat. */
 export interface ChatMessage {
@@ -109,9 +113,14 @@ export function getOrCreateGroup(rawId: string, name: string, now: number): Chat
   const list = readAll();
   const found = list.find((g) => g.id === id);
   if (found) return found;
+  // Chống DoS: chặn khi đã đạt trần số phòng (tránh spam tạo phòng vô hạn).
+  if (list.length >= MAX_GROUPS) {
+    throw new Error(`Đã đạt giới hạn ${MAX_GROUPS} phòng chat. Xoá bớt phòng cũ trước khi tạo mới.`);
+  }
   const created: ChatGroup = {
     id,
-    name: name.trim() || id,
+    // Cắt tên (trước đây name không giới hạn → phình file). Rỗng thì dùng id.
+    name: (name || '').trim().slice(0, MAX_GROUP_NAME_LEN) || id,
     messages: [],
     createdAt: now,
     updatedAt: now,
@@ -140,6 +149,9 @@ export function addMessage(
   const list = readAll();
   let group = list.find((g) => g.id === id);
   if (!group) {
+    if (list.length >= MAX_GROUPS) {
+      throw new Error(`Đã đạt giới hạn ${MAX_GROUPS} phòng chat.`);
+    }
     group = { id, name: id, messages: [], createdAt: now, updatedAt: now };
     list.push(group);
   }

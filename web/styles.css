@@ -409,6 +409,71 @@ a { color: var(--brass); text-underline-offset: 2px; }
 }
 .readout-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--brass) 8%, transparent); }
 .readout-btn:disabled { cursor: default; opacity: 0.7; }
+
+/* ── LAN URL: nút + dropdown chọn host (máy nhiều card mạng) ─────────────────── */
+.lan-url-wrap { position: relative; height: 100%; display: flex; align-items: center; }
+.lan-url-wrap .readout-btn { height: 100%; }
+.lan-url-caret {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--muted);
+}
+/* Bấm ra ngoài để đóng menu — phủ toàn màn, nằm dưới menu. */
+.lan-url-backdrop { position: fixed; inset: 0; z-index: 40; }
+.lan-url-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 41;
+  min-width: 232px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  padding: 4px;
+}
+.lan-url-menu-head {
+  font-family: var(--mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  padding: 6px 8px 7px;
+  border-bottom: 1px solid var(--hairline-2);
+  margin-bottom: 3px;
+  white-space: normal;
+  line-height: 1.4;
+}
+.lan-url-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 7px 8px;
+  border-radius: 3px;
+  font: inherit;
+  transition: background var(--fast, 0.12s);
+}
+.lan-url-item:hover { background: color-mix(in srgb, var(--brass) 10%, transparent); }
+.lan-url-item-addr {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--brass);
+  font-variant-numeric: tabular-nums;
+}
+.lan-url-item-copy {
+  font-family: var(--mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+}
+.lan-url-item-copy.copied { color: var(--teal); }
 /* Màu accent theo từng mode — dùng chung cho header readout + nút + popover. */
 .rv.mode-plan,      .mode-plan      { --mode-accent: var(--teal); }
 .rv.mode-auto,      .mode-auto      { --mode-accent: var(--brass); }
@@ -1257,6 +1322,47 @@ a { color: var(--brass); text-underline-offset: 2px; }
   background: color-mix(in srgb, var(--brass) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--brass) 30%, var(--hairline));
   border-radius: var(--r);
+}
+
+/* ─────────────────────  Thẻ tự-chạy-tiếp (auto-resume)  ─────────────────────
+   Trạng thái CHỜ (không phải lỗi) → tông brass/vàng ấm, kẻ trái đậm, đồng hồ đếm
+   ngược nổi bằng font mono lớn. */
+.auto-resume-card {
+  align-self: stretch;
+  max-width: 100%;
+  flex-shrink: 0;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--brass) 40%, var(--hairline));
+  border-left: 3px solid var(--brass);
+  border-radius: var(--r);
+  background: color-mix(in srgb, var(--brass) 8%, transparent);
+}
+.auto-resume-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--brass);
+  margin-bottom: 6px;
+}
+.auto-resume-body {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+.auto-resume-count {
+  font-family: var(--mono);
+  font-size: 15px;
+  color: var(--brass-bright);
+  letter-spacing: 0.03em;
+}
+.auto-resume-when {
+  color: var(--muted);
+}
+.auto-resume-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
 }
 
 /* ─────────────────────  Thẻ duyệt (approval)  ─────────────────────
@@ -2194,4 +2300,37 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+/* Custom styled action buttons in PixelSelect */
+.px-select-item-container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  transition: background var(--fast);
+}
+.px-select-item-container:hover {
+  background: var(--surface-2);
+}
+.px-select-item-container:hover .px-select-item {
+  color: var(--ink);
+}
+.px-select-item-container:hover .px-led {
+  background: var(--muted);
+}
+.px-select-delete-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  transition: color var(--fast);
+}
+.px-select-delete-btn:hover {
+  color: #ff1744 !important;
 }

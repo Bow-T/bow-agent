@@ -1,10 +1,13 @@
 import express from 'express';
+import http from 'node:http';
 import cors from 'cors';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve, basename } from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
-import { runAgent, fetchUsageSnapshot } from '../core/runner.js';
+import { config, loadActiveProfileToken } from '../config/env.js';
+import { runAgent, fetchUsageSnapshot, type RunOptions } from '../core/runner.js';
 import { buildTaskBrief } from '../input/task.js';
 import { pdfToText } from '../input/pdf.js';
 import { getProfile } from '../profiles/index.js';
@@ -59,7 +62,16 @@ app.use(express.json({ limit: '2mb' }));
 
 const activeClients = new Map<string, { lastSeen: Date; userAgent?: string }>();
 
-/** IP client đã chuẩn hoá (::1 / ::ffff:127.0.0.1 → 127.0.0.1, lấy IP đầu nếu qua proxy). */
+/** Chuẩn hoá một chuỗi IP: ::1/::ffff:127.0.0.1 → 127.0.0.1, bóc tiền tố ::ffff:. */
+function normalizeIp(raw: string): string {
+  let ip = (raw || '').trim();
+  if (ip === '::1' || ip === '::ffff:127.0.0.1') return '127.0.0.1';
+  if (ip.startsWith('::ffff:')) return ip.slice(7);
+  return ip;
+}
+
+/** IP client cho HIỂN THỊ/LOG. Tin x-forwarded-for (lấy IP đầu) để log đúng IP sau proxy.
+ *  KHÔNG dùng cho quyết định quyền — header này client tự đặt được. Dùng getSocketIp thay thế. */
 function getCleanIp(req: express.Request): string {
   let ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
   if (Array.isArray(ip)) ip = ip[0];
@@ -67,9 +79,15 @@ function getCleanIp(req: express.Request): string {
   if (cleanIp.includes(',')) {
     cleanIp = cleanIp.split(',')[0].trim();
   }
-  if (cleanIp === '::1' || cleanIp === '::ffff:127.0.0.1') return '127.0.0.1';
-  if (cleanIp.startsWith('::ffff:')) return cleanIp.slice(7);
-  return cleanIp;
+  return normalizeIp(cleanIp);
+}
+
+/** IP THẬT của kết nối socket — KHÔNG tin bất kỳ header nào (x-forwarded-for giả mạo được).
+ *  Đây là mốc DUY NHẤT để xác định admin (localhost) và ràng buộc access theo IP. Vá lỗ
+ *  hổng leo thang: trước đây getCleanIp tin x-forwarded-for nên client LAN gửi
+ *  `X-Forwarded-For: 127.0.0.1` là chiếm quyền admin. */
+function getSocketIp(req: express.Request): string {
+  return normalizeIp(req.socket.remoteAddress || '');
 }
 
 app.use((req, res, next) => {
@@ -84,6 +102,10 @@ app.use((req, res, next) => {
 });
 
 const isSafeMode = process.env.BOW_SAFE_MODE === 'true';
+// DEBUG: giả lập hết hạn mức phiên để verify luồng tự-chạy-tiếp mà không cần chờ limit thật.
+// BOW_SIMULATE_SESSION_LIMIT=true → LẦN CHẠY ĐẦU của mỗi phiên đang thực thi sẽ tự "hết hạn
+// mức" sau ~6s với resetsAt = now + 30s. Auto-resume (lần sau) chạy bình thường tới khi xong.
+const simulateSessionLimit = process.env.BOW_SIMULATE_SESSION_LIMIT === 'true';
 // Thư mục source cố định cho Safe Mode (QC hỏi đáp read-only). Cho phép trỏ tới
 // một repo khác (vd monorepo) mà không cần chạy server TỪ trong repo đó:
 //   BOW_SAFE_MODE=true BOW_SAFE_CWD=/path/to/monorepo npm run ui:safe
@@ -101,16 +123,28 @@ const isCollabMode = process.env.BOW_COLLAB_MODE === 'true';
 // Repo cố định cho Collab (tương tự BOW_SAFE_CWD). Mặc định = cwd chạy server.
 const collabCwd = () => resolve(process.env.BOW_COLLAB_CWD || process.cwd());
 
-function getLocalIp(): string {
+/**
+ * Trả về TẤT CẢ địa chỉ IPv4 LAN của máy (bỏ loopback), đã sắp xếp: IP mạng nội bộ
+ * thật (192.168.x / 10.x / 172.16–31.x) lên trước, các dải khác (VPN/Docker/link-local)
+ * xuống sau. Máy nhiều card mạng (Wi-Fi + Ethernet + VPN…) sẽ có nhiều host → UI cho
+ * người dùng tự chọn/copy đúng cái client LAN dùng để truy cập. Rỗng ⇒ chỉ localhost.
+ */
+function getLocalIps(): string[] {
   const interfaces = os.networkInterfaces();
+  const addrs: string[] = [];
   for (const name of Object.keys(interfaces)) {
     for (const iface of interfaces[name] ?? []) {
       if (iface.family === 'IPv4' && !iface.internal) {
-        return iface.address;
+        addrs.push(iface.address);
       }
     }
   }
-  return 'localhost';
+  // Ưu tiên dải mạng LAN riêng tư (RFC1918) — đây gần như luôn là IP client LAN dùng.
+  const isPrivate = (ip: string) =>
+    /^192\.168\./.test(ip) ||
+    /^10\./.test(ip) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(ip);
+  return addrs.sort((a, b) => Number(isPrivate(b)) - Number(isPrivate(a)));
 }
 
 const logAudit = (message: string, clientIp?: string, username?: string) => {
@@ -151,9 +185,10 @@ const checkSafeMode = (req: express.Request, res: express.Response, next: expres
   next();
 };
 
-/** Admin = truy cập từ localhost. Chỉ admin xem/đổi cấu hình LAN, log, chọn source. */
+/** Admin = truy cập từ localhost. Chỉ admin xem/đổi cấu hình LAN, log, chọn source.
+ *  Dùng getSocketIp (IP socket THẬT) — KHÔNG tin x-forwarded-for để không bị giả mạo. */
 function isAdminReq(req: express.Request): boolean {
-  return getCleanIp(req) === '127.0.0.1';
+  return getSocketIp(req) === '127.0.0.1';
 }
 
 /** Middleware chặn mọi request không phải admin (dùng cho API nội bộ LAN Dashboard). */
@@ -199,10 +234,14 @@ app.post('/api/access/request', (req, res) => {
     res.status(400).json({ error: 'Tên không được để trống.' });
     return;
   }
-  const cleanIp = getCleanIp(req);
-  const user = requestAccess(name, cleanIp);
-  
-  logAudit(`Yêu cầu truy cập mới: Tên="${name}", IP="${cleanIp}"`, cleanIp, name);
+  // Ràng buộc theo IP SOCKET thật (không tin x-forwarded-for) — nếu không, kẻ gửi
+  // X-Forwarded-For: <IP nạn nhân> có thể trùng bản ghi approved của người khác (M6).
+  const socketIp = getSocketIp(req);
+  // Token client tự gửi kèm (nếu đang reload) — để nhận lại đúng bản ghi của chính mình.
+  const knownToken = getReqToken(req);
+  const user = requestAccess(name, socketIp, knownToken);
+
+  logAudit(`Yêu cầu truy cập mới: Tên="${name}", IP="${socketIp}"`, socketIp, name);
   res.json({ token: user.token, status: user.status });
 });
 
@@ -288,6 +327,206 @@ app.use('/api', (req, res, next) => {
 const webDist = join(__dirname, '..', '..', 'dist-web');
 app.use(express.static(webDist));
 
+// ── Auto-resume khi hết hạn mức phiên (5h) ────────────────────────────────────────────
+// Khi phiên đang THỰC THI dừng vì "You've hit your session limit · resets HH:MM", ta lên
+// lịch tự chạy tiếp: tới giờ reset (+ đệm) resume ĐÚNG phiên cũ (conversationId) và gửi
+// lệnh "tiếp tục" để agent làm nốt case dở. Tối đa 3 lần để không lặp triền miên.
+// Lịch giữ SERVER-SIDE nên sống qua việc client đóng tab (miễn tiến trình server còn chạy).
+
+/** Thời điểm hiện tại (ms). Gói lại để dễ đọc ở phần tính lịch. */
+const nowMs = () => Date.now();
+
+const AUTO_RESUME_MAX_ATTEMPTS = 3;
+// Đệm sau giờ reset để chắc chắn hạn mức đã mở lại (tránh gọi sớm vẫn bị chặn). Cho phép
+// override qua env để verify nhanh (BOW_AUTO_RESUME_BUFFER_MS=2000). Mặc định 30s.
+const AUTO_RESUME_BUFFER_MS = Number(process.env.BOW_AUTO_RESUME_BUFFER_MS ?? 30_000);
+// Prompt "tiếp tục" gửi khi resume — ngắn, dựa vào trí nhớ phiên cũ (đã resume conversationId).
+const AUTO_RESUME_PROMPT =
+  'Phiên trước bị ngắt do hết hạn mức sử dụng. Hãy tiếp tục công việc đang làm dở từ chỗ ' +
+  'bạn dừng lại, không cần hỏi lại từ đầu.';
+
+interface ResumeSchedule {
+  timer: NodeJS.Timeout;
+  retryAt: string;
+  sessionId: string;
+}
+// key = conversationId (session_id THẬT của SDK). Một lịch đang chờ cho mỗi hội thoại.
+const resumeSchedules = new Map<string, ResumeSchedule>();
+
+/** Huỷ lịch tự chạy tiếp của một hội thoại (nếu có). Trả true nếu vừa huỷ một lịch. */
+function cancelResumeSchedule(conversationId: string): boolean {
+  const sched = resumeSchedules.get(conversationId);
+  if (!sched) return false;
+  clearTimeout(sched.timer);
+  resumeSchedules.delete(conversationId);
+  return true;
+}
+
+/**
+ * Tham số đủ để CHẠY LẠI một phiên agent (không gồm callback gắn với session — những cái
+ * đó dựng lại mỗi lần chạy). runAgentSession dùng nó cho cả lần chạy đầu lẫn auto-resume.
+ */
+interface RunParams {
+  brief: string;
+  cwd: string;
+  mode: 'plan' | 'manual' | 'edit-auto' | 'auto';
+  collabMode: boolean;
+  effort: RunOptions['effort'];
+  language: 'vi' | 'en';
+  projectProfile?: string;
+  images?: { base64: string; mediaType: string }[];
+  mcpServers?: string[];
+  model?: string;
+  isExecuting: boolean;
+  routeToAdmin: boolean;
+  /** Siết duyệt ghi: MỌI thao tác ghi/side-effect phải qua onApproval (→ admin). Bật cho
+   *  client KHÔNG phải admin (Collab CTV). Admin localhost = false → auto như cũ. */
+  requireApprovalForWrites: boolean;
+  cleanIp: string;
+  clientName?: string;
+  /** Phiên SDK cần resume (undefined ở lần chạy đầu nếu là hội thoại mới). */
+  resumeSessionId?: string;
+}
+
+/**
+ * Chạy agent trên một session web + tự lên lịch chạy tiếp nếu dừng vì hết hạn mức phiên.
+ * `attempt` = lần thử hiện tại (0 = lần đầu do người dùng khởi động; 1..N = auto-resume).
+ * Chỉ auto-resume khi `isExecuting` (phiên có việc dở đáng làm tiếp — plan/Safe thì thôi).
+ */
+function runAgentSession(session: ReturnType<typeof createSession>, params: RunParams, attempt: number): void {
+  // Bắt session_id THẬT của SDK cho lần chạy này. Cần cho auto-resume (resume đúng phiên)
+  // và để đăng ký/huỷ lịch theo conversationId. Cập nhật động khi 'init' bắn.
+  let conversationId: string | undefined = params.resumeSessionId;
+  // Đánh dấu phiên này đã kết thúc bằng lỗi hết hạn mức + giờ reset kèm theo (nếu có).
+  let sessionLimitResetsAt: string | null | undefined;
+  let hitSessionLimit = false;
+
+  const approvalHandler = params.routeToAdmin
+    ? (toolName: string, input: Record<string, unknown>, meta?: { title?: string; description?: string; blockedPath?: string; decisionReason?: string }) => {
+        logAudit(`IP: ${params.cleanIp} - COLLAB xin ADMIN duyệt: session=${session.id}, tool=${toolName}`, params.cleanIp, params.clientName);
+        return adminBus.requestApproval({
+          sessionId: session.id,
+          clientIp: params.cleanIp,
+          toolName,
+          input,
+          title: meta?.title,
+          description: meta?.description,
+          decisionReason: meta?.decisionReason,
+        });
+      }
+    : (toolName: string, input: Record<string, unknown>, meta?: { title?: string; description?: string; blockedPath?: string; decisionReason?: string }) =>
+        session.requestApproval(toolName, input, meta);
+
+  runAgent({
+    brief: params.brief,
+    cwd: params.cwd,
+    mode: params.mode,
+    collabMode: params.collabMode,
+    requireApprovalForWrites: params.requireApprovalForWrites,
+    effort: params.effort,
+    language: params.language,
+    projectProfile: params.projectProfile,
+    images: params.images && params.images.length > 0 ? params.images : undefined,
+    mcpServers: params.mcpServers && params.mcpServers.length > 0 ? params.mcpServers : undefined,
+    abortSignal: session.abort.signal,
+    onEvent: (ev) => {
+      // Bắt lỗi hết hạn mức trước khi đẩy event ra client — để lên lịch tự chạy tiếp.
+      if (ev.type === 'error' && ev.isSessionLimit) {
+        hitSessionLimit = true;
+        sessionLimitResetsAt = ev.resetsAt;
+      }
+      session.push(ev);
+    },
+    onApproval: params.isExecuting ? approvalHandler : undefined,
+    onQuestion: (questions) => session.requestQuestion(questions),
+    model: params.model,
+    resumeSessionId: params.resumeSessionId,
+    onSessionId: (id) => {
+      conversationId = id;
+      session.push({ type: 'conversation', conversationId: id });
+      // DEBUG: giả lập hết hạn mức ở LẦN CHẠY ĐẦU. Đợi 6s (để phiên đã init xong + có
+      // conversationId) rồi bắn error giả + abort → chạm nhánh finally lên lịch tự chạy tiếp.
+      if (simulateSessionLimit && attempt === 0) {
+        const simResetMs = Number(process.env.BOW_SIMULATE_RESET_MS ?? 30_000);
+        const simDelayMs = Number(process.env.BOW_SIMULATE_DELAY_MS ?? 6_000);
+        setTimeout(() => {
+          hitSessionLimit = true;
+          sessionLimitResetsAt = new Date(nowMs() + simResetMs).toISOString();
+          session.push({
+            type: 'error',
+            subtype: 'error_during_execution',
+            isSessionLimit: true,
+            resetsAt: sessionLimitResetsAt,
+          });
+          session.abort.abort(); // dừng phiên → runAgent kết thúc → finally lên lịch
+        }, simDelayMs);
+      }
+    },
+  })
+    .then((result) => {
+      logAudit(`IP: ${params.cleanIp || 'unknown'} - Session ${session.id} HOÀN THÀNH. Result length: ${result?.length ?? 0}`, params.cleanIp, params.clientName);
+      session.push({ type: 'done', result });
+    })
+    .catch((err: unknown) => {
+      // Nếu phiên dừng vì hết hạn mức (ta chủ động abort để lên lịch), KHÔNG đẩy 'fatal'
+      // (đỏ, gây hiểu lầm) — nhánh finally sẽ phát 'auto-resume-scheduled' thay thế.
+      if (hitSessionLimit) return;
+      logAudit(`IP: ${params.cleanIp || 'unknown'} - Session ${session.id} THẤT BẠI: ${(err as Error).message}`, params.cleanIp, params.clientName);
+      session.push({ type: 'fatal', message: (err as Error).message });
+    })
+    .finally(() => {
+      // Quyết định auto-resume TRƯỚC khi đóng session (client vẫn đang nghe SSE của session
+      // này — event 'auto-resume-scheduled' phải đi qua trước khi 'end' đóng stream).
+      const canResume =
+        hitSessionLimit &&
+        params.isExecuting &&
+        attempt + 1 < AUTO_RESUME_MAX_ATTEMPTS &&
+        Boolean(conversationId);
+
+      if (canResume && conversationId) {
+        // Giờ chạy lại: giờ reset + đệm. Nếu không lấy được resetsAt (hiếm) → thử lại sau 5 phút.
+        const resetMs = sessionLimitResetsAt ? Date.parse(sessionLimitResetsAt) : NaN;
+        const retryMs = Number.isFinite(resetMs)
+          ? Math.max(resetMs + AUTO_RESUME_BUFFER_MS, nowMs() + AUTO_RESUME_BUFFER_MS)
+          : nowMs() + 5 * 60_000;
+        const retryAt = new Date(retryMs).toISOString();
+        const delay = Math.max(0, retryMs - nowMs());
+        const cid = conversationId;
+
+        cancelResumeSchedule(cid); // gỡ lịch cũ của cùng hội thoại (nếu có) trước khi đặt mới
+        const timer = setTimeout(() => {
+          resumeSchedules.delete(cid);
+          // Phiên MỚI cho lần chạy tiếp — client sẽ nối tiếp qua conversationId (resume).
+          const nextSession = createSession();
+          (nextSession as any).clientIp = params.cleanIp;
+          (nextSession as any).clientName = params.clientName;
+          logAudit(`IP: ${params.cleanIp} - AUTO-RESUME (lần ${attempt + 2}/${AUTO_RESUME_MAX_ATTEMPTS}): resume ${cid} → session ${nextSession.id}`, params.cleanIp, params.clientName);
+          runAgentSession(
+            nextSession,
+            { ...params, brief: AUTO_RESUME_PROMPT, resumeSessionId: cid },
+            attempt + 1,
+          );
+        }, delay);
+
+        resumeSchedules.set(cid, { timer, retryAt, sessionId: session.id });
+        logAudit(`IP: ${params.cleanIp} - Đã LÊN LỊCH tự chạy tiếp cho ${cid} lúc ${retryAt} (lần ${attempt + 2}/${AUTO_RESUME_MAX_ATTEMPTS})`, params.cleanIp, params.clientName);
+        session.push({
+          type: 'auto-resume-scheduled',
+          resetsAt: sessionLimitResetsAt ?? null,
+          retryAt,
+          attempt: attempt + 1,
+          maxAttempts: AUTO_RESUME_MAX_ATTEMPTS,
+        });
+      } else if (hitSessionLimit && params.isExecuting && attempt + 1 >= AUTO_RESUME_MAX_ATTEMPTS) {
+        // Đã hết số lần tự chạy tiếp — báo client để người dùng tự quyết.
+        session.push({ type: 'auto-resume-cancelled', reason: 'exhausted' });
+      }
+
+      session.close();
+      if (params.routeToAdmin) adminBus.rejectForSession(session.id);
+    });
+}
+
 /**
  * POST /api/run — bắt đầu một phiên agent.
  * body: { text?, ticketKey?, wbs?, mode: 'plan'|'execute', profile, effort, cwd }
@@ -312,17 +551,30 @@ app.post('/api/run', async (req, res) => {
       resumeContext,
     } = req.body ?? {};
 
-    // Repo cố định theo mode: Safe → safeCwd, Collab → collabCwd; thường → cwd client gửi.
-    const workdir = isSafeMode ? safeCwd() : isCollabMode ? collabCwd() : (cwd || process.cwd());
+    // Admin = localhost (IP socket thật). Quyết định cả cwd (M8) lẫn mode ghi bên dưới.
+    const isAdmin = isAdminReq(req);
+    // Repo cố định theo mode: Safe → safeCwd, Collab → collabCwd. Mode thường: chỉ ADMIN
+    // được tự chọn cwd; non-admin buộc dùng cwd server (M8) — tránh biến cả HOME thành
+    // "trong repo" để lách sandbox ghi.
+    const workdir = isSafeMode
+      ? safeCwd()
+      : isCollabMode
+        ? collabCwd()
+        : isAdmin
+          ? (cwd || process.cwd())
+          : process.cwd();
     const cleanIp = getCleanIp(req);
+    // M11: guard kiểu — body do client gửi, ép về string để .trim() không ném TypeError
+    // (trước đây {jiraRef:123} gây 500 + rò message lỗi nội bộ thay vì 400 đúng nghĩa).
+    const textStr = typeof text === 'string' ? text : '';
+    const jiraRefStr = typeof jiraRef === 'string' ? jiraRef : '';
     const auditMode = isSafeMode ? 'plan' : isCollabMode ? 'auto (collab)' : mode;
-    logAudit(`IP: ${cleanIp} - YÊU CẦU CHẠY: CWD=${workdir}, Mode=${auditMode}, Brief=${JSON.stringify(text || jiraRef || 'N/A')}`, cleanIp);
-
-    let activeJiraRef = jiraRef;
-    if (!activeJiraRef && text) {
-      const parsed = parseJiraRef(text);
+    logAudit(`IP: ${cleanIp} - YÊU CẦU CHẠY: CWD=${workdir}, Mode=${auditMode}, Brief=${JSON.stringify(textStr || jiraRefStr || 'N/A')}`, cleanIp);
+    let activeJiraRef = jiraRefStr;
+    if (!activeJiraRef && textStr) {
+      const parsed = parseJiraRef(textStr);
       if (parsed.kind !== 'none') {
-        activeJiraRef = text;
+        activeJiraRef = textStr;
       }
     }
 
@@ -347,8 +599,8 @@ app.post('/api/run', async (req, res) => {
     // Chỉ chặn khi có Jira ref THUẦN mà KHÔNG có jira ở BẤT KỲ đâu (cả tick lẫn global) —
     // vì lúc đó agent không có cách nào đọc ticket. Có text/tài liệu kèm thì vẫn chạy được.
     if (activeJiraRef && !hasJiraMcp) {
-      const isPureJiraRef = text ? text.trim() === activeJiraRef.trim() : true;
-      if (isPureJiraRef || jiraRef) {
+      const isPureJiraRef = textStr ? textStr.trim() === activeJiraRef.trim() : true;
+      if (isPureJiraRef || jiraRefStr) {
         res.status(400).json({
           error: 'Có Jira ref nhưng chưa cấu hình MCP jira. Thêm server "jira" ở panel MCP (hoặc trong ~/.claude.json) để agent đọc được ticket, hoặc mô tả task bằng text.',
         });
@@ -390,8 +642,8 @@ app.post('/api/run', async (req, res) => {
     }
 
     let brief = await buildTaskBrief({
-      text,
-      jiraRef,
+      text: textStr,
+      jiraRef: jiraRefStr,
       docs: allDocs,
       imageCount: Array.isArray(images) ? images.length : 0,
       jiraImageNames,
@@ -446,8 +698,15 @@ app.post('/api/run', async (req, res) => {
     // Mọi mode ngoài 'plan' đều là "đang thực thi" (có cổng duyệt theo policy của runner).
     // Safe Mode → ép 'plan' (read-only). Collab Mode → ép 'auto' (ghi tự do, chỉ gác lệnh
     // hủy hoại — được định tuyến duyệt lên admin bên dưới).
+    // PHÂN QUYỀN (quan trọng): chỉ ADMIN (localhost) mới được chạy mode GHI. Client KHÔNG
+    // phải admin bị ép 'plan' (read-only) ở mode thường — muốn ghi phải qua Collab (mọi
+    // thao tác duyệt bởi admin). Safe Mode → luôn 'plan'. Collab → 'auto' NHƯNG siết duyệt
+    // bằng requireApprovalForWrites (mọi ghi phải admin duyệt), không còn "ghi tự do".
+    // (isAdmin đã tính ở đầu handler.)
     const VALID_MODES = new Set(['plan', 'manual', 'edit-auto', 'auto']);
-    const requestedMode = isSafeMode ? 'plan' : isCollabMode ? 'auto' : mode;
+    // Ở mode thường: admin dùng mode client gửi; non-admin bị ép 'plan'.
+    const normalModeRequest = isAdmin ? mode : 'plan';
+    const requestedMode = isSafeMode ? 'plan' : isCollabMode ? 'auto' : normalModeRequest;
     const runMode: 'plan' | 'manual' | 'edit-auto' | 'auto' =
       requestedMode === 'execute'
         ? 'manual'
@@ -460,64 +719,39 @@ app.post('/api/run', async (req, res) => {
     // client gửi. Tránh lỡ dùng Opus 4.8 khi client cũ/lỗi hoặc localStorage còn Opus.
     const effectiveModel = isSafeMode ? 'claude-sonnet-5' : model;
 
-    // Cổng duyệt cho phiên này. Collab Mode + CTV (không phải admin localhost): lệnh hủy
-    // hoại được ĐỊNH TUYẾN lên ADMIN qua adminBus — CTV không tự duyệt được. Còn lại
-    // (mọi mode thường, hoặc chính admin chạy Collab tại localhost) dùng cổng của phiên.
-    const routeToAdmin = isCollabMode && cleanIp !== '127.0.0.1';
-    const approvalHandler = routeToAdmin
-      ? (toolName: string, input: Record<string, unknown>, meta?: { title?: string; description?: string; blockedPath?: string; decisionReason?: string }) => {
-          logAudit(`IP: ${cleanIp} - COLLAB xin ADMIN duyệt: session=${session.id}, tool=${toolName}`, cleanIp, clientName);
-          return adminBus.requestApproval({
-            sessionId: session.id,
-            clientIp: cleanIp,
-            toolName,
-            input,
-            title: meta?.title,
-            description: meta?.description,
-            decisionReason: meta?.decisionReason,
-          });
-        }
-      : (toolName: string, input: Record<string, unknown>, meta?: { title?: string; description?: string; blockedPath?: string; decisionReason?: string }) =>
-          session.requestApproval(toolName, input, meta);
+    // Cổng duyệt cho phiên này. CTV Collab (không phải admin localhost): MỌI thao tác ghi
+    // được ĐỊNH TUYẾN lên ADMIN qua adminBus (routeToAdmin) và runner siết duyệt toàn bộ
+    // (requireApprovalForWrites). Admin localhost chạy trực tiếp thì auto như cũ.
+    const routeToAdmin = isCollabMode && !isAdmin;
+    const requireApprovalForWrites = routeToAdmin;
 
-    // Chạy agent nền; đẩy sự kiện vào session queue.
-    runAgent({
-      brief,
-      cwd: workdir,
-      mode: runMode,
-      collabMode: isCollabMode,
-      effort: effort ?? 'high',
-      language: language === 'en' ? 'en' : 'vi',
-      projectProfile,
-      images: uploadImages.length > 0 ? uploadImages : undefined,
-      mcpServers: effectiveMcp.length > 0 ? effectiveMcp : undefined,
-      abortSignal: session.abort.signal,
-      onEvent: (ev) => session.push(ev),
-      onApproval: isExecuting ? approvalHandler : undefined,
-      // AskUserQuestion hoạt động ở mọi mode (kể cả plan) để agent làm rõ yêu cầu.
-      onQuestion: (questions) => session.requestQuestion(questions),
-      model: effectiveModel,
-      resumeSessionId,
-      // Bắt session_id THẬT của SDK → đẩy lên client để lưu, lượt sau resume đúng phiên.
-      onSessionId: (conversationId) => session.push({ type: 'conversation', conversationId }),
-    })
-      .then((result) => {
-        const sessionIp = (session as any).clientIp;
-        const sessionName = (session as any).clientName;
-        logAudit(`IP: ${sessionIp || 'unknown'} - Session ${session.id} HOÀN THÀNH. Result length: ${result?.length ?? 0}`, sessionIp, sessionName);
-        session.push({ type: 'done', result });
-      })
-      .catch((err: unknown) => {
-        const sessionIp = (session as any).clientIp;
-        const sessionName = (session as any).clientName;
-        logAudit(`IP: ${sessionIp || 'unknown'} - Session ${session.id} THẤT BẠI: ${(err as Error).message}`, sessionIp, sessionName);
-        session.push({ type: 'fatal', message: (err as Error).message });
-      })
-      .finally(() => {
-        session.close();
-        // Phiên đóng: gỡ mọi yêu cầu duyệt Collab còn treo trên admin bus (khỏi nút "ma").
-        if (routeToAdmin) adminBus.rejectForSession(session.id);
-      });
+    // Nếu người dùng CHỦ ĐỘNG chạy lại một hội thoại đang có lịch tự-chạy-tiếp treo, huỷ lịch
+    // đó — họ đã tự tiếp tục bằng tay, khỏi để timer server gọi trùng.
+    if (resumeSessionId) cancelResumeSchedule(resumeSessionId);
+
+    // Chạy agent nền + tự lên lịch chạy tiếp nếu dừng vì hết hạn mức phiên (chỉ khi đang thực thi).
+    runAgentSession(
+      session,
+      {
+        brief,
+        cwd: workdir,
+        mode: runMode,
+        collabMode: isCollabMode,
+        effort: effort ?? 'high',
+        language: language === 'en' ? 'en' : 'vi',
+        projectProfile,
+        images: uploadImages,
+        mcpServers: effectiveMcp,
+        model: effectiveModel,
+        isExecuting,
+        routeToAdmin,
+        requireApprovalForWrites,
+        cleanIp,
+        clientName,
+        resumeSessionId,
+      },
+      0,
+    );
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
@@ -527,6 +761,37 @@ app.post('/api/run', async (req, res) => {
 app.get('/api/session/:id', (req, res) => {
   const session = getSession(req.params.id);
   res.json({ exists: Boolean(session) });
+});
+
+/**
+ * POST /api/resume/cancel — huỷ lịch tự-chạy-tiếp của một hội thoại (người dùng bấm huỷ).
+ * body: { conversationId }. Nếu phiên trước còn session sống, báo huỷ cho client đang nghe.
+ */
+app.post('/api/resume/cancel', (req, res) => {
+  const { conversationId } = req.body ?? {};
+  if (typeof conversationId !== 'string' || !conversationId) {
+    res.status(400).json({ error: 'Thiếu conversationId.' });
+    return;
+  }
+  const sched = resumeSchedules.get(conversationId);
+  const cancelled = cancelResumeSchedule(conversationId);
+  // Báo cho client đang nghe SSE của phiên trước (nếu còn) để nó xoá đồng hồ đếm ngược.
+  if (sched) {
+    const prev = getSession(sched.sessionId);
+    prev?.push({ type: 'auto-resume-cancelled', reason: 'user' });
+  }
+  logAudit(`Huỷ lịch tự chạy tiếp cho ${conversationId}: ${cancelled ? 'đã huỷ' : 'không có lịch'}`);
+  res.json({ cancelled });
+});
+
+/**
+ * GET /api/resume/pending?conversationId=... — client mở lại tab hỏi có lịch tự-chạy-tiếp
+ * đang chờ cho hội thoại này không, để dựng lại đồng hồ đếm ngược. Trả { retryAt } hoặc null.
+ */
+app.get('/api/resume/pending', (req, res) => {
+  const conversationId = String(req.query.conversationId ?? '');
+  const sched = conversationId ? resumeSchedules.get(conversationId) : undefined;
+  res.json(sched ? { pending: true, retryAt: sched.retryAt } : { pending: false });
 });
 
 /** GET /api/events/:id — SSE stream sự kiện của một phiên. */
@@ -646,27 +911,458 @@ app.post('/api/stop/:id', (req, res) => {
   res.json({ ok: Boolean(session) });
 });
 
+// Helper to list all Claude profiles
+function listClaudeProfiles(): { name: string; tokenSet: boolean }[] {
+  const home = os.homedir();
+  try {
+    const files = fs.readdirSync(home);
+    const profiles = files.filter(f => {
+      if (f === '.claude') return true;
+      if (!f.startsWith('.claude-')) return false;
+      const fullPath = join(home, f);
+      try {
+        return fs.statSync(fullPath).isDirectory();
+      } catch {
+        return false;
+      }
+    });
+    // Trả về danh sách profile kèm trạng thái tokenSet
+    return profiles.map(f => {
+      const pName = f === '.claude' ? 'default' : f.slice('.claude-'.length);
+      const tokenFile = join(home, f, 'token.txt');
+      return {
+        name: pName,
+        tokenSet: fs.existsSync(tokenFile),
+      };
+    });
+  } catch {
+    return [{ name: 'default', tokenSet: false }];
+  }
+}
+
+// Helper to get current profile display name
+function getCurrentProfile(): string {
+  const configDir = process.env.CLAUDE_CONFIG_DIR;
+  if (!configDir) return 'default';
+  const name = basename(configDir);
+  if (name === '.claude') return 'default';
+  if (name.startsWith('.claude-')) return name.slice('.claude-'.length);
+  return name;
+}
+
+function pingConfigPort(port: number): Promise<{ repoName: string; defaultCwd: string } | null> {
+  return new Promise((resolve) => {
+    const req = http.get(`http://localhost:${port}/api/config`, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(data);
+          resolve({
+            repoName: parsed.repoName || '',
+            defaultCwd: parsed.defaultCwd || ''
+          });
+        } catch {
+          resolve(null);
+        }
+      });
+    });
+    req.on('error', () => {
+      resolve(null);
+    });
+    req.setTimeout(250, () => {
+      req.destroy();
+      resolve(null);
+    });
+  });
+}
+
 /** GET /api/config — thông tin cấu hình cho UI (MCP, cwd). Model do web tự chọn. */
-app.get('/api/config', (req, res) => {
+app.get('/api/config', async (req, res) => {
   const cc = loadClaudeCodeMcp();
-  const localIp = getLocalIp();
-  
+  const localIps = getLocalIps();
+  const localIp = localIps[0] ?? 'localhost';
+
   const isAdmin = isAdminReq(req);
 
   // Source bị khoá theo mode: Safe → safeCwd, Collab → collabCwd; thường → cwd server.
   const effectiveCwd = isSafeMode ? safeCwd() : isCollabMode ? collabCwd() : process.cwd();
   // Cổng web LAN theo bản đang chạy (BOW_WEB_PORT: dev 5173 / share 5174 / collab 5175).
   const webPort = process.env.BOW_WEB_PORT || '5173';
+
+  const currentPort = Number(process.env.BOW_AGENT_PORT || '4000');
+  const modes = {
+    dev: { repoName: '', defaultCwd: '' },
+    safe: { repoName: '', defaultCwd: '' },
+    collab: { repoName: '', defaultCwd: '' }
+  };
+
+  if (currentPort === 4000) {
+    modes.dev = { repoName: basename(effectiveCwd), defaultCwd: effectiveCwd };
+  } else if (currentPort === 4001) {
+    modes.safe = { repoName: basename(effectiveCwd), defaultCwd: effectiveCwd };
+  } else if (currentPort === 4002) {
+    modes.collab = { repoName: basename(effectiveCwd), defaultCwd: effectiveCwd };
+  }
+
+  const promises = [];
+  if (currentPort !== 4000) {
+    promises.push(pingConfigPort(4000).then(res => { if (res) modes.dev = res; }));
+  }
+  if (currentPort !== 4001) {
+    promises.push(pingConfigPort(4001).then(res => { if (res) modes.safe = res; }));
+  }
+  if (currentPort !== 4002) {
+    promises.push(pingConfigPort(4002).then(res => { if (res) modes.collab = res; }));
+  }
+
+  await Promise.all(promises);
+
   res.json({
     defaultCwd: effectiveCwd,
-    // Tên repo (basename của cwd) — dùng cho banner "Đang hỏi đáp source: <repo>"
-    // ở chế độ Safe Mode, để QC luôn biết mình đang hỏi ở source nào.
     repoName: basename(effectiveCwd),
     mcpServers: cc.names,
+    // lanUrl: host đầu tiên (tương thích ngược). lanUrls: TẤT CẢ host — UI cho chọn/copy.
     lanUrl: `http://${localIp}:${webPort}`,
+    lanUrls: (localIps.length ? localIps : ['localhost']).map((ip) => `http://${ip}:${webPort}`),
     isSafeMode,
     isCollabMode,
     isAdmin,
+    claudeProfiles: listClaudeProfiles(),
+    currentClaudeProfile: getCurrentProfile(),
+    hasAuth: config.hasAuth,
+    tokenSet: config.hasTokenSet,
+    otherModes: modes
+  });
+});
+
+// Helper to save active profile to .env
+function saveActiveProfileToEnv(profileName: string): void {
+  const envPath = join(process.cwd(), '.env');
+  const dirName = profileName === 'default' ? '.claude' : `.claude-${profileName}`;
+  const fullPath = join(os.homedir(), dirName);
+  
+  let content = '';
+  if (fs.existsSync(envPath)) {
+    content = fs.readFileSync(envPath, 'utf8');
+  }
+  
+  const lineToSet = `CLAUDE_CONFIG_DIR=${fullPath}`;
+  
+  if (content.includes('CLAUDE_CONFIG_DIR=')) {
+    content = content.replace(/CLAUDE_CONFIG_DIR=.*/g, lineToSet);
+  } else {
+    content += (content.endsWith('\n') ? '' : '\n') + lineToSet + '\n';
+  }
+  
+  fs.writeFileSync(envPath, content, 'utf8');
+}
+
+/** POST /api/profiles — Chuyển tài khoản Claude hoạt động và thiết lập token (chỉ Admin mới làm được) */
+app.post('/api/profiles', requireAdmin, (req, res) => {
+  const { profile, token } = req.body ?? {};
+  if (typeof profile !== 'string' || !profile.trim()) {
+    res.status(400).json({ error: 'Thiếu tên profile.' });
+    return;
+  }
+
+  const pName = profile.trim();
+  const dirName = pName === 'default' ? '.claude' : `.claude-${pName}`;
+  const fullPath = join(os.homedir(), dirName);
+
+  if (!fs.existsSync(fullPath)) {
+    try {
+      fs.mkdirSync(fullPath, { recursive: true });
+      logAudit(`ADMIN tạo mới profile Claude → ${pName}`, '127.0.0.1');
+    } catch (err) {
+      res.status(500).json({ error: `Không thể tạo thư mục cấu hình: ${(err as Error).message}` });
+      return;
+    }
+  }
+
+  process.env.CLAUDE_CONFIG_DIR = fullPath;
+  logAudit(`ADMIN chuyển profile Claude → ${pName}`, '127.0.0.1');
+
+  // Ghi hoặc xoá token.txt
+  const tokenFile = join(fullPath, 'token.txt');
+  if (typeof token === 'string') {
+    const trimmedToken = token.trim();
+    if (trimmedToken) {
+      try {
+        fs.writeFileSync(tokenFile, trimmedToken, 'utf8');
+        logAudit(`ADMIN ghi token cho profile Claude → ${pName}`, '127.0.0.1');
+      } catch (err) {
+        res.status(500).json({ error: `Không thể lưu token: ${(err as Error).message}` });
+        return;
+      }
+    } else {
+      try {
+        if (fs.existsSync(tokenFile)) {
+          fs.unlinkSync(tokenFile);
+          logAudit(`ADMIN xoá token của profile Claude → ${pName}`, '127.0.0.1');
+        }
+      } catch (err) {
+        res.status(500).json({ error: `Không thể xoá token: ${(err as Error).message}` });
+        return;
+      }
+    }
+  }
+
+  // Tải lại các biến môi trường token
+  loadActiveProfileToken();
+
+  try {
+    saveActiveProfileToEnv(pName);
+  } catch (err) {
+    console.error('Lỗi khi ghi file .env:', err);
+  }
+
+  // Trả về config mới để UI cập nhật
+  const cc = loadClaudeCodeMcp();
+  res.json({
+    ok: true,
+    currentProfile: pName,
+    hasAuth: config.hasAuth,
+    tokenSet: config.hasTokenSet,
+    mcpServers: cc.names,
+  });
+});
+
+interface ActiveLogin {
+  child: any;
+  url: string;
+  output: string;
+  urlSent: boolean;
+}
+
+const activeLogins = new Map<string, ActiveLogin>();
+
+function getClaudeBinaryPath(): string {
+  const paths = [
+    '/opt/homebrew/bin/claude',
+    '/usr/local/bin/claude',
+    'claude',
+  ];
+  for (const p of paths) {
+    if (p === 'claude') return p;
+    if (fs.existsSync(p)) return p;
+  }
+  return 'claude';
+}
+
+/** POST /api/profiles/login/start — Bắt đầu đăng nhập qua Claude CLI (OAuth) */
+app.post('/api/profiles/login/start', requireAdmin, (req, res) => {
+  const { profile } = req.body ?? {};
+  if (typeof profile !== 'string' || !profile.trim()) {
+    res.status(400).json({ error: 'Thiếu tên profile.' });
+    return;
+  }
+
+  const pName = profile.trim();
+  const dirName = pName === 'default' ? '.claude' : `.claude-${pName}`;
+  const fullPath = join(os.homedir(), dirName);
+
+  if (!fs.existsSync(fullPath)) {
+    try {
+      fs.mkdirSync(fullPath, { recursive: true });
+    } catch (err) {
+      res.status(500).json({ error: `Không thể tạo thư mục cấu hình: ${(err as Error).message}` });
+      return;
+    }
+  }
+
+  const existing = activeLogins.get(pName);
+  if (existing) {
+    try {
+      existing.child.kill();
+    } catch {}
+    activeLogins.delete(pName);
+  }
+
+  let child;
+  try {
+    const binary = getClaudeBinaryPath();
+    const envPath = process.env.PATH || '';
+    const pathsToPrepend = ['/opt/homebrew/bin', '/usr/local/bin'];
+    const newPath = [...pathsToPrepend, envPath.split(':')].flat().filter(Boolean).join(':');
+
+    child = spawn(binary, ['auth', 'login', '--claudeai'], {
+      env: {
+        ...process.env,
+        PATH: newPath,
+        CLAUDE_CONFIG_DIR: fullPath,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+  } catch (err) {
+    console.error('Lỗi khi spawn CLI login:', err);
+    res.status(500).json({ error: `Không thể khởi chạy Claude CLI: ${(err as Error).message}` });
+    return;
+  }
+
+  let url = '';
+  let output = '';
+  let urlSent = false;
+
+  const handleChunk = (chunk: any) => {
+    const text = chunk.toString();
+    output += text;
+    const match = output.match(/https:\/\/[^\s]+/);
+    if (match && !urlSent) {
+      url = match[0];
+      urlSent = true;
+      res.json({ ok: true, url, profile: pName });
+    }
+  };
+
+  child.stdout.on('data', handleChunk);
+  child.stderr.on('data', handleChunk);
+
+  const timeoutId = setTimeout(() => {
+    if (!urlSent) {
+      child.kill();
+      activeLogins.delete(pName);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Không nhận được URL đăng nhập từ Claude CLI.' });
+      }
+    }
+  }, 20000);
+
+  child.on('error', (err) => {
+    clearTimeout(timeoutId);
+    console.error('Tiến trình CLI login báo lỗi:', err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: `Tiến trình Claude CLI gặp lỗi: ${err.message}` });
+    }
+    activeLogins.delete(pName);
+  });
+
+  child.on('close', (code) => {
+    clearTimeout(timeoutId);
+    activeLogins.delete(pName);
+    if (!urlSent && !res.headersSent) {
+      res.status(500).json({
+        error: `Tiến trình Claude CLI thoát sớm với mã ${code}. Chi tiết: ${output.trim() || 'Không có output.'}`
+      });
+    }
+  });
+
+  activeLogins.set(pName, { child, url, output, urlSent });
+});
+
+/** POST /api/profiles/login/verify — Nhập mã xác nhận hoàn tất OAuth */
+app.post('/api/profiles/login/verify', requireAdmin, (req, res) => {
+  const { profile, code } = req.body ?? {};
+  if (typeof profile !== 'string' || !profile.trim()) {
+    res.status(400).json({ error: 'Thiếu tên profile.' });
+    return;
+  }
+  if (typeof code !== 'string' || !code.trim()) {
+    res.status(400).json({ error: 'Thiếu mã xác thực.' });
+    return;
+  }
+
+  const pName = profile.trim();
+  const loginInfo = activeLogins.get(pName);
+  if (!loginInfo) {
+    res.status(400).json({ error: 'Tiến trình đăng nhập đã hết hạn hoặc không tồn tại.' });
+    return;
+  }
+
+  const child = loginInfo.child;
+  // M12: ghi vào stdin của tiến trình có thể đã chết → 'error' (EPIPE) bất đồng bộ. Không
+  // có listener thì Node ném uncaught exception làm SẬP server. Gắn error handler + guard
+  // writable, và trả 500 gọn thay vì để tiến trình chết.
+  let responded = false;
+  const failVerify = (msg: string) => {
+    if (responded) return;
+    responded = true;
+    activeLogins.delete(pName);
+    if (!res.headersSent) res.status(500).json({ error: msg });
+  };
+  child.stdin.on('error', (err: Error) => {
+    failVerify(`Không gửi được mã xác thực tới tiến trình đăng nhập: ${err.message}`);
+  });
+  if (!child.stdin.writable || child.killed || child.exitCode !== null) {
+    failVerify('Tiến trình đăng nhập đã đóng — hãy bắt đầu lại.');
+    return;
+  }
+  try {
+    child.stdin.write(code.trim() + '\n');
+  } catch (err) {
+    failVerify(`Không gửi được mã xác thực: ${(err as Error).message}`);
+    return;
+  }
+
+  child.on('close', (exitCode: number | null) => {
+    if (responded) return;
+    responded = true;
+    activeLogins.delete(pName);
+    if (exitCode === 0) {
+      loadActiveProfileToken();
+      res.json({ ok: true });
+    } else {
+      res.status(500).json({ error: `Đăng nhập thất bại (mã lỗi ${exitCode}).` });
+    }
+  });
+
+  setTimeout(() => {
+    if (!responded) {
+      responded = true;
+      child.kill();
+      activeLogins.delete(pName);
+      res.status(500).json({ error: 'Quá thời gian xác thực tài khoản.' });
+    }
+  }, 15000);
+});
+
+/** DELETE /api/profiles — Xoá một tài khoản Claude (chỉ Admin mới làm được) */
+app.delete('/api/profiles', requireAdmin, (req, res) => {
+  const { profile } = req.body ?? {};
+  if (typeof profile !== 'string' || !profile.trim()) {
+    res.status(400).json({ error: 'Thiếu tên profile.' });
+    return;
+  }
+
+  const pName = profile.trim();
+  if (pName === 'default') {
+    res.status(400).json({ error: 'Không thể xoá profile mặc định (default).' });
+    return;
+  }
+
+  const dirName = `.claude-${pName}`;
+  const fullPath = join(os.homedir(), dirName);
+
+  if (fs.existsSync(fullPath)) {
+    try {
+      fs.rmSync(fullPath, { recursive: true, force: true });
+      logAudit(`ADMIN xoá profile Claude → ${pName}`, '127.0.0.1');
+    } catch (err) {
+      res.status(500).json({ error: `Không thể xoá thư mục cấu hình: ${(err as Error).message}` });
+      return;
+    }
+  }
+
+  // Nếu profile bị xoá trùng với profile hiện tại, reset về default
+  const activeProfile = getCurrentProfile();
+  if (activeProfile === pName) {
+    process.env.CLAUDE_CONFIG_DIR = join(os.homedir(), '.claude');
+    try {
+      saveActiveProfileToEnv('default');
+    } catch (err) {
+      console.error('Lỗi khi ghi file .env:', err);
+    }
+    loadActiveProfileToken();
+  }
+
+  const cc = loadClaudeCodeMcp();
+  res.json({
+    ok: true,
+    currentProfile: getCurrentProfile(),
+    claudeProfiles: listClaudeProfiles(),
+    hasAuth: config.hasAuth,
+    tokenSet: config.hasTokenSet,
+    mcpServers: cc.names,
   });
 });
 
@@ -767,7 +1463,7 @@ app.get('/api/mcp', (_req, res) => {
 });
 
 /** POST /api/mcp — thêm MCP server stdio mới. body: {name, command, args?, env?} */
-app.post('/api/mcp', checkSafeMode, (req, res) => {
+app.post('/api/mcp', requireAdmin, checkSafeMode, (req, res) => {
   const { name, command, args, env } = req.body ?? {};
   if (typeof name !== 'string' || typeof command !== 'string') {
     res.status(400).json({ error: 'Thiếu name hoặc command.' });
@@ -787,7 +1483,7 @@ app.post('/api/mcp', checkSafeMode, (req, res) => {
 });
 
 /** DELETE /api/mcp/:name — xóa một MCP server. */
-app.delete('/api/mcp/:name', checkSafeMode, (req, res) => {
+app.delete('/api/mcp/:name', requireAdmin, checkSafeMode, (req, res) => {
   try {
     removeGlobalMcp(req.params.name);
     res.json({ ok: true, servers: listGlobalMcp() });
@@ -874,7 +1570,7 @@ app.get('/api/workspace/current', (req, res) => {
  * POST /api/workspace/repo — gán một repo vào workspace (tạo nếu chưa có).
  * body: { name, path, role }. Trả workspace sau cập nhật.
  */
-app.post('/api/workspace/repo', checkSafeMode, (req, res) => {
+app.post('/api/workspace/repo', requireAdmin, checkSafeMode, (req, res) => {
   const { name, path, role } = req.body ?? {};
   if (typeof name !== 'string' || !name.trim() || typeof path !== 'string' || !path.trim()) {
     res.status(400).json({ error: 'Thiếu name hoặc path.' });
@@ -896,7 +1592,7 @@ app.post('/api/workspace/repo', checkSafeMode, (req, res) => {
  * DELETE /api/workspace/repo — gỡ một repo khỏi workspace (xóa workspace nếu rỗng).
  * body: { name, path }.
  */
-app.delete('/api/workspace/repo', checkSafeMode, (req, res) => {
+app.delete('/api/workspace/repo', requireAdmin, checkSafeMode, (req, res) => {
   const { name, path } = req.body ?? {};
   if (typeof name !== 'string' || typeof path !== 'string') {
     res.status(400).json({ error: 'Thiếu name hoặc path.' });
@@ -925,7 +1621,7 @@ app.get('/api/workspace/:slug/knowledge', (req, res) => {
 });
 
 /** PUT /api/workspace/:slug/shared — ghi đè tri thức chung shared.md. body: { content }. */
-app.put('/api/workspace/:slug/shared', checkSafeMode, (req, res) => {
+app.put('/api/workspace/:slug/shared', requireAdmin, checkSafeMode, (req, res) => {
   const ws = findWorkspace(req.params.slug);
   if (!ws) {
     res.status(404).json({ error: 'Workspace không tồn tại.' });
@@ -944,7 +1640,7 @@ app.put('/api/workspace/:slug/shared', checkSafeMode, (req, res) => {
  * POST /api/generate-profile — quét repo lạ (chỉ đọc) rồi sinh profile lưu lại.
  * body: { cwd }. Stream tiến độ qua session giống /api/run.
  */
-app.post('/api/generate-profile', async (req, res) => {
+app.post('/api/generate-profile', requireAdmin, async (req, res) => {
   const cwd = (req.body?.cwd as string) || process.cwd();
   const session = createSession();
   res.json({ sessionId: session.id });
@@ -965,7 +1661,7 @@ app.post('/api/generate-profile', async (req, res) => {
  * nguyên nhân lỗi "Unexpected end of JSON input"). KHÔNG lưu file (khác sinh profile).
  * Kết quả cuối đẩy qua event 'done' với result = mô tả markdown. body: { cwd }.
  */
-app.post('/api/analyze-structure', (req, res) => {
+app.post('/api/analyze-structure', requireAdmin, (req, res) => {
   const cwd = (req.body?.cwd as string) || process.cwd();
   if (!fs.existsSync(cwd)) {
     res.status(400).json({ error: `Không thấy thư mục: ${cwd}` });
@@ -986,7 +1682,10 @@ app.post('/api/analyze-structure', (req, res) => {
  *  Lọc theo IP: mỗi máy chỉ thấy cuộc của mình; admin (localhost) thấy tất cả. */
 app.get('/api/conversations', (req, res) => {
   try {
-    res.json({ conversations: listConversations(getCleanIp(req)) });
+    // R2: dùng IP socket THẬT cho phân quyền chủ sở hữu/admin — getCleanIp tin
+    // x-forwarded-for nên client giả `X-Forwarded-For: 127.0.0.1` sẽ được coi là admin và
+    // đọc/xoá cuộc của mọi người. Đồng bộ với isAdminReq đã vá.
+    res.json({ conversations: listConversations(getSocketIp(req)) });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
@@ -995,7 +1694,7 @@ app.get('/api/conversations', (req, res) => {
 /** GET /api/conversations/:id — lấy đầy đủ một cuộc (kèm items + conversationId).
  *  Chỉ chủ cuộc hoặc admin đọc được (tránh QC đọc chéo cuộc của người khác). */
 app.get('/api/conversations/:id', (req, res) => {
-  const conv = getConversation(req.params.id, getCleanIp(req));
+  const conv = getConversation(req.params.id, getSocketIp(req)); // R2: IP socket thật
   if (!conv) {
     res.status(404).json({ error: 'Cuộc trò chuyện không tồn tại.' });
     return;
@@ -1020,7 +1719,7 @@ app.put('/api/conversations/:id', (req, res) => {
         cwd: typeof cwd === 'string' ? cwd : undefined,
       },
       Date.now(),
-      getCleanIp(req),
+      getSocketIp(req), // R2: IP socket thật (không tin x-forwarded-for)
     );
     res.json({ ok: true, conversation: conv });
   } catch (err) {
@@ -1037,7 +1736,7 @@ app.patch('/api/conversations/:id', (req, res) => {
     res.status(400).json({ error: 'Thiếu tiêu đề.' });
     return;
   }
-  const conv = renameConversation(req.params.id, title, Date.now(), getCleanIp(req));
+  const conv = renameConversation(req.params.id, title, Date.now(), getSocketIp(req)); // R2
   if (!conv) {
     res.status(404).json({ error: 'Cuộc trò chuyện không tồn tại.' });
     return;
@@ -1047,7 +1746,7 @@ app.patch('/api/conversations/:id', (req, res) => {
 
 /** DELETE /api/conversations/:id — xóa một cuộc (chỉ chủ hoặc admin). */
 app.delete('/api/conversations/:id', (req, res) => {
-  const ip = getCleanIp(req);
+  const ip = getSocketIp(req); // R2: IP socket thật cho phân quyền
   const ok = deleteConversation(req.params.id, ip);
   res.json({ ok, conversations: listConversations(ip) });
 });

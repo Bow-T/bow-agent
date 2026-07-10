@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -14,18 +14,82 @@ function optional(key: string): string | undefined {
 }
 
 /**
+ * Tự động tải token (API Key hoặc OAuth Token) từ file token.txt của profile Claude đang chạy
+ * và thiết lập vào process.env tương ứng để SDK và CLI tự động sử dụng.
+ */
+export function loadActiveProfileToken(): void {
+  const configDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
+  const tokenFile = join(configDir, 'token.txt');
+  if (existsSync(tokenFile)) {
+    try {
+      const token = readFileSync(tokenFile, 'utf8').trim();
+      if (token) {
+        if (token.startsWith('sk-ant-')) {
+          process.env.ANTHROPIC_API_KEY = token;
+          delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+        } else {
+          process.env.CLAUDE_CODE_OAUTH_TOKEN = token;
+          delete process.env.ANTHROPIC_API_KEY;
+        }
+        return;
+      }
+    } catch (e) {
+      console.error('Lỗi khi đọc token.txt cho profile:', e);
+    }
+  }
+  // Nếu không có token.txt, xóa biến môi trường để dùng auth gốc của CLI
+  delete process.env.ANTHROPIC_API_KEY;
+  delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+}
+
+// Chạy khởi tạo token ngay khi nạp env config
+loadActiveProfileToken();
+
+/**
  * Có credential Claude Code CLI đã login sẵn không (~/.claude tồn tại)?
- * Agent SDK spawn tiến trình `claude`, tiến trình đó tự đọc login này — đây là
- * cách xác thực DUY NHẤT của bow-agent (không dùng ANTHROPIC_API_KEY).
+ * Hỗ trợ các biến môi trường ANTHROPIC_API_KEY hoặc CLAUDE_CODE_OAUTH_TOKEN.
  */
 function hasClaudeCliLogin(): boolean {
-  return existsSync(join(homedir(), '.claude'));
+  if (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN) {
+    return true;
+  }
+  const configDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
+  return existsSync(configDir);
+}
+
+/**
+ * Đường dẫn file cấu hình .claude.json (hoặc claude.json tùy theo CLAUDE_CONFIG_DIR).
+ */
+function getClaudeJsonPath(): string {
+  const configDir = process.env.CLAUDE_CONFIG_DIR;
+  if (configDir) {
+    const pathsToTry = [
+      configDir + '.json',
+      join(configDir, 'claude.json'),
+      join(configDir, '.claude.json'),
+    ];
+    for (const p of pathsToTry) {
+      if (existsSync(p)) return p;
+    }
+    return configDir + '.json';
+  }
+  return join(homedir(), '.claude.json');
 }
 
 export const config = {
-  /** Agent có auth để chạy không? = đã login Claude CLI (`claude` → /login) chưa. */
+  /** Agent có auth để chạy không? = đã login Claude CLI hoặc có Token config sẵn. */
   get hasAuth(): boolean {
     return hasClaudeCliLogin();
+  },
+
+  /** Có cấu hình token riêng cho profile này không? */
+  get hasTokenSet(): boolean {
+    return Boolean(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN);
+  },
+
+  /** Đường dẫn file cấu hình Claude Code (chứa block mcpServers dùng chung). */
+  get claudeJsonPath(): string {
+    return getClaudeJsonPath();
   },
 
   /**

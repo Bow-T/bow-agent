@@ -16,10 +16,11 @@ This document defines the agent rules and access boundaries based on execution p
 
 * **Port 5175 / API 4002 (Collab Mode - interactive collaboration)**:
   * **Level**: Moderate restriction.
-  * **Rights**: LAN clients (Collaborators) can submit chat tasks and run standard code/git commands, but any potentially destructive commands (e.g., deletions, deployment commands, modifications outside the designated repository) must be held and approved in real-time by the localhost admin.
+  * **Rights**: LAN clients (Collaborators) can submit chat tasks, but EVERY state-changing action (file edits/writes, ALL Bash commands, git operations, MCP writes) is held and approved in real-time by the localhost admin (`requireApprovalForWrites` routes all approvals to the admin bus). Only read-only verification commands (tests/analyze/status) auto-run. There is no longer a "git is free" carve-out — git operations require approval like any other write.
 
 ## 2. General Agent Guardrails
 
-* Always enforce `requireAdmin` for directory browsing (`/api/browse-dirs`) and repository configuration updates (`/api/safe-cwd`) across all backend hosts.
-* Ensure client IP validation (`X-Forwarded-For` proxy header resolution) is consistently handled via `getCleanIp` to prevent IP spoofing or bypasses.
+* Always enforce `requireAdmin` for directory browsing (`/api/browse-dirs`), repository/config updates (`/api/safe-cwd`, `/api/mcp`, `/api/workspace/*`), and repo-scanning agents (`/api/generate-profile`, `/api/analyze-structure`) across all backend hosts.
+* Determine admin/access strictly from the real socket IP (`getSocketIp`, which ignores `X-Forwarded-For`) — never from `getCleanIp` (which trusts the proxy header and is display/log-only). Trusting the header lets a LAN client spoof `X-Forwarded-For: 127.0.0.1` to seize admin.
+* Non-admin (non-localhost) clients are read-only by default: in normal mode they are forced to `plan`, and cannot pick an arbitrary `cwd`. Writes are possible only via Collab Mode, gated per-action by the admin.
 * Always log user-specific names in audit logs (`memory/audit_share.log` and others) rather than generic IP records.

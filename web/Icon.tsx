@@ -53,11 +53,13 @@ import {
   Stop as StopSquare,
   RecordCircle as RadioOn,
   Record as RadioOff,
+  Copy,
   type Icon as IconType,
 } from 'iconsax-react';
 
 /** Bảng ánh xạ tên ngữ nghĩa → component Iconsax. Chỉ sửa ở đây khi muốn đổi icon. */
 const ICONS: Record<string, IconType> = {
+  copy: Copy,
   // Quick prompts
   bug: TaskSquare,
   lamp: Lamp,

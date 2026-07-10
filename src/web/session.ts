@@ -31,6 +31,21 @@ export type WebEvent =
       type: 'conversation';
       conversationId: string;
     }
+  | {
+      // Phiên vừa dừng vì hết hạn mức phiên (5h) và server ĐÃ LÊN LỊCH tự chạy tiếp.
+      // `resetsAt` = giờ hạn mức reset, `retryAt` = giờ sẽ tự gọi lại (reset + đệm),
+      // `attempt`/`maxAttempts` để UI hiện "lần 1/3". Client hiện đếm ngược + nút huỷ.
+      type: 'auto-resume-scheduled';
+      resetsAt: string | null;
+      retryAt: string;
+      attempt: number;
+      maxAttempts: number;
+    }
+  | {
+      // Lịch tự chạy tiếp đã bị huỷ — do người dùng bấm huỷ, hết số lần, hoặc phiên xong.
+      type: 'auto-resume-cancelled';
+      reason: 'user' | 'exhausted' | 'done';
+    }
   | { type: 'done'; result: string | null }
   | { type: 'fatal'; message: string };
 
@@ -210,9 +225,20 @@ export class Session {
     return true;
   }
 
-  /** Đóng phiên: từ chối mọi approval/câu hỏi còn treo, dừng iterator. */
+  /** Gọi khi phiên đóng để dọn khỏi kho (đặt bởi createSession). Tránh rò session (M7). */
+  onDispose?: () => void;
+
+  /** Đóng phiên: từ chối mọi approval/câu hỏi còn treo, dừng iterator, và tự dọn khỏi kho. */
   close(): void {
+    if (this.closed) return; // idempotent — tránh lên lịch dọn nhiều lần
     this.closed = true;
+    // R9: hủy timer ngắt-kết-nối 30s còn treo (nếu có). Nếu không, timer đó nổ sau khi
+    // phiên đã đóng và removeSession SỚM (30s), phá vỡ cửa sổ grace 60s của onDispose
+    // (SSE muộn mất cơ hội replay history) + gọi abort/removeSession thừa.
+    if (this.disconnectTimer) {
+      clearTimeout(this.disconnectTimer);
+      this.disconnectTimer = null;
+    }
     for (const [, p] of this.pending) p.resolve(false);
     this.pending.clear();
     for (const [, q] of this.pendingQuestions) q.resolve(null);
@@ -223,15 +249,23 @@ export class Session {
     });
     // Đánh thức mọi consumer đang chờ để chúng thấy closed=true và thoát vòng lặp.
     this.wakeAll();
+    // M7: tự dọn khỏi kho sau một khoảng GRACE — đủ để client mở SSE muộn replay lịch sử
+    // (history đã giữ trong Session) rồi mới xóa. Trước đây session CHỈ bị xóa khi SSE
+    // mở-rồi-đóng; client spam /api/run mà không mở SSE làm rò session + history tới OOM.
+    setTimeout(() => this.onDispose?.(), SESSION_DISPOSE_GRACE_MS);
   }
 }
 
 /** Kho phiên đang chạy (in-memory — đủ cho dùng cá nhân localhost). */
 const sessions = new Map<string, Session>();
 
+/** Khoảng chờ trước khi dọn một session đã đóng khỏi kho (cho SSE muộn kịp replay). */
+const SESSION_DISPOSE_GRACE_MS = 60_000;
+
 export function createSession(): Session {
   const s = new Session();
   sessions.set(s.id, s);
+  s.onDispose = () => sessions.delete(s.id);
   return s;
 }
 
@@ -280,7 +314,16 @@ export type AdminEvent =
 interface PendingAdminApproval {
   resolve: (approved: boolean) => void;
   request: AdminApprovalRequest;
+  /** Timer auto-deny (R6) — clear khi resolve/reject để không rò timer. */
+  timer?: NodeJS.Timeout;
 }
+
+/** R6: hết thời gian chờ admin duyệt (mặc định 10 phút) → auto-DENY để không treo agent
+ *  vô hạn khi admin không online. Có thể override qua env cho test. */
+const ADMIN_APPROVAL_TIMEOUT_MS = Number(process.env.BOW_ADMIN_APPROVAL_TIMEOUT_MS ?? 10 * 60_000);
+/** R6: trần số yêu cầu duyệt ĐANG TREO cho MỖI phiên CTV — vượt thì auto-deny ngay, chống
+ *  một CTV làm ngập hàng đợi admin + tích tụ tài nguyên. */
+const MAX_PENDING_PER_SESSION = 20;
 
 class AdminBus {
   private pending = new Map<string, PendingAdminApproval>();
@@ -301,14 +344,25 @@ class AdminBus {
     this.subscribers.forEach((sub) => sub(event));
   }
 
+  /** Số yêu cầu đang treo của một phiên (để áp trần per-session — R6). */
+  private pendingCountForSession(sessionId: string): number {
+    let n = 0;
+    for (const p of this.pending.values()) if (p.request.sessionId === sessionId) n++;
+    return n;
+  }
+
   /**
-   * Phiên CTV xin duyệt một thao tác hủy hoại → đẩy lên admin rồi treo Promise
-   * chờ admin bấm. Nếu KHÔNG có admin nào đang nghe, vẫn treo (admin có thể mở
-   * sau) — phiên đóng sẽ tự resolve(false) qua rejectForSession().
+   * Phiên CTV xin duyệt một thao tác ghi → đẩy lên admin rồi treo Promise chờ admin bấm.
+   * R6: (a) nếu phiên đã có quá nhiều yêu cầu treo → auto-DENY ngay (chống ngập); (b) đặt
+   * timeout auto-DENY để agent không treo vô hạn khi admin không online.
    */
   requestApproval(
     meta: Omit<AdminApprovalRequest, 'id' | 'createdAt'>,
   ): Promise<boolean> {
+    // (a) Trần số pending per-session.
+    if (this.pendingCountForSession(meta.sessionId) >= MAX_PENDING_PER_SESSION) {
+      return Promise.resolve(false);
+    }
     const id = randomUUID();
     const request: AdminApprovalRequest = {
       ...meta,
@@ -316,7 +370,16 @@ class AdminBus {
       createdAt: new Date().toISOString(),
     };
     return new Promise<boolean>((resolve) => {
-      this.pending.set(id, { resolve, request });
+      // (b) timeout auto-deny — dọn pending + báo admin gỡ khỏi UI.
+      const timer = setTimeout(() => {
+        const p = this.pending.get(id);
+        if (!p) return;
+        this.pending.delete(id);
+        p.resolve(false);
+        this.emit({ type: 'admin-approval-resolved', id });
+      }, ADMIN_APPROVAL_TIMEOUT_MS);
+      timer.unref?.(); // không giữ tiến trình sống chỉ vì timer này
+      this.pending.set(id, { resolve, request, timer });
       this.emit({ type: 'admin-approval-request', request });
     });
   }
@@ -325,6 +388,7 @@ class AdminBus {
   resolve(id: string, approved: boolean): boolean {
     const p = this.pending.get(id);
     if (!p) return false;
+    if (p.timer) clearTimeout(p.timer);
     this.pending.delete(id);
     p.resolve(approved);
     this.emit({ type: 'admin-approval-resolved', id });
@@ -335,6 +399,7 @@ class AdminBus {
   rejectForSession(sessionId: string): void {
     for (const [id, p] of this.pending) {
       if (p.request.sessionId === sessionId) {
+        if (p.timer) clearTimeout(p.timer);
         this.pending.delete(id);
         p.resolve(false);
         this.emit({ type: 'admin-approval-resolved', id });

@@ -19,9 +19,10 @@ interface Props {
   width?: number;
   /** Hướng bung menu: 'up' (mặc định — hợp composer ở đáy) hoặc 'down' (hợp header trên cùng). */
   direction?: 'up' | 'down';
+  onDelete?: (value: string) => void;
 }
 
-export function PixelSelect({ value, options, onChange, disabled, width, direction = 'up' }: Props) {
+export function PixelSelect({ value, options, onChange, disabled, width, direction = 'up', onDelete }: Props) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -51,18 +52,34 @@ export function PixelSelect({ value, options, onChange, disabled, width, directi
       {open && !disabled && (
         <div className={`px-select-menu ${direction}`}>
           {options.map((o) => (
-            <button
-              type="button"
-              key={o.value}
-              className={`px-select-item${o.value === value ? ' selected' : ''}`}
-              onClick={() => {
-                onChange(o.value);
-                setOpen(false);
-              }}
-            >
-              <span className="px-led" aria-hidden />
-              {o.label}
-            </button>
+            <div key={o.value} className="px-select-item-container">
+              <button
+                type="button"
+                className={`px-select-item${o.value === value ? ' selected' : ''}`}
+                style={{ flex: 1, textAlign: 'left', paddingRight: 0 }}
+                onClick={() => {
+                  onChange(o.value);
+                  setOpen(false);
+                }}
+              >
+                <span className="px-led" aria-hidden />
+                {o.label}
+              </button>
+              {onDelete && o.value !== 'default' && o.value !== '__new__' && (
+                <button
+                  type="button"
+                  className="px-select-delete-btn"
+                  title="Xóa tài khoản này"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(o.value);
+                    setOpen(false);
+                  }}
+                >
+                  <Icon name="close" size={11} />
+                </button>
+              )}
+            </div>
           ))}
         </div>
       )}
