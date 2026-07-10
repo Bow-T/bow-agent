@@ -558,6 +558,10 @@ export function App() {
   const [mcpForm, setMcpForm] = useState({ name: '', command: '', args: '', env: '' });
   const [mcpError, setMcpError] = useState('');
   const [mcpBusy, setMcpBusy] = useState(false);
+  // MCP RIÊNG của user LAN (overlay lên MCP chung). Chỉ dùng khi KHÔNG phải admin.
+  const [myMcpList, setMyMcpList] = useState<
+    { name: string; command: string; args: string[]; envKeys: string[]; stdio: boolean }[]
+  >([]);
 
   // ── Workspace (nhóm nhiều repo + trí nhớ tích lũy) — xem DESIGN §9 ──
   type WsRepo = { path: string; role: string };
@@ -635,7 +639,9 @@ export function App() {
     setMcpError('');
     setMcpForm({ name: '', command: '', args: '', env: '' });
     setMcpPanelOpen(true);
-    loadMcpList();
+    // Admin quản MCP CHUNG (~/.claude.json); user LAN quản MCP RIÊNG của chính họ.
+    if (cfg?.isAdmin) loadMcpList();
+    else loadMyMcpList();
   };
 
   /** Thêm MCP mới: parse args (mỗi dòng/khoảng trắng) + env (mỗi dòng KEY=VALUE). */
@@ -708,6 +714,78 @@ export function App() {
           }
         })
         .catch(() => {});
+    } catch (err) {
+      setMcpError(`Lỗi gọi backend: ${(err as Error).message}`);
+    } finally {
+      setMcpBusy(false);
+    }
+  };
+
+  // ── MCP RIÊNG của user LAN (/api/my-mcp) — overlay lên MCP chung, chỉ ảnh hưởng chính họ.
+  //    Dùng lại state form/error/busy chung; danh sách riêng ở myMcpList. Không đụng
+  //    /api/config (MCP riêng tự áp mọi lần chạy, không nằm trong checkbox composer).
+
+  /** Tải danh sách MCP RIÊNG của user (che token). */
+  const loadMyMcpList = () => {
+    apiFetch('/api/my-mcp')
+      .then((r) => r.json())
+      .then((d) => setMyMcpList(d.servers ?? []))
+      .catch(() => setMcpError('Không tải được danh sách MCP riêng.'));
+  };
+
+  /** Thêm MCP RIÊNG mới: parse args/env giống submitMcp. */
+  const submitMyMcp = async () => {
+    setMcpError('');
+    const name = mcpForm.name.trim();
+    const command = mcpForm.command.trim();
+    if (!name || !command) {
+      setMcpError('Cần nhập Tên và Command.');
+      return;
+    }
+    const args = mcpForm.args
+      .split('\n')
+      .flatMap((line) => line.trim().split(/\s+/))
+      .filter(Boolean);
+    const env: Record<string, string> = {};
+    for (const line of mcpForm.env.split('\n')) {
+      const t = line.trim();
+      if (!t || !t.includes('=')) continue;
+      const idx = t.indexOf('=');
+      env[t.slice(0, idx).trim()] = t.slice(idx + 1).trim();
+    }
+    setMcpBusy(true);
+    try {
+      const res = await apiFetch('/api/my-mcp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, command, args, env }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setMcpError(data.error ?? 'Thêm MCP thất bại.');
+        return;
+      }
+      setMyMcpList(data.servers ?? []);
+      setMcpForm({ name: '', command: '', args: '', env: '' });
+    } catch (err) {
+      setMcpError(`Lỗi gọi backend: ${(err as Error).message}`);
+    } finally {
+      setMcpBusy(false);
+    }
+  };
+
+  /** Xóa một MCP RIÊNG của user. */
+  const deleteMyMcp = async (name: string) => {
+    setMcpError('');
+    setMcpBusy(true);
+    try {
+      const res = await apiFetch(`/api/my-mcp/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) {
+        setMcpError(data.error ?? 'Xóa thất bại.');
+        return;
+      }
+      setMyMcpList(data.servers ?? []);
     } catch (err) {
       setMcpError(`Lỗi gọi backend: ${(err as Error).message}`);
     } finally {
@@ -2860,10 +2938,12 @@ export function App() {
           >
             <Icon name="chat" size={18} />
           </button>
-          {!safe && (
+          {/* Admin: MCP CHUNG (mọi mode trừ Safe read-only). User LAN đã duyệt: MCP RIÊNG
+              của họ — hiện KỂ CẢ Safe/Collab, vì chỉ ảnh hưởng chính họ, không đụng chung. */}
+          {((cfg?.isAdmin && !safe) || (!cfg?.isAdmin && gateState === 'open')) && (
             <button
               className="theme-btn"
-              title="Quản lý MCP server (Jira/Supabase/... cho agent)"
+              title={cfg?.isAdmin ? 'Quản lý MCP server chung (Jira/Supabase/... cho agent)' : 'MCP riêng của bạn (ghi đè MCP trùng tên do admin cấu hình)'}
               onClick={openMcpPanel}
             >
               <Icon name="mcp" size={18} />
@@ -3912,7 +3992,7 @@ export function App() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="modal-header">
-              <span className="modal-title"><Icon name="mcp" size={16} /> Quản lý MCP server</span>
+              <span className="modal-title"><Icon name="mcp" size={16} /> {cfg?.isAdmin ? 'Quản lý MCP server chung' : 'MCP riêng của bạn'}</span>
               <button className="close-btn" onClick={() => setMcpPanelOpen(false)}><Icon name="close" size={16} /></button>
             </div>
             <div className="modal-body">
@@ -3920,15 +4000,23 @@ export function App() {
                 <div className="picker-error" style={{ color: 'var(--red)', marginBottom: '10px' }}><Icon name="warning" size={14} /> {mcpError}</div>
               )}
 
-              {/* Danh sách MCP hiện có */}
+              {/* User LAN: nhắc rõ ranh giới overlay để không hiểu nhầm là sửa MCP chung. */}
+              {!cfg?.isAdmin && (
+                <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '12px', lineHeight: 1.5 }}>
+                  MCP ở đây là <b>của riêng bạn</b> — tự bật cho mọi lần chạy của bạn và
+                  <b> ghi đè</b> MCP trùng tên do admin cấu hình. Không ảnh hưởng người khác.
+                </div>
+              )}
+
+              {/* Danh sách MCP hiện có (admin = chung; user = riêng) */}
               <div className="mcp-list-title" style={{ marginBottom: '8px' }}>
-                ĐÃ CẤU HÌNH ({mcpList.length})
+                {cfg?.isAdmin ? `ĐÃ CẤU HÌNH (${mcpList.length})` : `MCP CỦA BẠN (${myMcpList.length})`}
               </div>
               <div className="mcp-list" style={{ maxHeight: '180px', overflowY: 'auto', border: 'var(--bd-thin) solid var(--outline)', padding: '6px', background: 'var(--inset)', marginBottom: '16px' }}>
-                {mcpList.length === 0 && (
+                {(cfg?.isAdmin ? mcpList : myMcpList).length === 0 && (
                   <div style={{ padding: '10px', textAlign: 'center', color: 'var(--muted)' }}>Chưa có MCP nào</div>
                 )}
-                {mcpList.map((m) => (
+                {(cfg?.isAdmin ? mcpList : myMcpList).map((m) => (
                   <div key={m.name} className="mcp-row" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px', padding: '6px 8px', borderBottom: 'var(--bd-thin) solid var(--outline)' }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontWeight: 600 }}>
@@ -3945,7 +4033,7 @@ export function App() {
                       className="btn deny"
                       style={{ padding: '2px 10px', fontSize: '12px' }}
                       disabled={mcpBusy}
-                      onClick={() => deleteMcp(m.name)}
+                      onClick={() => (cfg?.isAdmin ? deleteMcp(m.name) : deleteMyMcp(m.name))}
                       title={`Xóa MCP ${m.name}`}
                     >
                       Xóa
@@ -3956,7 +4044,7 @@ export function App() {
 
               {/* Form thêm mới */}
               <div className="mcp-list-title" style={{ marginBottom: '8px' }}>
-                THÊM MCP MỚI (stdio)
+                {cfg?.isAdmin ? 'THÊM MCP MỚI (stdio)' : 'THÊM MCP RIÊNG (stdio)'}
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <input
@@ -3991,7 +4079,7 @@ export function App() {
               <button className="btn deny" onClick={() => setMcpPanelOpen(false)}>
                 Đóng
               </button>
-              <button className="btn allow" disabled={mcpBusy} onClick={submitMcp}>
+              <button className="btn allow" disabled={mcpBusy} onClick={() => (cfg?.isAdmin ? submitMcp() : submitMyMcp())}>
                 {mcpBusy ? 'Đang lưu…' : 'Thêm MCP'}
               </button>
             </div>
