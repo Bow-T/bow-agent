@@ -46,3 +46,32 @@ The automated rules are:
 For each item give `[✓/✗/N/A] <rule> <file:line> — note`. End with a verdict:
 clean / list of blocking findings to fix before commit. This maps onto the
 "AI-review" section of the Bow pre-commit rubric in `.claude/CLAUDE.md`.
+
+## 4. RBAC gotchas learned the hard way (DUOCT-1776)
+
+**`has_admin_permission(uid, 'broad.key')` reverse-EXPANDS — it does NOT mean
+"the role holds broad.key".** The live definition
+(`20261010500000_granular_admin_permissions`) is satisfied when the caller holds
+ANY *granular sub-key* that `broad.key` expands to (`admin_permission_satisfied`
+arm 3 + `expand_legacy_admin_permissions`). So gating a policy on
+`has_admin_permission(auth.uid(), 'config.edit')` does **not** restrict writes to
+roles granted `config.edit` — it admits every role holding *any* sub-key it
+expands to. Real shipped bug: `config.edit` expands to `vehicle_types.assign`,
+which `compliance` holds, so compliance kept full write to all delivery-config
+tables even though the migration claimed "super_admin only". support_agent +
+finance were correctly blocked; compliance slipped — a silent partial gate that
+static-green + a policy-text pgTAP test never catch.
+- **To require a SPECIFIC role, use a direct role check, not a broad permission
+  key.** Fix = an `is_super_admin(uuid)` helper (mirror `is_admin` but pin
+  `r.role='super_admin'`); no sub-key can satisfy it. Note edge fns already gate
+  `role==='super_admin' || permissions.includes('literal.key')` — the RLS
+  `has_admin_permission(broad.key)` is looser than the edge fn it's meant to mirror.
+- **Verify a helper against its LATEST definition, not the first grep hit.**
+  `has_admin_permission` was redefined literal→reverse-expansion
+  (`20260505130000` → `20261010500000`); verifying "super_admin is covered"
+  against the OLD literal body is how this shipped. Use
+  `grep -rln 'FUNCTION public.<fn>' supabase/migrations | sort | tail -1`, read
+  THAT body. Same trap on the sibling `alerts.manage` gate: super_admin's granular
+  catalogue holds `alerts.receive` + `finance.manage`, NOT literal `alerts.manage`
+  — coverage survived only via the `finance.manage` OR-branch. Always confirm the
+  role you're "keeping" passes the *effective* predicate.

@@ -106,6 +106,28 @@ Done = site list covered + compiler/tests green + runtime path verified
 ([[verify-runtime-not-just-static-green]]). Report "swept N sites; runtime path
 verified" — never "no errors" from static checks alone.
 
+### 5b. Parallel-merge clobber — re-verify after a merged develop lands
+When several branches touch the **same object** — common when two branches share
+a ticket number (Sprint-7 had TWO `DUOCT-836` branches, both editing
+`_resolve_campaign_audience`; two `DUOCT-837`, both on alerts; two `DUOCT-824`) —
+a full-body `CREATE OR REPLACE <fn>` / `DROP+CREATE POLICY` from the branch with
+the **later migration timestamp silently WINS** and can drop the other branch's
+change. `analyze`/tests stay green; nothing conflicts textually because each
+migration is a separate file. After you pull a merged `develop` (or before you
+declare a cross-cutting change safe post-merge):
+- **Confirm YOU are still the latest definer of every object you changed:**
+  `grep -rln 'FUNCTION public.<fn>\|POLICY "<name>"\|<index_name>' supabase/migrations | sort | tail -1`
+  → must be your file. If a parallel branch's later-timestamped migration is the
+  tail, it clobbered you (or you clobbered its addition — check the reverse too:
+  did your restate, based on an OLDER body, drop a branch that added a `custom_segment`
+  arm between the version you copied and yours?).
+- **Check for duplicate migration timestamps:**
+  `ls supabase/migrations | grep -oE '^[0-9]{14}' | sort | uniq -d` — two files
+  with the same prefix are an apply-order hazard.
+- **Then re-run the ground truth on the merged tree**: `analyze` + full suite +
+  the pgTAP the object is pinned by. A merge that auto-resolved cleanly can still
+  be logically wrong; the suite (and "am I the latest definer") is what proves it.
+
 ## 6. Large radius → fan out (opt-in)
 If the site set is large, offer a multi-agent workflow: parallel finders per
 subsystem + a completeness critic that asks "what site/modality is unaccounted

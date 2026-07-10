@@ -62,6 +62,19 @@ Base helpers (already there — don't reinvent): `isLoading`, `showLoading()/hid
 try/catches, routes errors to `showError`, and returns `null` on failure. Query
 singletons are on the base via the locator (`driverQueries`, `rideQueries`,
 `voucherQueries`, `orderQueries`, `prefs`, `supa`, …).
+
+> **Adding a NEW dependency? DON'T put a `final x = locator<T>()` field on
+> BaseViewModel — use a lazy getter on the ONE VM that needs it.** Every
+> `final x = locator<T>()` on the base is resolved EAGERLY at *every*
+> `BaseViewModel()` construction, so a single new field forces every VM unit test
+> to register a `T` fake or it throws `GetIt: <T> is not registered`. Real cost:
+> one new base field broke **114 VM tests** at once (DUOCT-830) — the pre-push
+> full-suite gate caught it, but it's a needless blast radius. Instead put
+> `T get x => locator<T>();` on the specific VM(s) that use it (lazy → unrelated
+> VM tests never resolve it; only the tests that actually exercise `x` register a
+> fake). Reserve base fields for genuinely app-wide deps. And when a fake IS
+> needed, no-op only the methods the VM calls (`extends Fake implements T` throws
+> on any un-overridden member).
 ```dart
 class FooVm extends BaseViewModel {
   FooVm({required this.id});

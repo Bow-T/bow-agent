@@ -488,7 +488,7 @@ export function App() {
     tokenError?: string;
   } | null>(null);
 
-  const [copiedUrl, setCopiedUrl] = useState(false);
+  const [copiedOauthUrl, setCopiedOauthUrl] = useState(false);
 
   const submitOauthCode = async () => {
     if (!authModal || authModal.mode !== 'oauth') return;
@@ -4998,12 +4998,12 @@ export function App() {
                     onClick={() => {
                       if (authModal.oauthUrl) {
                         navigator.clipboard.writeText(authModal.oauthUrl);
-                        setCopiedUrl(true);
-                        setTimeout(() => setCopiedUrl(false), 2000);
+                        setCopiedOauthUrl(true);
+                        setTimeout(() => setCopiedOauthUrl(false), 2000);
                       }
                     }}
                   >
-                    <Icon name={copiedUrl ? 'success' : 'copy'} size={16} />
+                    <Icon name={copiedOauthUrl ? 'success' : 'copy'} size={16} />
                   </button>
                 </div>
                 
