@@ -54,6 +54,10 @@ import {
   RecordCircle as RadioOn,
   Record as RadioOff,
   Copy,
+  ClipboardTick,
+  ShieldSearch,
+  DocumentCode,
+  Broom,
   type Icon as IconType,
 } from 'iconsax-react';
 
@@ -64,6 +68,10 @@ const ICONS: Record<string, IconType> = {
   bug: TaskSquare,
   lamp: Lamp,
   book: Book1,
+  test: ClipboardTick,
+  review: ShieldSearch,
+  commit: DocumentCode,
+  refactor: Broom,
   // Header / toolbar
   lang: Global,
   mcp: Wifi,

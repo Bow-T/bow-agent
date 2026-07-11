@@ -187,6 +187,26 @@ const QUICK_PROMPTS: { icon: IconName; label: string; text: string }[] = [
     label: 'Giải thích codebase',
     text: 'Đọc và giải thích cấu trúc dự án này: các module chính, luồng dữ liệu, và điểm cần lưu ý.',
   },
+  {
+    icon: 'test',
+    label: 'Viết test',
+    text: 'Viết unit/widget test cho phần code vừa thay đổi (hoặc module tôi chỉ định), bám theo test có sẵn của dự án.',
+  },
+  {
+    icon: 'review',
+    label: 'Review & rà lỗi',
+    text: 'Rà soát code tìm bug, lỗi tiềm ẩn và điểm dễ vỡ, rồi đề xuất cách sửa cụ thể.',
+  },
+  {
+    icon: 'commit',
+    label: 'Sinh commit / PR',
+    text: 'Tóm tắt các thay đổi hiện tại và soạn message commit + mô tả PR theo quy ước của dự án.',
+  },
+  {
+    icon: 'refactor',
+    label: 'Refactor / dọn code',
+    text: 'Đề xuất rồi thực hiện refactor cho đoạn code tôi chỉ định, giữ nguyên hành vi (không đổi chức năng).',
+  },
 ];
 
 /** "trong 2h", "trong 1d"… từ ISO reset time. Rỗng nếu không có/đã qua. */
@@ -296,6 +316,11 @@ export function App() {
   const [stack, setStack] = useState<string>(() => localStorage.getItem('bow-stack') || '');
   // Danh sách stack có sẵn (nạp từ GET /api/skill-stacks lúc mount).
   const [skillStacks, setSkillStacks] = useState<{ id: string; label: string; ref: string; default: boolean }[]>([]);
+  // Trạng thái TẢI skill (core + stack đang chọn) — badge cạnh dropdown Stack. null = chưa biết.
+  type SkillSrc = { id: string; label: string; ref: string; cached: boolean };
+  const [skillStatus, setSkillStatus] = useState<{ core: SkillSrc; stack: SkillSrc | null; ready: boolean } | null>(null);
+  const [skillSyncing, setSkillSyncing] = useState(false); // đang chạy Đồng bộ thủ công
+  const [skillSyncMsg, setSkillSyncMsg] = useState(''); // kết quả lần đồng bộ gần nhất (hiện qua toast + tooltip badge)
   const [accumulatedCost, setAccumulatedCost] = useState(0);
   // Snapshot hạn mức gói + context window (đến từ event 'usage' trong lượt chạy, hoặc
   // /api/usage khi mở trang). null = chưa có dữ liệu.
@@ -400,6 +425,49 @@ export function App() {
       .then((d) => setSkillStacks(Array.isArray(d.stacks) ? d.stacks : []))
       .catch(() => setSkillStacks([]));
   }, []);
+  // Soi trạng thái TẢI skill mỗi khi đổi stack (chỉ admin — endpoint gate requireAdmin).
+  // Không tải gì, chỉ đọc để dựng badge "đã đủ / chưa tải".
+  const refreshSkillStatus = useCallback(() => {
+    if (!cfg?.isAdmin) { setSkillStatus(null); return; }
+    apiFetch(`/api/skill-status?stack=${encodeURIComponent(stack)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setSkillStatus(d && d.core ? d : null))
+      .catch(() => setSkillStatus(null));
+  }, [cfg?.isAdmin, stack]);
+  useEffect(() => { refreshSkillStatus(); }, [refreshSkillStatus]);
+  // ĐỒNG BỘ THỦ CÔNG: tải + trải core + stack đang chọn vào .claude/skills/ của cwd, không cần chạy phiên.
+  const syncSkillsNow = useCallback(async () => {
+    if (skillSyncing) return;
+    if (!cwd) { setSkillSyncMsg('⚠️ Chưa chọn thư mục dự án.'); return; }
+    setSkillSyncing(true);
+    setSkillSyncMsg('');
+    try {
+      const r = await apiFetch('/api/skill-sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cwd, stack: stack || undefined }),
+      });
+      const d = await r.json().catch(() => null);
+      if (!r.ok) {
+        setSkillSyncMsg(`⚠️ Đồng bộ lỗi: ${d?.error || r.status}`);
+      } else {
+        const parts = [`core${d.core.ok ? ' ✓' : ` ✗ (${d.core.error})`}`];
+        if (d.stack) parts.push(`${d.stack.label}${d.stack.ok ? ' ✓' : ` ✗ (${d.stack.error})`}`);
+        setSkillSyncMsg(`${d.ok ? '✅ Đã đồng bộ' : '⚠️ Chưa đủ'}: ${parts.join(' · ')}`);
+      }
+      refreshSkillStatus();
+    } catch (e) {
+      setSkillSyncMsg(`⚠️ Đồng bộ lỗi: ${(e as Error).message}`);
+    } finally {
+      setSkillSyncing(false);
+    }
+  }, [skillSyncing, cwd, stack, refreshSkillStatus]);
+  // Toast kết quả đồng bộ tự ẩn sau 5s — phản hồi rõ ràng khi bấm nút 🔄 mà không phá layout hàng.
+  useEffect(() => {
+    if (!skillSyncMsg) return;
+    const t = setTimeout(() => setSkillSyncMsg(''), 5000);
+    return () => clearTimeout(t);
+  }, [skillSyncMsg]);
   useEffect(() => {
     if (conversationId) {
       localStorage.setItem('bow-conversation-id', conversationId);
@@ -3592,7 +3660,7 @@ export function App() {
               Chọn stack → backend tải bộ skill của stack (repo GitHub ghim tag) rồi trải vào
               .claude/skills/ cho agent dùng. 'Không' = chỉ skill nội bộ. */}
           {skillStacks.length > 0 && (
-            <label>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
               Stack:
               <PixelSelect
                 value={stack}
@@ -3603,6 +3671,32 @@ export function App() {
                   ...skillStacks.map((s) => ({ value: s.id, label: s.label })),
                 ]}
               />
+              {/* Badge trạng thái tải skill + nút Đồng bộ thủ công — chỉ admin (endpoint gate requireAdmin).
+                  Badge cho biết core + stack đang chọn đã cache (chạy offline được) chưa; nút Sync tải + trải ngay.
+                  Kết quả lần đồng bộ gần nhất (skillSyncMsg) gộp luôn vào tooltip của badge → không chiếm 1 dòng riêng. */}
+              {cfg?.isAdmin && skillStatus && (
+                <span
+                  title={
+                    `Core (${skillStatus.core.ref}): ${skillStatus.core.cached ? 'đã tải' : 'chưa tải'}` +
+                    (skillStatus.stack ? `\nStack ${skillStatus.stack.label} (${skillStatus.stack.ref}): ${skillStatus.stack.cached ? 'đã tải' : 'chưa tải'}` : '') +
+                    (skillSyncMsg ? `\n\n${skillSyncMsg}` : '')
+                  }
+                  style={{ fontSize: '14px', lineHeight: 1, cursor: 'default' }}
+                >
+                  {skillStatus.ready ? '✅' : '⬇️'}
+                </span>
+              )}
+              {cfg?.isAdmin && (
+                <button
+                  type="button"
+                  className="btn icon-only"
+                  disabled={skillSyncing || running}
+                  onClick={syncSkillsNow}
+                  title="Đồng bộ skill: tải & trải core + stack đang chọn vào .claude/skills/ của dự án (không cần chạy phiên)"
+                >
+                  {skillSyncing ? '⏳' : '🔄'}
+                </button>
+              )}
             </label>
           )}
           {cfg?.claudeProfiles && cfg.claudeProfiles.length > 0 && (
@@ -3722,15 +3816,17 @@ export function App() {
                 ]}
               />
               {cfg.hasAuth ? (
-                <span title="Đã đăng nhập" style={{ color: '#00e676', fontWeight: 'bold', fontSize: '14px', cursor: 'help' }}>✓</span>
+                <span title="Đã đăng nhập" style={{ color: '#00e676', fontWeight: 'bold', fontSize: '13px', cursor: 'help' }}>✓</span>
               ) : (
-                <span title="Chưa đăng nhập! Vui lòng cấu hình token hoặc chọn Đăng nhập." style={{ color: '#ff1744', fontWeight: 'bold', fontSize: '14px', cursor: 'help' }}>⚠️</span>
+                <span title="Chưa đăng nhập! Vui lòng cấu hình token hoặc chọn Đăng nhập." style={{ color: '#ff1744', fontWeight: 'bold', fontSize: '13px', cursor: 'help' }}>⚠️</span>
               )}
+              {/* Nút cài đặt đăng nhập rút thành icon (khoá) — nhãn dài "Cài đặt Login" đưa vào tooltip.
+                  Chưa auth thì tô nổi (.allow) để mời người dùng bấm đăng nhập. */}
               <button
                 type="button"
-                className={`btn${cfg.hasAuth ? '' : ' allow'}`}
-                style={{ padding: '2px 8px', fontSize: '11px', marginLeft: '4px' }}
+                className={`btn icon-only${cfg.hasAuth ? '' : ' allow'}`}
                 disabled={running}
+                title={cfg.hasAuth ? 'Cài đặt đăng nhập / đổi token' : 'Chưa đăng nhập — bấm để đăng nhập hoặc cài token'}
                 onClick={() => {
                   setAuthModal({
                     profile: cfg.currentClaudeProfile || 'default',
@@ -3738,7 +3834,7 @@ export function App() {
                   });
                 }}
               >
-                {cfg.hasAuth ? 'Cài đặt Login' : 'Đăng nhập / Cài Token'}
+                <Icon name="lock" size={15} />
               </button>
             </label>
           )}
@@ -3768,30 +3864,20 @@ export function App() {
               title={cwd || 'Chưa chọn thư mục repo (cwd)'}
             >
               {cfg?.isAdmin ? (
-                <>
-                  <input
-                    className="cwd"
-                    placeholder="Chọn repo"
-                    value={cwd.trim() ? (cwd.trim().split('/').filter(Boolean).pop() ?? cwd) : ''}
-                    readOnly
-                    onClick={() => { if (!running) openPicker(cwd); }}
-                    disabled={running}
-                    style={{
-                      width: '130px',
-                      cursor: running ? 'not-allowed' : 'pointer',
-                    }}
-                  />
-                  <button
-                    className="btn folder-picker-btn"
-                    type="button"
-                    disabled={running}
-                    onClick={() => openPicker(cwd)}
-                    title="Chọn thư mục"
-                    style={{ padding: '0 10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                  >
-                    <Icon name="folder" size={16} />
-                  </button>
-                </>
+                /* Gộp input + nút thành MỘT nút icon-thư-mục kèm tên repo gọn — bấm mở picker.
+                   Bỏ ô input 130px cũ cho hàng ngắn lại; cwd đầy đủ vẫn ở tooltip cha. */
+                <button
+                  className="btn cwd-pick"
+                  type="button"
+                  disabled={running}
+                  onClick={() => { if (!running) openPicker(cwd); }}
+                  title="Chọn thư mục repo (cwd)"
+                >
+                  <Icon name="folder" size={15} />
+                  <span className="cwd-pick-name">
+                    {cwd.trim() ? (cwd.trim().split('/').filter(Boolean).pop() ?? cwd) : 'Chọn repo'}
+                  </span>
+                </button>
               ) : (
                 <div
                   style={{
@@ -5127,8 +5213,7 @@ export function App() {
                 
                 <button
                   type="button"
-                  className="btn allow"
-                  style={{ padding: '12px', fontSize: '14px', textAlign: 'center', display: 'block', width: '100%', cursor: 'pointer' }}
+                  className="btn allow auth-method-btn"
                   onClick={async () => {
                     setAuthModal(prev => prev ? { ...prev, oauthLoading: true } : null);
                     try {
@@ -5159,16 +5244,15 @@ export function App() {
                     }
                   }}
                 >
-                  <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>Cách 1: Đăng nhập OAuth (Khuyên dùng)</div>
-                  <div style={{ fontSize: '11px', opacity: 0.8, fontWeight: 'normal' }}>
+                  <div className="auth-method-title">Cách 1: Đăng nhập OAuth (Khuyên dùng)</div>
+                  <div className="auth-method-desc">
                     Tự động mở trình duyệt xác thực thông qua tài khoản Claude sẵn có của bạn
                   </div>
                 </button>
 
                 <button
                   type="button"
-                  className="btn"
-                  style={{ padding: '12px', fontSize: '14px', textAlign: 'center', display: 'block', width: '100%', cursor: 'pointer' }}
+                  className="btn auth-method-btn"
                   onClick={() => {
                     setAuthModal({
                       profile: authModal.profile,
@@ -5179,8 +5263,8 @@ export function App() {
                     });
                   }}
                 >
-                  <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>Cách 2: Dùng API Key hoặc Token thủ công</div>
-                  <div style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 'normal' }}>
+                  <div className="auth-method-title">Cách 2: Dùng API Key hoặc Token thủ công</div>
+                  <div className="auth-method-desc">
                     Nhập trực tiếp API Key (sk-ant-...) hoặc OAuth Token riêng biệt
                   </div>
                 </button>
@@ -5380,6 +5464,38 @@ export function App() {
               Có {pendingAccessCount} máy đang chờ duyệt. Bấm để mở panel.
             </span>
           </div>
+        </div>
+      )}
+
+      {/* Toast kết quả đồng bộ skill — hiện khi bấm nút 🔄, tự ẩn sau 5s (hoặc bấm để đóng ngay).
+          Cho phản hồi rõ ràng thay cho dòng text cũ đã gỡ khỏi hàng điều khiển. */}
+      {skillSyncMsg && (
+        <div
+          className="skill-sync-toast"
+          onClick={() => setSkillSyncMsg('')}
+          style={{
+            position: 'fixed',
+            bottom: '24px',
+            right: '24px',
+            maxWidth: '360px',
+            background: 'var(--surface)',
+            border: '1px solid var(--brass)',
+            borderLeft: '4px solid var(--brass)',
+            borderRadius: '6px',
+            padding: '12px 16px',
+            boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
+            zIndex: 1000,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            cursor: 'pointer',
+            fontFamily: 'var(--mono)',
+            fontSize: '12px',
+            color: 'var(--ink)',
+            lineHeight: 1.5,
+          }}
+        >
+          {skillSyncMsg}
         </div>
       )}
     </div>
