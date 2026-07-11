@@ -25,7 +25,7 @@ function bundleRoot(): string {
 const STAMP = '.bow-bundled';
 
 /** Đọc "chữ ký" một thư mục skill: danh sách file + tổng size — đủ để phát hiện đổi bản. */
-function skillSignature(dir: string): string {
+export function skillSignature(dir: string): string {
   const files: string[] = [];
   const walk = (d: string, rel: string) => {
     for (const name of readdirSync(d).sort()) {
@@ -41,7 +41,7 @@ function skillSignature(dir: string): string {
 }
 
 /** Copy đệ quy một thư mục (ghi đè file đích). */
-function copyDir(src: string, dst: string): void {
+export function copyDir(src: string, dst: string): void {
   mkdirSync(dst, { recursive: true });
   for (const name of readdirSync(src)) {
     const s = join(src, name);
@@ -52,42 +52,46 @@ function copyDir(src: string, dst: string): void {
 }
 
 /**
- * Trải mọi Agent Skill bundle vào `<cwd>/.claude/skills/`. Idempotent & AN TOÀN:
- * - Bỏ qua nếu bundle không tồn tại (không throw).
+ * Trải mọi folder skill (mỗi folder có SKILL.md) từ `srcRoot` vào `<cwd>/.claude/skills/`.
+ * Đây là lõi dùng chung cho cả skill bundle nội bộ (STAMP `.bow-bundled`) và skill external
+ * tải từ GitHub (STAMP `.bow-external`). Idempotent & AN TOÀN:
+ * - Bỏ qua nếu `srcRoot` không tồn tại (không throw).
  * - KHÔNG đụng skill người dùng tự đặt: chỉ ghi vào thư mục do CHÍNH ta trải (nhận diện qua
- *   file STAMP). Nếu `<cwd>/.claude/skills/<name>` đã có mà KHÔNG có STAMP → coi là của người
- *   dùng, tôn trọng, không ghi đè.
- * - Chỉ copy lại khi chữ ký bundle đổi (nâng cấp skill) — tránh ghi đĩa thừa mỗi lần chạy.
+ *   file STAMP tương ứng). Nếu `<cwd>/.claude/skills/<name>` đã có mà KHÔNG có STAMP → coi là
+ *   của người dùng, tôn trọng, không ghi đè.
+ * - Chỉ copy lại khi chữ ký nguồn đổi (nâng cấp skill) — tránh ghi đĩa thừa mỗi lần chạy.
+ *
+ * `stamp` là tên file marker phân biệt nguồn (mỗi nguồn một STAMP để không đá nhau khi trùng
+ * tên skill giữa các nguồn — bản trải sau chỉ ghi đè bản mang ĐÚNG STAMP của mình).
  *
  * Trả danh sách tên skill đã sẵn sàng (để log). Fail-open: lỗi copy một skill không kéo sập.
  */
-export function deployBundledSkills(cwd: string): string[] {
-  const root = bundleRoot();
-  if (!existsSync(root)) return [];
+export function deploySkillsFrom(srcRoot: string, cwd: string, stamp: string): string[] {
+  if (!existsSync(srcRoot)) return [];
 
   let names: string[];
   try {
-    names = readdirSync(root).filter((n) => existsSync(join(root, n, 'SKILL.md')));
+    names = readdirSync(srcRoot).filter((n) => existsSync(join(srcRoot, n, 'SKILL.md')));
   } catch {
     return [];
   }
 
   const deployed: string[] = [];
   for (const name of names) {
-    const src = join(root, name);
+    const src = join(srcRoot, name);
     const dst = join(resolve(cwd), '.claude', 'skills', name);
-    const stampFile = join(dst, STAMP);
+    const stampFile = join(dst, stamp);
     try {
       if (existsSync(dst)) {
-        // Đã tồn tại: chỉ được ghi đè NẾU chính ta trải trước đó (có STAMP).
+        // Đã tồn tại: chỉ được ghi đè NẾU chính ta (cùng nguồn STAMP) đã trải trước đó.
+        // Không có STAMP của ta → của người dùng HOẶC của nguồn khác: tôn trọng, không đụng.
         if (!existsSync(stampFile)) {
-          // Của người dùng — tôn trọng, vẫn tính là sẵn sàng.
           deployed.push(name);
           continue;
         }
         // Cùng chữ ký → khỏi copy lại.
         const want = skillSignature(src);
-        const have = existsSync(stampFile) ? readFileSync(stampFile, 'utf8').trim() : '';
+        const have = readFileSync(stampFile, 'utf8').trim();
         if (have === want) {
           deployed.push(name);
           continue;
@@ -101,4 +105,12 @@ export function deployBundledSkills(cwd: string): string[] {
     }
   }
   return deployed;
+}
+
+/**
+ * Trải mọi Agent Skill bundle NỘI BỘ (skills/agent-skills/*) vào `<cwd>/.claude/skills/`.
+ * Xem `deploySkillsFrom`. Dùng STAMP `.bow-bundled`.
+ */
+export function deployBundledSkills(cwd: string): string[] {
+  return deploySkillsFrom(bundleRoot(), cwd, STAMP);
 }

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Bow-T/bow-agent/main/schema/bow-skill.schema.json",
+  "id": "react-native-supabase",
+  "label": "React Native + Supabase",
+  "version": "0.1.0",
+  "description": "Bộ skill cho stack React Native + Supabase của team Bow — realtime, quy ước code, và lớp data Supabase. Đồng bộ cặp với stack Flutter + Supabase.",
+  "maintainer": "team-rn",
+  "skillsDir": "skills",
+  "targets": {
+    "detect": [
+      { "file": "package.json", "contains": "react-native" },
+      { "file": "app.json" },
+      { "path": "ios" }
+    ],
+    "monorepoHint": "apps/mobile-rn"
+  },
+  "skills": [
+    "rn-realtime",
+    "rn-convention",
+    "rn-supabase-data"
+  ]
+}
