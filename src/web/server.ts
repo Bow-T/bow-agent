@@ -43,7 +43,7 @@ import {
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { loadClaudeCodeMcp, listGlobalMcp, addGlobalMcp, removeGlobalMcp } from '../tools/mcp.js';
 import { listUserMcp, addUserMcp, removeUserMcp, loadUserMcpServers } from './userMcp.js';
-import { loadRegistry } from '../skills/externalSkills.js';
+import { loadRegistry, skillStatus, syncSkills } from '../skills/externalSkills.js';
 import { parseJiraRef } from '../input/jira-ref.js';
 import { fetchJiraTicketImages, fetchJiraTicketVideos } from '../input/jira-attachments.js';
 import {
@@ -1488,6 +1488,39 @@ app.get('/api/skill-stacks', (_req, res) => {
       default: s.default === true,
     }));
     res.json({ stacks });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+/**
+ * GET /api/skill-status?stack=<id> — trạng thái TẢI của core + stack đang chọn (đã cache
+ * chưa → chạy offline được chưa). CHỈ đọc đĩa/registry, KHÔNG tải gì. UI dựng badge cạnh
+ * dropdown Stack. `stack` rỗng = chỉ xét core.
+ */
+app.get('/api/skill-status', (req, res) => {
+  try {
+    const stack = typeof req.query.stack === 'string' ? req.query.stack : '';
+    res.json(skillStatus(stack));
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+/**
+ * POST /api/skill-sync — ĐỒNG BỘ THỦ CÔNG: tải (nếu chưa) + trải core + stack đang chọn vào
+ * `.claude/skills/` của cwd, không cần chạy phiên. body: {cwd, stack?}. Gate requireAdmin +
+ * checkSafeMode như /api/mcp: thao tác ghi vào máy (clone repo, trải file) chỉ admin localhost
+ * làm, không mở cho user LAN. Fail-open: trả kết quả từng nguồn kèm error, không 500 vì 1 nguồn lỗi.
+ */
+app.post('/api/skill-sync', requireAdmin, checkSafeMode, (req, res) => {
+  const { cwd, stack } = req.body ?? {};
+  if (typeof cwd !== 'string' || !cwd) {
+    res.status(400).json({ error: 'Thiếu cwd.' });
+    return;
+  }
+  try {
+    res.json(syncSkills(typeof stack === 'string' ? stack : '', cwd));
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }

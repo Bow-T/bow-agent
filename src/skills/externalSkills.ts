@@ -275,3 +275,117 @@ export function clearExternalCache(): number {
   }
   return n;
 }
+
+/**
+ * Một mục trong ĐÃ CLONE về cache chưa — KHÔNG tải (khác ensureCloned). Chỉ soi đĩa.
+ * Cache hợp lệ = thư mục `<id>@<ref>/.git` tồn tại.
+ */
+function isCached(source: RegistryStack): boolean {
+  return existsSync(join(cacheRoot(), `${source.id}@${source.ref}`, '.git'));
+}
+
+/** Trạng thái tải của MỘT nguồn skill (core hoặc một stack). */
+export interface SkillSourceStatus {
+  /** Định danh nguồn (`core`, `flutter-supabase`, …). */
+  id: string;
+  /** Nhãn hiển thị. */
+  label: string;
+  /** Tag/commit đang ghim trong registry. */
+  ref: string;
+  /** Đã clone về `~/.bow/skills-cache/<id>@<ref>` chưa → chạy offline được. */
+  cached: boolean;
+}
+
+/** Trạng thái skill tổng thể để UI dựng badge (đọc-only, không tải gì). */
+export interface SkillStatus {
+  /** Nguồn CORE (luôn cần). */
+  core: SkillSourceStatus;
+  /** Stack người dùng đang chọn (null nếu không chọn stack nào). */
+  stack: SkillSourceStatus | null;
+  /**
+   * Tổng kết: mọi nguồn cần thiết (core + stack đang chọn, nếu có) đều đã cache?
+   * true = sẵn sàng chạy offline; false = lần chạy tới sẽ phải tải (cần mạng/token).
+   */
+  ready: boolean;
+}
+
+/**
+ * Soi trạng thái tải skill cho stack đang chọn — KHÔNG tải gì (chỉ đọc đĩa + registry).
+ * UI gọi để dựng badge "đã đủ / chưa tải". `stackId` rỗng = chỉ xét core.
+ */
+export function skillStatus(stackId: string): SkillStatus {
+  const core = loadCore();
+  const coreStatus: SkillSourceStatus = { id: core.id, label: core.label, ref: core.ref, cached: isCached(core) };
+
+  let stackStatus: SkillSourceStatus | null = null;
+  if (stackId) {
+    const stack = findStack(stackId);
+    // Stack ngoài registry (chưa admin duyệt) → coi như chưa cache (không thể tải).
+    stackStatus = stack
+      ? { id: stack.id, label: stack.label, ref: stack.ref, cached: isCached(stack) }
+      : { id: stackId, label: stackId, ref: '', cached: false };
+  }
+
+  const ready = coreStatus.cached && (stackStatus ? stackStatus.cached : true);
+  return { core: coreStatus, stack: stackStatus, ready };
+}
+
+/** Kết quả một nguồn sau khi đồng bộ thủ công. */
+export interface SyncOne {
+  id: string;
+  label: string;
+  ref: string;
+  /** Đã trải xong (clone OK + trải vào .claude/skills/) hay lỗi. */
+  ok: boolean;
+  /** Tên skill đã trải (rỗng nếu lỗi hoặc nguồn prompt-only). */
+  skills: string[];
+  /** Lý do lỗi (null nếu OK). */
+  error: string | null;
+}
+
+/** Kết quả ĐỒNG BỘ THỦ CÔNG (core + stack đang chọn). */
+export interface SyncResult {
+  core: SyncOne;
+  stack: SyncOne | null;
+  /** Mọi nguồn đều OK? */
+  ok: boolean;
+}
+
+/**
+ * ĐỒNG BỘ THỦ CÔNG: chủ động tải (nếu chưa cache) + trải core + stack đang chọn vào
+ * `<cwd>/.claude/skills/`, KHÔNG cần chạy phiên agent. Dùng lại deployCoreSkills/
+ * deployExternalSkills nên hành vi giống hệt lúc runner khởi động — chỉ khác là gọi
+ * chủ động từ nút UI. `stackId` rỗng = chỉ đồng bộ core.
+ *
+ * Fail-open: nguồn nào lỗi trả `ok:false` + error, không throw — cái khác vẫn tải.
+ */
+export function syncSkills(stackId: string, cwd: string): SyncResult {
+  const coreRes = deployCoreSkills(cwd);
+  const coreMeta = loadCore();
+  const core: SyncOne = {
+    id: coreMeta.id,
+    label: coreMeta.label,
+    ref: coreMeta.ref,
+    ok: coreRes.error === null,
+    skills: coreRes.skills,
+    error: coreRes.error,
+  };
+
+  let stack: SyncOne | null = null;
+  if (stackId) {
+    const ext = deployExternalSkills(stackId, cwd);
+    stack = ext
+      ? {
+          id: ext.stack.id,
+          label: ext.stack.label || stackId,
+          ref: ext.stack.ref,
+          ok: ext.error === null,
+          skills: ext.skills,
+          error: ext.error,
+        }
+      : { id: stackId, label: stackId, ref: '', ok: false, skills: [], error: 'stackId rỗng hoặc không hợp lệ' };
+  }
+
+  const ok = core.ok && (stack ? stack.ok : true);
+  return { core, stack, ok };
+}

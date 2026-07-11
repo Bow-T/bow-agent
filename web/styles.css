@@ -1676,7 +1676,60 @@ a { color: var(--brass); text-underline-offset: 2px; }
 .btn.genprof { padding: 4px 10px; margin-left: 10px; background: var(--brass); border-color: var(--brass); color: var(--on-brass); font-size: 10.5px; }
 .btn.genprof:hover:not(:disabled) { background: var(--brass-bright); }
 
+/* Nút phương thức đăng nhập (2 dòng: tiêu đề + mô tả) trong modal auth.
+   .btn mặc định là nút 1 dòng (nowrap/uppercase/line-height:1) → dòng mô tả bị cắt & đè.
+   Ghi đè: cho xuống dòng, canh trái, thường (không uppercase), rộng full. */
+.btn.auth-method-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  padding: 13px 15px;
+  text-align: left;
+  text-transform: none;
+  letter-spacing: normal;
+  line-height: 1.5;
+  white-space: normal;
+  font-weight: 400;
+}
+.auth-method-title { font-size: 13.5px; font-weight: 700; }
+.auth-method-desc {
+  font-size: 11.5px;
+  font-weight: 400;
+  opacity: 0.85;
+  line-height: 1.45;
+}
+/* Nút OAuth (nền brass): mô tả dùng chữ sáng cho dễ đọc; nút Token: mô tả mờ. */
+.btn.allow.auth-method-btn .auth-method-desc { color: var(--on-brass); opacity: 0.85; }
+.btn:not(.allow).auth-method-btn .auth-method-desc { color: var(--muted); opacity: 1; }
+
 .folder-picker-btn { color: var(--ink-2); }
+
+/* Nút chỉ-icon vuông trong hàng điều khiển (Login 🔒, Đồng bộ 🔄) — nhãn nằm ở tooltip. */
+.btn.icon-only {
+  padding: 0;
+  width: 30px; height: 30px;
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+/* Nút chọn repo: icon thư mục + tên basename gọn, bấm mở picker. Thay ô input 130px cũ. */
+.btn.cwd-pick {
+  gap: 7px;
+  padding: 0 12px;
+  height: 30px;
+  color: var(--ink);
+  max-width: 190px;
+}
+.btn.cwd-pick .icon, .btn.cwd-pick svg { color: var(--ink-2); flex-shrink: 0; }
+.cwd-pick-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+}
 
 /* ───────────────────────────  INPUT CHANNEL (composer)  ─────────────────────────── */
 .composer {
@@ -1734,7 +1787,35 @@ a { color: var(--brass); text-underline-offset: 2px; }
 }
 .composer:focus-within { border-color: var(--brass); }
 
-.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 9px 16px; }
+/* Hàng điều khiển: ưu tiên MỘT dòng nhờ đã icon-hóa nút cho ngắn. KHÔNG dùng
+   overflow ở đây — menu xổ của PixelSelect định vị absolute, overflow sẽ CẮT MẤT nó.
+   Nên vẫn cho phép wrap: màn hẹp thì rớt dòng (hiếm), nhưng dropdown luôn mở được.
+   Các field không co (flex-shrink:0); ô repo tự đẩy phải bằng margin-left:auto. */
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+.controls > label, .controls > .field, .controls > .cwd-container {
+  flex-shrink: 0;                  /* không cho field co → nhãn không bị cắt */
+  position: relative;
+}
+/* Vạch phân cách mảnh giữa các field liền kề → nhóm nhìn có tổ chức, không rời rạc. */
+.controls > label + label::before,
+.controls > label + .field::before,
+.controls > .field + label::before,
+.controls > .field + .field::before {
+  content: '';
+  position: absolute;
+  left: -7px; top: 50%;
+  height: 15px;
+  transform: translateY(-50%);
+  border-left: 1px solid var(--hairline-2, var(--hairline));
+}
+/* Ô repo dạt phải: giữ khoảng đệm trái tối thiểu khi hàng cuộn ngang (lúc đó
+   margin-left:auto không còn tác dụng) để không dính sát field liền trước. */
+.controls > .cwd-container { padding-left: 8px; }
 .controls label, .field {
   display: inline-flex;
   align-items: center;
@@ -1744,6 +1825,7 @@ a { color: var(--brass); text-underline-offset: 2px; }
   letter-spacing: 0.1em;
   font-size: 10px;
   color: var(--muted);
+  white-space: nowrap;
 }
 
 /* ───── Bộ chọn CHẾ ĐỘ (popover) — kiểu "Modes" nhưng vẽ theo phong cách observatory ───── */
