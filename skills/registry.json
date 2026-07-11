@@ -7,20 +7,20 @@
       "id": "flutter-supabase",
       "label": "Flutter + Supabase",
       "repo": "github.com/Bow-T/bow-skill-flutter",
-      "ref": "v0.2.0",
+      "ref": "v1.0.0",
       "default": true
     },
     {
       "id": "react-native-supabase",
       "label": "React Native + Supabase",
       "repo": "github.com/Bow-T/bow-skill-react-native",
-      "ref": "v0.1.0"
+      "ref": "v1.0.0"
     },
     {
       "id": "nextjs-supabase",
       "label": "Next.js + Supabase",
       "repo": "github.com/Bow-T/bow-skill-nextjs",
-      "ref": "v0.1.0"
+      "ref": "v1.0.0"
     }
   ]
 }
