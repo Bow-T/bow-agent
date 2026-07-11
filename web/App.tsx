@@ -297,6 +297,9 @@ export function App() {
   // /api/usage khi mở trang). null = chưa có dữ liệu.
   const [usage, setUsage] = useState<UsageSnapshot | null>(null);
   const [usageLoading, setUsageLoading] = useState(false);
+  // Panel usage đầy đủ (liệt kê MỌI cửa sổ hạn mức: Session 5h, Weekly 7d, per-model).
+  // Mở khi bấm ô Session trên header. false = đóng.
+  const [usagePanelOpen, setUsagePanelOpen] = useState(false);
 
   const getActiveOrigins = useCallback(() => {
     const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
@@ -2860,7 +2863,7 @@ export function App() {
               )}
             </div>
           )}
-          {/* Hạn mức phiên 5 giờ (Session) — gọn trên header. Bấm để làm mới. */}
+          {/* Hạn mức phiên 5 giờ (Session) — gọn trên header. Bấm để mở panel usage đầy đủ. */}
           {!safe && (() => {
             const s = usage?.rateLimits.find((w) => /session|5\s*h|5hr/i.test(w.label));
             const pct = s && s.utilization != null ? Math.round(s.utilization) : null;
@@ -2869,10 +2872,10 @@ export function App() {
                 className="readout readout-btn"
                 title={
                   s
-                    ? `Hạn mức phiên (5hr) — ${formatResetIn(s.resetsAt)}. Bấm để làm mới.`
-                    : 'Hạn mức phiên. Bấm để làm mới.'
+                    ? `Hạn mức phiên (5hr) — ${formatResetIn(s.resetsAt)}. Bấm để xem tất cả hạn mức.`
+                    : 'Hạn mức sử dụng. Bấm để xem tất cả.'
                 }
-                onClick={refreshUsage}
+                onClick={() => { setUsagePanelOpen(true); refreshUsage(); }}
                 disabled={usageLoading}
               >
                 <span className="rl">Session</span>
@@ -4217,6 +4220,107 @@ export function App() {
               <button className="btn allow" disabled={wsBusy} onClick={submitWsRepo}>
                 {wsBusy ? 'Đang lưu…' : 'Gán repo'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Panel usage đầy đủ: liệt kê MỌI cửa sổ hạn mức dạng thanh bar có % ── */}
+      {usagePanelOpen && (
+        <div className="modal-overlay" onClick={() => setUsagePanelOpen(false)}>
+          <div
+            className="modal-content pixel-panel"
+            style={{ maxWidth: '460px', width: '92%' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <span className="modal-title"><Icon name="info" size={16} /> Hạn mức sử dụng</span>
+              <button className="close-btn" onClick={() => setUsagePanelOpen(false)}><Icon name="close" size={16} /></button>
+            </div>
+            <div className="modal-body">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                <span style={{ fontSize: '12px', color: 'var(--muted)' }}>
+                  {usage?.subscriptionType
+                    ? `Gói: ${usage.subscriptionType.toUpperCase()}`
+                    : 'Hạn mức gói claude.ai (dùng chung với Claude Code).'}
+                </span>
+                <button
+                  className="readout readout-btn"
+                  style={{ border: 'var(--bd-thin) solid var(--outline)', height: 'auto', padding: '4px 10px' }}
+                  onClick={refreshUsage}
+                  disabled={usageLoading}
+                  title="Làm mới hạn mức"
+                >
+                  <span className="rl">{usageLoading ? 'Đang tải…' : 'Làm mới'}</span>
+                </button>
+              </div>
+
+              {(() => {
+                const windows = usage?.rateLimits ?? [];
+                if (windows.length === 0) {
+                  return (
+                    <div style={{ padding: '18px', textAlign: 'center', color: 'var(--muted)', fontSize: '12px' }}>
+                      {usageLoading
+                        ? 'Đang đọc hạn mức…'
+                        : 'Chưa có dữ liệu hạn mức. Thường do dùng API key/Bedrock/Vertex (không áp hạn mức gói) hoặc chưa đăng nhập Claude.'}
+                    </div>
+                  );
+                }
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                    {windows.map((w) => {
+                      const pct = w.utilization != null ? Math.round(w.utilization) : null;
+                      const danger = pct != null && pct >= 80;
+                      const warn = pct != null && pct >= 50 && pct < 80;
+                      const resetIn = formatResetIn(w.resetsAt);
+                      const barColor = danger ? 'var(--danger)' : warn ? 'var(--brass)' : 'var(--teal)';
+                      return (
+                        <div key={w.label}>
+                          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '5px' }}>
+                            <span style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--ink)' }}>{w.label}</span>
+                            <span
+                              className="rv"
+                              style={{ fontSize: '12.5px', color: danger ? 'var(--danger)' : 'var(--ink)' }}
+                            >
+                              {pct != null ? `${pct}%` : '—'}
+                            </span>
+                          </div>
+                          <div style={{ height: '8px', background: 'var(--inset)', border: 'var(--bd-thin) solid var(--outline)', overflow: 'hidden' }}>
+                            <div style={{ width: `${pct ?? 0}%`, height: '100%', background: barColor, transition: 'width var(--med)' }} />
+                          </div>
+                          {resetIn && (
+                            <div style={{ fontSize: '10.5px', color: 'var(--muted)', marginTop: '4px', fontFamily: 'var(--mono)' }}>
+                              Reset {resetIn.toLowerCase()}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+
+              {/* Context window của hội thoại hiện tại (nếu đã đo trong lượt chạy). */}
+              {usage?.contextTokens != null && !!usage.contextMaxTokens && (
+                <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: 'var(--bd-thin) solid var(--outline)' }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '5px' }}>
+                    <span style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--ink)' }}>Context (hội thoại này)</span>
+                    <span className="rv" style={{ fontSize: '12.5px' }}>
+                      {formatTokens(usage.contextTokens)} / {formatTokens(usage.contextMaxTokens)}
+                    </span>
+                  </div>
+                  <div style={{ height: '8px', background: 'var(--inset)', border: 'var(--bd-thin) solid var(--outline)', overflow: 'hidden' }}>
+                    <div
+                      style={{
+                        width: `${usage.contextPercentage != null ? Math.round(usage.contextPercentage) : 0}%`,
+                        height: '100%',
+                        background: 'var(--teal)',
+                        transition: 'width var(--med)',
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
