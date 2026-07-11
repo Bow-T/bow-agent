@@ -19,9 +19,7 @@ import {
   summarizeToolInput,
   summarizeToolResult,
 } from '../tools/mcp.js';
-import { loadPromptSkills } from '../skills/index.js';
-import { deployBundledSkills } from '../skills/agentSkills.js';
-import { deployExternalSkills } from '../skills/externalSkills.js';
+import { deployCoreSkills, deployExternalSkills, type ExternalDeployResult } from '../skills/externalSkills.js';
 import { loadMonorepoContext } from '../skills/monorepo.js';
 import { buildMonorepoHooks, buildReadAutoApproveHook } from '../skills/hooks.js';
 import { buildSubagents } from './subagents.js';
@@ -323,6 +321,24 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     ...mcpReadToolPatterns(mcpNames), // read tools của MCP (chung + riêng user)
   ]);
 
+  // ── TẢI SKILL từ GitHub (bow-agent là KHUNG RỖNG, không còn skills/ nội bộ) ─────────────
+  // Phải chạy SỚM: promptText của core + monorepoDir/hooksDir của stack đều cần cho system
+  // prompt (dưới) và hooks (xa hơn dưới). Cả hai fail-open — offline/lỗi chỉ log, agent vẫn chạy.
+  // CORE: luôn tải (watch, qc-triage, coding-convention). Trải skill kèm code + trả prompt-only.
+  const core = deployCoreSkills(opts.cwd);
+  if (core.error) {
+    opts.onEvent({ type: 'tool', name: 'skills', describe: `⚠️ core skill chưa tải được (${core.error}) — chạy thiếu quy ước chung` });
+  } else if (core.skills.length > 0) {
+    opts.onEvent({ type: 'tool', name: 'skills', describe: `📦 skill sẵn dùng: ${core.skills.join(', ')}` });
+  }
+  // STACK: chỉ khi user chọn. Trải skill + trả monorepoDir/hooksDir (để nạp ngữ cảnh monorepo).
+  const ext: ExternalDeployResult | null = opts.stack ? deployExternalSkills(opts.stack, opts.cwd) : null;
+  if (ext?.error) {
+    opts.onEvent({ type: 'tool', name: 'skills', describe: `⚠️ skill stack "${ext.stack.label || opts.stack}": ${ext.error}` });
+  } else if (ext && ext.skills.length > 0) {
+    opts.onEvent({ type: 'tool', name: 'skills', describe: `📦 skill stack ${ext.stack.label} (${ext.stack.ref}): ${ext.skills.join(', ')}` });
+  }
+
   // System prompt = quy trình chung + skill dùng chung + (nếu có) kiến thức dự án.
   let appendText = BOW_AGENT_APPEND;
   // Ngôn ngữ trả lời người dùng (mặc định Tiếng Việt). Đặt SỚM để ưu tiên cao.
@@ -332,13 +348,13 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
       ? '# Response language\n\nAlways respond to the user in English. This applies to your conversational replies only — do not translate code, code comments, or identifiers.'
       : '# Ngôn ngữ trả lời\n\nLuôn trả lời người dùng bằng tiếng Việt. Chỉ áp dụng cho phần trò chuyện — KHÔNG dịch code, comment trong code, hay tên định danh.';
   appendText = `${langInstruction}\n\n---\n\n${appendText}`;
-  // Skill prompt-only của bow-agent (skills/prompt/*.md) — áp cho mọi repo.
-  const promptSkills = loadPromptSkills();
-  if (promptSkills) {
-    appendText += `\n\n---\n\n${promptSkills}`;
+  // Skill prompt-only (coding-convention…) từ repo CORE đã clone — áp cho mọi repo.
+  if (core.promptText) {
+    appendText += `\n\n---\n\n${core.promptText}`;
   }
-  // Ngữ cảnh monorepo (CLAUDE.md + danh mục skill) — CHỈ khi cwd là monorepo.
-  const monorepoContext = loadMonorepoContext(opts.cwd);
+  // Ngữ cảnh monorepo (CLAUDE.md + danh mục skill) — CHỈ khi cwd là monorepo VÀ stack (flutter)
+  // cấp monorepoDir. Nguồn từ bản clone stack, không còn skills/monorepo/ nội bộ.
+  const monorepoContext = loadMonorepoContext(opts.cwd, ext?.monorepoDir ?? '');
   if (monorepoContext) {
     appendText += `\n\n---\n\n${monorepoContext}`;
   }
@@ -525,8 +541,9 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     return inReal && inRaw;
   };
 
-  // Hook monorepo (guard-push/commit, self-verify, githooks) — chỉ khi cwd là monorepo.
-  const monorepoHooks = buildMonorepoHooks(opts.cwd);
+  // Hook monorepo (guard-push/commit, self-verify, githooks) — chỉ khi cwd là monorepo VÀ stack
+  // cấp hooksDir (từ bản clone flutter). Nguồn hooks không còn nội bộ skills/monorepo/hooks.
+  const monorepoHooks = buildMonorepoHooks(opts.cwd, ext?.hooksDir ?? '');
 
   // Hợp nhất PreToolUse: hook auto-duyệt read tools (mọi repo) + hook monorepo
   // (guard Bash, chỉ khi là monorepo). Matcher khác nhau nên nối chung vào một
@@ -540,37 +557,7 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
       : {}),
   };
   const hasHooks = Object.keys(hooks).length > 0;
-
-  // Trải Agent Skills bundle (vd /watch — xem video) vào <cwd>/.claude/skills/ để SDK
-  // auto-discover. Idempotent, không đụng skill người dùng tự đặt. Xem DESIGN §7.2.
-  const bundledSkills = deployBundledSkills(opts.cwd);
-  if (bundledSkills.length > 0) {
-    opts.onEvent({
-      type: 'tool',
-      name: 'skills',
-      describe: `📦 skill sẵn dùng: ${bundledSkills.join(', ')}`,
-    });
-  }
-
-  // Skill EXTERNAL theo stack người dùng chọn (RN+Supabase, …): tải từ repo GitHub đã ghim tag
-  // (chỉ repo trong registry — allowlist admin duyệt) rồi trải vào .claude/skills/ như skill nội
-  // bộ. Fail-open: lỗi tải chỉ log, không kéo sập agent. Xem externalSkills.ts.
-  if (opts.stack) {
-    const ext = deployExternalSkills(opts.stack, opts.cwd);
-    if (ext?.error) {
-      opts.onEvent({
-        type: 'tool',
-        name: 'skills',
-        describe: `⚠️ skill stack "${ext.stack.label || opts.stack}": ${ext.error}`,
-      });
-    } else if (ext && ext.skills.length > 0) {
-      opts.onEvent({
-        type: 'tool',
-        name: 'skills',
-        describe: `📦 skill stack ${ext.stack.label} (${ext.stack.ref}): ${ext.skills.join(', ')}`,
-      });
-    }
-  }
+  // (Deploy core + stack đã chạy SỚM ở đầu hàm — cần cho system prompt & hooks trên.)
 
   const options: Options = {
     model: opts.model ?? config.model,

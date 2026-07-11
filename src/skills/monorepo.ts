@@ -1,25 +1,17 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join, resolve } from 'node:path';
 import { execSync } from 'node:child_process';
 import { config } from '../config/env.js';
 
 /**
- * Ngữ cảnh riêng của MONOREPO, gói sẵn từ .claude của monorepo vào
- * bow-agent (skills/monorepo/). Chỉ kích hoạt khi agent làm việc TRONG monorepo
- * — repo khác không bị nhiễu.
+ * Ngữ cảnh riêng của MONOREPO. Chỉ kích hoạt khi agent làm việc TRONG monorepo — repo khác
+ * không bị nhiễu. Nguồn (CLAUDE.md + danh mục skill) đến từ thư mục `monorepo/` của repo skill
+ * stack đã clone (vd bow-skill-flutter, khai `monorepoDir` trong manifest) — bow-agent là khung
+ * rỗng, không còn skills/monorepo/ nội bộ. runner truyền `monorepoDir` từ bản clone vào.
  *
- * Gồm: CLAUDE.md (kiến thức nền) + danh mục skill (name + description, kèm đường
- * dẫn để agent tự Read full SKILL.md khi cần — không nhồi cả nghìn dòng vào system
- * prompt). Danh mục quét động từ skills/monorepo/skills/ nên số lượng tự cập nhật
- * theo bundle. Hooks xử lý riêng ở ./hooks.ts.
+ * Gồm: CLAUDE.md (kiến thức nền) + danh mục skill (name + description, kèm đường dẫn để agent tự
+ * Read full SKILL.md khi cần — không nhồi cả nghìn dòng vào system prompt). Hooks xử lý riêng ở ./hooks.ts.
  */
-
-/** Thư mục skills/monorepo/ ở root repo bow-agent (dù chạy từ src/ hay dist/). */
-function monorepoBundleDir(): string {
-  const here = dirname(fileURLToPath(import.meta.url));
-  return resolve(here, '../../skills/monorepo');
-}
 
 /** Tự động phát hiện mã dự án Jira (ví dụ: DEAR, PROJ) dựa trên git branch hoặc lịch sử commit. */
 export function detectJiraProjectKey(cwd: string): string {
@@ -90,20 +82,21 @@ function readSkillMeta(skillMd: string): { name: string; description: string } |
 }
 
 /**
- * Nạp ngữ cảnh monorepo để append vào system prompt. Trả '' nếu cwd KHÔNG phải
- * monorepo, hoặc bundle không tồn tại (không throw — thiếu bundle không phải lỗi).
+ * Nạp ngữ cảnh monorepo để append vào system prompt. `monorepoDir` = thư mục `monorepo/` trong
+ * bản clone repo stack (do runner truyền vào từ deployExternalSkills). Trả '' nếu cwd KHÔNG phải
+ * monorepo, hoặc `monorepoDir` rỗng/không tồn tại (không throw — thiếu context không phải lỗi).
  */
-export function loadMonorepoContext(cwd: string): string {
+export function loadMonorepoContext(cwd: string, monorepoDir: string): string {
   if (!isMonorepo(cwd)) return '';
-  const dir = monorepoBundleDir();
-  if (!existsSync(dir)) return '';
+  const dir = monorepoDir;
+  if (!dir || !existsSync(dir)) return '';
 
   const projectKey = detectJiraProjectKey(cwd);
 
   const parts: string[] = [`# Ngữ cảnh dự án MONOREPO (${projectKey})`];
   parts.push(
     `Bạn đang làm việc trong monorepo ${projectKey}. Áp dụng kiến thức và quy trình dưới đây. ` +
-      `Lưu ý: Tất cả các tài liệu kỹ thuật hoặc skill định nghĩa trong thư mục skills/monorepo/ có thể sử dụng ` +
+      `Lưu ý: Tất cả các tài liệu kỹ thuật hoặc skill của monorepo có thể sử dụng ` +
       `từ khóa mặc định "<PROJECT_KEY>" làm ví dụ hoặc làm placeholder. Khi đọc và thực thi các skill này, bạn phải ` +
       `luôn tự động ánh xạ (map) từ khóa "<PROJECT_KEY>" thành mã dự án hiện tại là "${projectKey}" (ví dụ: viết commit ` +
       `message có "Refs: ${projectKey}-XXX" thay vì "Refs: <PROJECT_KEY>-XXX", tạo branch "feat/${projectKey}-XXX" thay vì "feat/<PROJECT_KEY>-XXX").`,

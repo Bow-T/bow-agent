@@ -217,16 +217,18 @@ bow-agent run PROJ-123 --execute --subagents --cwd ~/GitProject/monorepo/apps/mo
 
 ## Ngữ cảnh monorepo — gói sẵn, tự kích hoạt
 
-Toàn bộ `.claude` của monorepo (CLAUDE.md + skill + hook) được **đóng gói sẵn** vào bow-agent
-(`skills/monorepo/`), nên khi `--cwd` nằm trong monorepo, agent tự áp:
+Toàn bộ `.claude` của monorepo (CLAUDE.md + skill + hook) được **tải từ repo skill stack**
+(`Bow-T/bow-skill-flutter`, thư mục `monorepo/` — clone về `~/.bow/skills-cache/`), nên khi
+`--cwd` nằm trong monorepo, agent tự áp:
 
 - **CLAUDE.md** (quy ước dự án) đưa nguyên vào system prompt.
 - **Danh mục skill** (name + description + đường dẫn) — agent tự `Read` full `SKILL.md` khi task khớp, tránh nhồi cả nghìn dòng vào mọi lượt.
 - **Hook** (`guard-push`, `guard-commit-branch`, `self-verify-rubric`, `ensure-githooks`) — chặn push khi quest gate fail, chặn commit trên branch protected, nhắc rubric.
 - **Tự nhận mã dự án Jira** (`<PROJECT_KEY>`) từ branch/commit/`.env` rồi map placeholder trong skill sang mã thật.
 
-Đây là bản **COPY** — không đụng `.claude` của monorepo. Khi monorepo đổi skill/hook, đồng bộ
-lại bằng `npm run sync-monorepo`.
+Nguồn không nằm trong bow-agent — không đụng `.claude` của monorepo. Khi monorepo đổi
+skill/hook, cập nhật trong repo `Bow-T/bow-skill-flutter` (thư mục `monorepo/`); bow-agent
+tự clone bản mới nhất mỗi lần chạy khi chọn stack Flutter.
 
 ---
 
@@ -294,14 +296,14 @@ src/
     runner.ts         # LÕI agent: query() + profile + skill + subagents + events + approval
     subagents.ts      # bộ subagent chuẩn (reviewer/verifier/impact-scout) — opt-in
   skills/
-    index.ts          # nạp skill prompt-only chung (skills/prompt/*.md)
-    monorepo.ts       # nhận diện monorepo + nạp CLAUDE.md + danh mục skill đóng gói
+    index.ts          # nạp prompt-only từ repo core clone (bản clone Bow-T/bow-skill-core)
+    externalSkills.ts # tải skill từ GitHub: core luôn tải + stack tải khi chọn (cache ~/.bow/skills-cache)
+    monorepo.ts       # nhận diện monorepo + nạp CLAUDE.md + danh mục skill (từ repo stack clone)
     hooks.ts          # bọc hook shell của monorepo thành SDK hook (guard/verify)
   cli/index.ts        # entrypoint CLI (dùng lõi runner + terminal y/N)
   web/
     server.ts         # backend Express: /api/run + SSE /api/events + /api/approve
     session.ts        # phiên chạy + hàng đợi sự kiện + cổng duyệt treo Promise
-skills/               # skill đóng gói: prompt/* (chung) + monorepo/* (COPY từ .claude monorepo)
 web/                  # frontend React (Vite)
   App.tsx             # chat + toggle plan/execute + thẻ duyệt + model selection + cost tracking
   main.tsx, styles.css, types.ts
