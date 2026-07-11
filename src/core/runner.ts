@@ -1,6 +1,7 @@
 import {
   query,
   type AgentDefinition,
+  type McpServerConfig,
   type Options,
   type PermissionMode,
   type SDKUserMessage,
@@ -152,6 +153,11 @@ export interface RunOptions {
    * Rỗng = không dùng MCP.
    */
   mcpServers?: string[];
+  /**
+   * MCP RIÊNG của user (đã resolve kèm token) — overlay LÊN MCP chung. Trùng tên thì bản
+   * này thắng. Rỗng = không có MCP riêng. (Nguồn: src/web/userMcp.ts theo user.id.)
+   */
+  userMcpServers?: Record<string, McpServerConfig>;
   /** Nhận sự kiện tiến độ. CLI in ra terminal; web đẩy qua SSE. */
   onEvent: (event: AgentEvent) => void;
   /**
@@ -263,8 +269,12 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     ? loadClaudeCodeMcp(opts.mcpServers)
     : { servers: {}, names: [] as string[] };
 
-  const mcpServers = { ...cc.servers };
+  // (2) MCP RIÊNG của user: overlay SAU cc → trùng tên thì bản của user ghi đè bản chung.
+  const userMcp = opts.userMcpServers ?? {};
+  const mcpServers = { ...cc.servers, ...userMcp };
   const hasMcp = Object.keys(mcpServers).length > 0;
+  // Tên tất cả MCP thực sự nạp (chung + riêng) — dùng để cấp read-auto-approve.
+  const mcpNames = Object.keys(mcpServers);
 
   // Tool đọc tự cho phép; tool ghi/side-effect mặc định hỏi. Để chạy test/kiểm chứng,
   // agent dùng Bash — đã có cổng SAFE_COMMANDS bên dưới (npm test, flutter test...).
@@ -287,7 +297,7 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     // Cho agent chính spawn subagent không kẹt cổng duyệt — subagent đều read-only /
     // chỉ chạy lệnh kiểm chứng nên an toàn. Chỉ mở khi bật multi-agent.
     ...(subagents ? ['Agent'] : []),
-    ...mcpReadToolPatterns(cc.names), // read tools của MCP Claude Code (write phải duyệt)
+    ...mcpReadToolPatterns(mcpNames), // read tools của MCP (chung + riêng user); write phải duyệt
   ];
   // allowedTools để rỗng: toàn bộ auto-duyệt read đã chuyển sang PreToolUse hook.
   const allowedTools: string[] = [];
@@ -303,7 +313,7 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     'NotebookRead',
     'TodoWrite',
     ...(subagents ? ['Agent'] : []),
-    ...mcpReadToolPatterns(cc.names),
+    ...mcpReadToolPatterns(mcpNames), // read tools của MCP (chung + riêng user)
   ]);
 
   // System prompt = quy trình chung + skill dùng chung + (nếu có) kiến thức dự án.

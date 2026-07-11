@@ -23,6 +23,7 @@ import {
   isValidToken,
   listAccessUsers,
   accessBus,
+  type AccessUser,
 } from './access.js';
 import {
   listConversations,
@@ -39,7 +40,9 @@ import {
   normalizeGroupId,
   chatBus,
 } from './chat.js';
+import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { loadClaudeCodeMcp, listGlobalMcp, addGlobalMcp, removeGlobalMcp } from '../tools/mcp.js';
+import { listUserMcp, addUserMcp, removeUserMcp, loadUserMcpServers } from './userMcp.js';
 import { parseJiraRef } from '../input/jira-ref.js';
 import { fetchJiraTicketImages, fetchJiraTicketVideos } from '../input/jira-attachments.js';
 import {
@@ -376,6 +379,8 @@ interface RunParams {
   projectProfile?: string;
   images?: { base64: string; mediaType: string }[];
   mcpServers?: string[];
+  /** MCP RIÊNG của user (đã resolve kèm token) — overlay lên MCP chung. Rỗng = không có. */
+  userMcpServers?: Record<string, McpServerConfig>;
   model?: string;
   isExecuting: boolean;
   routeToAdmin: boolean;
@@ -428,6 +433,10 @@ function runAgentSession(session: ReturnType<typeof createSession>, params: RunP
     projectProfile: params.projectProfile,
     images: params.images && params.images.length > 0 ? params.images : undefined,
     mcpServers: params.mcpServers && params.mcpServers.length > 0 ? params.mcpServers : undefined,
+    userMcpServers:
+      params.userMcpServers && Object.keys(params.userMcpServers).length > 0
+        ? params.userMcpServers
+        : undefined,
     abortSignal: session.abort.signal,
     onEvent: (ev) => {
       // Bắt lỗi hết hạn mức trước khi đẩy event ra client — để lên lịch tự chạy tiếp.
@@ -725,6 +734,12 @@ app.post('/api/run', async (req, res) => {
     const routeToAdmin = isCollabMode && !isAdmin;
     const requireApprovalForWrites = routeToAdmin;
 
+    // MCP RIÊNG của user LAN (theo token → user.id): overlay lên MCP chung, TỰ áp mọi lần
+    // chạy của chính user đó (không cần tick). Admin localhost không có token → rỗng, dùng
+    // MCP chung như cũ. Resolve tại đây (có req) rồi truyền xuống runner.
+    const runUser = getUserByToken(getReqToken(req));
+    const userMcpServers = runUser ? loadUserMcpServers(runUser.id) : {};
+
     // Nếu người dùng CHỦ ĐỘNG chạy lại một hội thoại đang có lịch tự-chạy-tiếp treo, huỷ lịch
     // đó — họ đã tự tiếp tục bằng tay, khỏi để timer server gọi trùng.
     if (resumeSessionId) cancelResumeSchedule(resumeSessionId);
@@ -742,6 +757,7 @@ app.post('/api/run', async (req, res) => {
         projectProfile,
         images: uploadImages,
         mcpServers: effectiveMcp,
+        userMcpServers,
         model: effectiveModel,
         isExecuting,
         routeToAdmin,
@@ -1487,6 +1503,75 @@ app.delete('/api/mcp/:name', requireAdmin, checkSafeMode, (req, res) => {
   try {
     removeGlobalMcp(req.params.name);
     res.json({ ok: true, servers: listGlobalMcp() });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ── MCP RIÊNG theo user (overlay lên MCP chung) — /api/my-mcp ──────────────────
+// KHÁC /api/mcp (chung, chỉ admin, bị chặn trong Safe/Collab): các route này cho USER
+// LAN đã duyệt tự quản MCP riêng của CHÍNH họ, KỂ CẢ trong Safe/Collab Mode — vì chỉ
+// ảnh hưởng họ, không đụng hạ tầng chung. Không dùng requireAdmin / checkSafeMode.
+
+/** Lấy user (đã duyệt) sở hữu request, hoặc trả 403 và null. Admin localhost không có
+ *  token access → không dùng /api/my-mcp (admin quản MCP chung qua /api/mcp). */
+function requireMcpUser(req: express.Request, res: express.Response): AccessUser | null {
+  if (!isAccessAllowed(req)) {
+    res.status(403).json({ error: 'Cần được duyệt truy cập mới quản lý MCP riêng.' });
+    return null;
+  }
+  const user = getUserByToken(getReqToken(req));
+  if (!user) {
+    res.status(403).json({
+      error: 'MCP riêng dành cho người dùng LAN đã duyệt. Admin dùng MCP chung ở mục cấu hình.',
+    });
+    return null;
+  }
+  return user;
+}
+
+/** GET /api/my-mcp — liệt kê MCP RIÊNG của user gọi (che token). */
+app.get('/api/my-mcp', (req, res) => {
+  const user = requireMcpUser(req, res);
+  if (!user) return;
+  try {
+    res.json({ servers: listUserMcp(user.id) });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+/** POST /api/my-mcp — user thêm MCP RIÊNG. body: {name, command, args?, env?} */
+app.post('/api/my-mcp', (req, res) => {
+  const user = requireMcpUser(req, res);
+  if (!user) return;
+  const { name, command, args, env } = req.body ?? {};
+  if (typeof name !== 'string' || typeof command !== 'string') {
+    res.status(400).json({ error: 'Thiếu name hoặc command.' });
+    return;
+  }
+  try {
+    addUserMcp(user.id, {
+      name,
+      command,
+      args: Array.isArray(args) ? args.map(String) : undefined,
+      env: env && typeof env === 'object' ? (env as Record<string, string>) : undefined,
+    });
+    logAudit(`IP: ${getCleanIp(req)} - Thêm MCP riêng "${name}"`, getCleanIp(req), user.name);
+    res.json({ ok: true, servers: listUserMcp(user.id) });
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+  }
+});
+
+/** DELETE /api/my-mcp/:name — user xóa một MCP RIÊNG của mình. */
+app.delete('/api/my-mcp/:name', (req, res) => {
+  const user = requireMcpUser(req, res);
+  if (!user) return;
+  try {
+    removeUserMcp(user.id, req.params.name);
+    logAudit(`IP: ${getCleanIp(req)} - Xóa MCP riêng "${req.params.name}"`, getCleanIp(req), user.name);
+    res.json({ ok: true, servers: listUserMcp(user.id) });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }

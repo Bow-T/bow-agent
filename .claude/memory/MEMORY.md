@@ -9,3 +9,4 @@
 - [Skill /qc-triage — chấm loại ticket](bow-skill-qc-triage.md) — đọc 1 ticket Jira, suy luận Bug/Task/Story đúng chưa; chỉ báo cáo, không sửa Jira; bundle skills/agent-skills/
 - [Web LAN đen thui do 401 /api/config](bow-lan-config-401-crash.md) — client LAN chưa duyệt 401→setCwd(undefined)→cwd.trim() crash; phải check r.ok, test headless trỏ IP LAN
 - [Tự chạy tiếp khi hết hạn mức phiên](bow-auto-resume-session-limit.md) — session limit 5h → server lên lịch tới giờ reset tự resume phiên cũ + prompt "tiếp tục"; chỉ phiên đang thực thi, tối đa 3 lần; UI đếm ngược + nút huỷ; cờ BOW_SIMULATE_SESSION_LIMIT để test
+- [MCP riêng theo user](bow-per-user-mcp.md) — /api/my-mcp: user LAN tự quản MCP riêng (overlay lên MCP chung, trùng tên bản riêng thắng), tự áp mọi lần chạy, chạy cả trong Safe/Collab; lưu conversations/user-mcp.json theo user.id

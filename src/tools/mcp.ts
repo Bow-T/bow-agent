@@ -29,8 +29,27 @@ function readGlobalMcp(): Record<string, unknown> {
 }
 
 /** Một MCP server hợp lệ (stdio) từ config: có `command`. */
-function isStdioServer(v: unknown): v is { command: string; args?: string[]; env?: Record<string, string> } {
+export function isStdioServer(v: unknown): v is { command: string; args?: string[]; env?: Record<string, string> } {
   return Boolean(v && typeof v === 'object' && typeof (v as { command?: unknown }).command === 'string');
+}
+
+/**
+ * Dựng một McpServerConfig stdio (kèm timeout mặc định) từ entry đã lưu. Dùng chung cho
+ * MCP chung (~/.claude.json) và MCP riêng của user — để logic timeout/spread env đồng nhất.
+ */
+export function buildStdioMcpConfig(cfg: {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+}): McpServerConfig {
+  return {
+    type: 'stdio',
+    command: cfg.command,
+    ...(cfg.args ? { args: cfg.args } : {}),
+    ...(cfg.env ? { env: cfg.env } : {}),
+    // Giới hạn mỗi MCP call 60s — tránh treo vô hạn khi query DB lớn / npx tải chậm.
+    timeout: 60_000,
+  };
 }
 
 export interface LoadedMcp {
@@ -47,20 +66,12 @@ export interface LoadedMcp {
 export function loadClaudeCodeMcp(filterNames?: string[]): LoadedMcp {
   const raw = readGlobalMcp();
   const servers: Record<string, McpServerConfig> = {};
-  const names: string[] = [];
 
   for (const [name, cfg] of Object.entries(raw)) {
     if (!isStdioServer(cfg)) continue;
     if (filterNames && !filterNames.includes(name)) continue;
 
-    servers[name] = {
-      type: 'stdio',
-      command: cfg.command,
-      ...(cfg.args ? { args: cfg.args } : {}),
-      ...(cfg.env ? { env: cfg.env } : {}),
-      // Giới hạn mỗi MCP call 60s — tránh treo vô hạn khi query DB lớn / npx tải chậm.
-      timeout: 60_000,
-    };
+    servers[name] = buildStdioMcpConfig(cfg);
   }
   return { servers, names: Object.keys(servers) };
 }
@@ -216,8 +227,25 @@ export interface McpInfo {
 }
 
 /** Tên MCP hợp lệ: chữ/số/gạch, không rỗng. */
-function isValidMcpName(name: string): boolean {
+export function isValidMcpName(name: string): boolean {
   return /^[a-zA-Z0-9_-]+$/.test(name);
+}
+
+/**
+ * Resolve env cho một MCP entry: value dạng "$VAR" → thay bằng process.env[VAR] (bỏ nếu
+ * không có). Còn lại giữ nguyên (ép String). Dùng chung cho MCP chung và MCP riêng user.
+ */
+export function resolveMcpEnv(env?: Record<string, string>): Record<string, string> {
+  const resolved: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env ?? {})) {
+    if (typeof v === 'string' && v.startsWith('$')) {
+      const envVal = process.env[v.slice(1)];
+      if (envVal !== undefined) resolved[k] = envVal;
+    } else {
+      resolved[k] = String(v);
+    }
+  }
+  return resolved;
 }
 
 /**
@@ -227,7 +255,7 @@ function isValidMcpName(name: string): boolean {
  * hoặc bản thân trông giống secret (dài + có tiền tố sbp_/sk-/ghp_... hoặc chuỗi dài),
  * đều bị thay bằng '***'.
  */
-function maskArgs(args: string[]): string[] {
+export function maskArgs(args: string[]): string[] {
   const SECRET_FLAG = /(token|key|secret|password|passwd|api[-_]?key|access[-_]?token|auth)/i;
   const SECRET_VALUE = /^(sbp_|sk-|ghp_|gho_|xox[baprs]-|eyJ)/; // tiền tố token phổ biến
   return args.map((a, i) => {
@@ -319,15 +347,7 @@ export function addGlobalMcp(input: {
   }
 
   // Env: value dạng "$VAR" → thay bằng process.env[VAR] (bỏ nếu không có). Còn lại giữ nguyên.
-  const resolvedEnv: Record<string, string> = {};
-  for (const [k, v] of Object.entries(input.env ?? {})) {
-    if (typeof v === 'string' && v.startsWith('$')) {
-      const envVal = process.env[v.slice(1)];
-      if (envVal !== undefined) resolvedEnv[k] = envVal;
-    } else {
-      resolvedEnv[k] = String(v);
-    }
-  }
+  const resolvedEnv = resolveMcpEnv(input.env);
 
   servers[name] = {
     type: 'stdio',
