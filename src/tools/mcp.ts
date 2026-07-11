@@ -1,24 +1,26 @@
-import { existsSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { config } from '../config/env.js';
 
-/** Đường dẫn file cấu hình Claude Code (chứa block mcpServers dùng chung). */
-function claudeJsonPath(): string {
-  return config.claudeJsonPath;
+/**
+ * Đường dẫn file MCP CHUNG của bow-agent — TÁCH KHỎI profile/acc (~/.bow-agent/mcp.json),
+ * KHÔNG còn là .claude.json của profile đang login. Nhờ đó đổi acc qua lại vẫn giữ MCP.
+ * Getter tự seed file lần đầu từ ~/.claude.json (xem config.mcpConfigPath).
+ */
+function mcpConfigPath(): string {
+  return config.mcpConfigPath;
 }
 
 /**
- * Nạp các MCP server mà người dùng đã cấu hình cho Claude Code (~/.claude.json).
- * Nhờ đó bow-agent dùng LẠI đúng kết nối Supabase / Jira / Codemagic... của Claude
- * Code — xem DB, apply migration, đọc ticket — mà KHÔNG hardcode token vào repo.
- * Token nằm nguyên trong ~/.claude.json của máy, bow-agent chỉ tham chiếu.
+ * Nạp các MCP server dùng chung của bow-agent (từ ~/.bow-agent/mcp.json). Cho agent dùng
+ * lại đúng kết nối Supabase / Jira / Codemagic... — xem DB, apply migration, đọc ticket.
+ * Token nằm trong file này (ngoài repo), bow-agent chỉ tham chiếu, không hardcode vào code.
  */
 
-/** Đọc block mcpServers từ ~/.claude.json (nếu có). Trả {} nếu không có. */
+/** Đọc block mcpServers từ file MCP chung (nếu có). Trả {} nếu không có. */
 function readGlobalMcp(): Record<string, unknown> {
-  const file = claudeJsonPath();
+  const file = mcpConfigPath();
   if (!existsSync(file)) return {};
   try {
     const data = JSON.parse(readFileSync(file, 'utf8')) as { mcpServers?: Record<string, unknown> };
@@ -275,22 +277,24 @@ export function maskArgs(args: string[]): string[] {
 }
 
 /**
- * Đọc TOÀN BỘ ~/.claude.json (không chỉ mcpServers) để khi ghi lại giữ nguyên mọi
- * state khác (userID, cache, toolUsage...). Trả object rỗng nếu file chưa có/hỏng.
+ * Đọc TOÀN BỘ file MCP chung (~/.bow-agent/mcp.json) để khi ghi lại giữ nguyên mọi state
+ * khác nếu sau này có thêm. Trả object rỗng nếu file chưa có/hỏng.
  */
 function readClaudeJson(): Record<string, unknown> {
-  const file = claudeJsonPath();
+  const file = mcpConfigPath();
   if (!existsSync(file)) return {};
   return JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
 }
 
 /**
- * Ghi lại ~/.claude.json AN TOÀN: backup trước, ghi, rồi validate JSON đọc lại được;
- * nếu hỏng thì khôi phục từ backup và ném lỗi. Không bao giờ để file ở trạng thái hỏng.
+ * Ghi lại file MCP chung AN TOÀN: backup trước, ghi, rồi validate JSON đọc lại được; nếu
+ * hỏng thì khôi phục từ backup và ném lỗi. Không bao giờ để file ở trạng thái hỏng.
  */
 function writeClaudeJsonSafely(data: Record<string, unknown>): void {
-  const file = claudeJsonPath();
+  const file = mcpConfigPath();
   const serialized = JSON.stringify(data, null, 2);
+  // Đảm bảo thư mục ~/.bow-agent/ tồn tại (trường hợp seed lỗi / file chưa từng tạo).
+  mkdirSync(dirname(file), { recursive: true });
   // Backup file cũ (nếu có) trước khi ghi đè.
   if (existsSync(file)) {
     copyFileSync(file, `${file}.bak`);
@@ -301,7 +305,7 @@ function writeClaudeJsonSafely(data: Record<string, unknown>): void {
     JSON.parse(readFileSync(file, 'utf8'));
   } catch (err) {
     if (existsSync(`${file}.bak`)) copyFileSync(`${file}.bak`, file);
-    throw new Error(`Ghi ~/.claude.json thất bại, đã khôi phục backup: ${(err as Error).message}`);
+    throw new Error(`Ghi file MCP thất bại, đã khôi phục backup: ${(err as Error).message}`);
   }
 }
 

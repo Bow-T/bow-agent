@@ -1,7 +1,7 @@
 import 'dotenv/config';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 /**
  * Cấu hình đọc từ biến môi trường (.env). Đây là NGUỒN DUY NHẤT đọc process.env —
@@ -76,6 +76,39 @@ function getClaudeJsonPath(): string {
   return join(homedir(), '.claude.json');
 }
 
+/**
+ * Đường dẫn file MCP CHUNG của bow-agent — TÁCH KHỎI profile/acc. Vì sao tách: MCP trước
+ * đây nằm trong .claude.json của profile đang login, nên đổi acc là mất MCP, phải khai lại.
+ * File này cố định (~/.bow-agent/mcp.json), độc lập mọi profile → config MCP một lần, đổi
+ * acc bao nhiêu lần vẫn thấy. Chỉ chứa { mcpServers: {...} }. Override qua BOW_MCP_CONFIG.
+ */
+function getMcpConfigPath(): string {
+  return optional('BOW_MCP_CONFIG') ?? join(homedir(), '.bow-agent', 'mcp.json');
+}
+
+/**
+ * Seed file MCP mới LẦN ĐẦU từ ~/.claude.json (nơi người dùng thường đã cấu hình MCP bằng
+ * Claude Code CLI). Chỉ chạy khi file mới CHƯA tồn tại — để không mất supabase/jira đang có.
+ * Không seed đè nếu file đã có. Lỗi seed không kéo sập app (chỉ là tiện lợi ban đầu).
+ */
+function seedMcpConfigIfMissing(mcpPath: string): void {
+  if (existsSync(mcpPath)) return;
+  try {
+    // Nguồn seed: ~/.claude.json mặc định (KHÔNG theo CLAUDE_CONFIG_DIR — đó là nơi CLI
+    // thường lưu MCP; profile bow-agent thường rỗng mcpServers).
+    const source = join(homedir(), '.claude.json');
+    let mcpServers: Record<string, unknown> = {};
+    if (existsSync(source)) {
+      const data = JSON.parse(readFileSync(source, 'utf8')) as { mcpServers?: Record<string, unknown> };
+      mcpServers = data.mcpServers ?? {};
+    }
+    mkdirSync(dirname(mcpPath), { recursive: true });
+    writeFileSync(mcpPath, JSON.stringify({ mcpServers }, null, 2), 'utf8');
+  } catch {
+    // Seed thất bại → cứ để file chưa có; mcp.ts sẽ tự tạo {} khi ghi lần đầu.
+  }
+}
+
 export const config = {
   /** Agent có auth để chạy không? = đã login Claude CLI hoặc có Token config sẵn. */
   get hasAuth(): boolean {
@@ -87,9 +120,19 @@ export const config = {
     return Boolean(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN);
   },
 
-  /** Đường dẫn file cấu hình Claude Code (chứa block mcpServers dùng chung). */
+  /** Đường dẫn file cấu hình Claude Code (login/token theo profile đang chạy). */
   get claudeJsonPath(): string {
     return getClaudeJsonPath();
+  },
+
+  /**
+   * Đường dẫn file MCP CHUNG của bow-agent — TÁCH KHỎI profile. Seed lần đầu từ
+   * ~/.claude.json để không mất MCP đã cấu hình. Đọc getter này = đảm bảo file đã tồn tại.
+   */
+  get mcpConfigPath(): string {
+    const p = getMcpConfigPath();
+    seedMcpConfigIfMissing(p);
+    return p;
   },
 
   /**
