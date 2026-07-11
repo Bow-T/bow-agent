@@ -68,11 +68,12 @@ interface JiraAuth {
 }
 
 /**
- * Đọc auth Jira từ block mcpServers.jira.env của ~/.claude.json. Trả null nếu thiếu
- * (chưa cấu hình MCP jira, hoặc thiếu biến) → caller bỏ qua ảnh, không kéo sập.
+ * Đọc auth Jira từ block mcpServers.jira.env của file MCP chung (~/.bow-agent/mcp.json —
+ * đã tách khỏi profile). Trả null nếu thiếu (chưa cấu hình MCP jira, hoặc thiếu biến) →
+ * caller bỏ qua ảnh, không kéo sập.
  */
 function readJiraAuth(): JiraAuth | null {
-  const file = config.claudeJsonPath;
+  const file = config.mcpConfigPath;
   if (!existsSync(file)) return null;
   let data: { mcpServers?: Record<string, { env?: Record<string, string> }> };
   try {
