@@ -43,6 +43,7 @@ import {
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { loadClaudeCodeMcp, listGlobalMcp, addGlobalMcp, removeGlobalMcp } from '../tools/mcp.js';
 import { listUserMcp, addUserMcp, removeUserMcp, loadUserMcpServers } from './userMcp.js';
+import { loadRegistry } from '../skills/externalSkills.js';
 import { parseJiraRef } from '../input/jira-ref.js';
 import { fetchJiraTicketImages, fetchJiraTicketVideos } from '../input/jira-attachments.js';
 import {
@@ -381,6 +382,8 @@ interface RunParams {
   mcpServers?: string[];
   /** MCP RIÊNG của user (đã resolve kèm token) — overlay lên MCP chung. Rỗng = không có. */
   userMcpServers?: Record<string, McpServerConfig>;
+  /** Stack skill external người dùng chọn (id trong registry). Rỗng = chỉ skill nội bộ. */
+  stack?: string;
   model?: string;
   isExecuting: boolean;
   routeToAdmin: boolean;
@@ -437,6 +440,7 @@ function runAgentSession(session: ReturnType<typeof createSession>, params: RunP
       params.userMcpServers && Object.keys(params.userMcpServers).length > 0
         ? params.userMcpServers
         : undefined,
+    stack: params.stack || undefined,
     abortSignal: session.abort.signal,
     onEvent: (ev) => {
       // Bắt lỗi hết hạn mức trước khi đẩy event ra client — để lên lịch tự chạy tiếp.
@@ -556,6 +560,7 @@ app.post('/api/run', async (req, res) => {
       language,
       cwd,
       model,
+      stack,
       conversationId,
       resumeContext,
     } = req.body ?? {};
@@ -758,6 +763,7 @@ app.post('/api/run', async (req, res) => {
         images: uploadImages,
         mcpServers: effectiveMcp,
         userMcpServers,
+        stack: typeof stack === 'string' ? stack : undefined,
         model: effectiveModel,
         isExecuting,
         routeToAdmin,
@@ -1464,6 +1470,24 @@ app.get('/api/usage', async (req, res) => {
       return;
     }
     res.json({ usage });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+/**
+ * GET /api/skill-stacks — liệt kê stack skill external ĐÃ ADMIN DUYỆT (registry). UI đọc để
+ * dựng dropdown chọn stack. Chỉ trả metadata hiển thị (id/label/ref/default), không lộ gì nhạy cảm.
+ */
+app.get('/api/skill-stacks', (_req, res) => {
+  try {
+    const stacks = loadRegistry().map((s) => ({
+      id: s.id,
+      label: s.label,
+      ref: s.ref,
+      default: s.default === true,
+    }));
+    res.json({ stacks });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }

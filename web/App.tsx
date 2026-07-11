@@ -292,6 +292,10 @@ export function App() {
       return [];
     }
   });
+  // Stack skill external (id trong registry admin duyệt). '' = chỉ dùng skill nội bộ.
+  const [stack, setStack] = useState<string>(() => localStorage.getItem('bow-stack') || '');
+  // Danh sách stack có sẵn (nạp từ GET /api/skill-stacks lúc mount).
+  const [skillStacks, setSkillStacks] = useState<{ id: string; label: string; ref: string; default: boolean }[]>([]);
   const [accumulatedCost, setAccumulatedCost] = useState(0);
   // Snapshot hạn mức gói + context window (đến từ event 'usage' trong lượt chạy, hoặc
   // /api/usage khi mở trang). null = chưa có dữ liệu.
@@ -388,6 +392,14 @@ export function App() {
   useEffect(() => { localStorage.setItem('bow-effort', effort); }, [effort]);
   useEffect(() => { localStorage.setItem('bow-language', language); }, [language]);
   useEffect(() => { localStorage.setItem('bow-selectedMcps', JSON.stringify(selectedMcps)); }, [selectedMcps]);
+  useEffect(() => { localStorage.setItem('bow-stack', stack); }, [stack]);
+  // Nạp danh sách stack skill external (admin duyệt) một lần lúc mount — để dựng dropdown.
+  useEffect(() => {
+    apiFetch('/api/skill-stacks')
+      .then((r) => (r.ok ? r.json() : { stacks: [] }))
+      .then((d) => setSkillStacks(Array.isArray(d.stacks) ? d.stacks : []))
+      .catch(() => setSkillStacks([]));
+  }, []);
   useEffect(() => {
     if (conversationId) {
       localStorage.setItem('bow-conversation-id', conversationId);
@@ -1934,7 +1946,7 @@ export function App() {
       res = await apiFetch('/api/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...cfg, text: RESUME_PROMPT, conversationId: cid }),
+        body: JSON.stringify({ ...cfg, stack: stack || undefined, text: RESUME_PROMPT, conversationId: cid }),
       });
     } catch (err) {
       addItem('error', `Không tự chạy tiếp được: ${(err as Error).message}`);
@@ -2041,6 +2053,7 @@ export function App() {
           pdfs: sentPdfs.length ? sentPdfs : undefined,
           images: sentImages.length ? sentImages : undefined,
           mcpServers: selectedMcps,
+          stack: stack || undefined,
           mode,
           profile,
           effort,
@@ -3575,6 +3588,23 @@ export function App() {
               ]}
             />
           </label>
+          {/* Stack skill external (RN+Supabase, …) — chỉ hiện khi registry admin duyệt có stack.
+              Chọn stack → backend tải bộ skill của stack (repo GitHub ghim tag) rồi trải vào
+              .claude/skills/ cho agent dùng. 'Không' = chỉ skill nội bộ. */}
+          {skillStacks.length > 0 && (
+            <label>
+              Stack:
+              <PixelSelect
+                value={stack}
+                onChange={setStack}
+                disabled={running}
+                options={[
+                  { value: '', label: 'Không (mặc định)' },
+                  ...skillStacks.map((s) => ({ value: s.id, label: s.label })),
+                ]}
+              />
+            </label>
+          )}
           {cfg?.claudeProfiles && cfg.claudeProfiles.length > 0 && (
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
               Tài khoản:

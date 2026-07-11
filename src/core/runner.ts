@@ -21,6 +21,7 @@ import {
 } from '../tools/mcp.js';
 import { loadPromptSkills } from '../skills/index.js';
 import { deployBundledSkills } from '../skills/agentSkills.js';
+import { deployExternalSkills } from '../skills/externalSkills.js';
 import { loadMonorepoContext } from '../skills/monorepo.js';
 import { buildMonorepoHooks, buildReadAutoApproveHook } from '../skills/hooks.js';
 import { buildSubagents } from './subagents.js';
@@ -158,6 +159,12 @@ export interface RunOptions {
    * này thắng. Rỗng = không có MCP riêng. (Nguồn: src/web/userMcp.ts theo user.id.)
    */
   userMcpServers?: Record<string, McpServerConfig>;
+  /**
+   * Stack skill EXTERNAL người dùng chọn (id trong skills/registry.json, vd
+   * `react-native-supabase`). Khi có, bow tải bộ skill của stack từ repo GitHub đã ghim tag
+   * rồi trải vào <cwd>/.claude/skills/ để agent dùng. Rỗng = chỉ skill nội bộ. Xem externalSkills.ts.
+   */
+  stack?: string;
   /** Nhận sự kiện tiến độ. CLI in ra terminal; web đẩy qua SSE. */
   onEvent: (event: AgentEvent) => void;
   /**
@@ -543,6 +550,26 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
       name: 'skills',
       describe: `📦 skill sẵn dùng: ${bundledSkills.join(', ')}`,
     });
+  }
+
+  // Skill EXTERNAL theo stack người dùng chọn (RN+Supabase, …): tải từ repo GitHub đã ghim tag
+  // (chỉ repo trong registry — allowlist admin duyệt) rồi trải vào .claude/skills/ như skill nội
+  // bộ. Fail-open: lỗi tải chỉ log, không kéo sập agent. Xem externalSkills.ts.
+  if (opts.stack) {
+    const ext = deployExternalSkills(opts.stack, opts.cwd);
+    if (ext?.error) {
+      opts.onEvent({
+        type: 'tool',
+        name: 'skills',
+        describe: `⚠️ skill stack "${ext.stack.label || opts.stack}": ${ext.error}`,
+      });
+    } else if (ext && ext.skills.length > 0) {
+      opts.onEvent({
+        type: 'tool',
+        name: 'skills',
+        describe: `📦 skill stack ${ext.stack.label} (${ext.stack.ref}): ${ext.skills.join(', ')}`,
+      });
+    }
   }
 
   const options: Options = {
