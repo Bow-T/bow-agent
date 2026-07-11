@@ -1,36 +1,23 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 
 /**
- * Skill CHUNG của bow-agent (áp cho mọi repo). Gồm 2 loại:
- * - prompt-only: các file skills/prompt/*.md — gộp vào system prompt (module này).
- * - kèm code: server bow-skills — xem ./code.ts.
- *
- * Khác skill của repo đích (.claude/skills/*, do SDK tự nạp khi settingSources
- * có 'project'): những skill này không phụ thuộc repo nào, luôn có mặt.
+ * Skill prompt-only: các file *.md gộp thẳng vào system prompt (không trải vào .claude/skills/).
+ * Nguồn là thư mục `prompt/` của repo skill CORE đã clone (bow-skill-core) — bow-agent là khung
+ * rỗng, không còn skills/ nội bộ. externalSkills.deployCoreSkills gọi hàm này với promptDir từ
+ * bản clone. Skill kèm code (watch…) đi đường khác: trải vào .claude/skills/ — xem agentSkills.ts.
  */
-
-/** Đường dẫn thư mục skills/ ở root repo bow-agent (dù chạy từ src/ hay dist/). */
-function skillsRoot(): string {
-  // File này ở <root>/src/skills/index.ts (tsx) hoặc <root>/dist/skills/index.js.
-  // Cả hai đều lùi 2 cấp về <root> rồi vào skills/.
-  const here = dirname(fileURLToPath(import.meta.url));
-  return resolve(here, '../../skills');
-}
 
 /**
- * Đọc mọi skill prompt-only (skills/prompt/*.md) và ghép thành một khối text để
- * append vào system prompt. Trả '' nếu không có skill nào (không throw — thiếu
- * skill không phải lỗi).
+ * Đọc mọi file `*.md` trong `promptDir` và ghép thành một khối text để append vào system prompt.
+ * Trả '' nếu thiếu thư mục / không có file / lỗi đọc (không throw — thiếu skill không phải lỗi).
  */
-export function loadPromptSkills(): string {
-  const dir = join(skillsRoot(), 'prompt');
-  if (!existsSync(dir)) return '';
+export function loadPromptSkills(promptDir: string): string {
+  if (!promptDir || !existsSync(promptDir)) return '';
 
   let files: string[];
   try {
-    files = readdirSync(dir).filter((f) => f.endsWith('.md')).sort();
+    files = readdirSync(promptDir).filter((f) => f.endsWith('.md')).sort();
   } catch {
     return '';
   }
@@ -39,7 +26,7 @@ export function loadPromptSkills(): string {
   const blocks: string[] = [];
   for (const f of files) {
     try {
-      const text = readFileSync(join(dir, f), 'utf8').trim();
+      const text = readFileSync(join(promptDir, f), 'utf8').trim();
       if (text) blocks.push(text);
     } catch {
       // Bỏ qua file lỗi đọc — một skill hỏng không được kéo sập cả agent.

@@ -34,7 +34,7 @@ Tài liệu này mô tả kiến trúc của bow-agent sau khi **gỡ over-engin
       │            core/runner.ts (SDK query)            │
       │  systemPrompt = preset Claude Code (append):     │
       │    • BOW_AGENT_APPEND (quy trình plan-approve)   │
-      │    • skill prompt-only chung (skills/prompt/*)   │
+      │    • skill prompt-only (repo core clone)         │
       │    • ngữ cảnh monorepo (nếu cwd ∈ monorepo)      │
       │    • project profile (nếu --profile)             │
       │  + CLAUDE.md repo đích (settingSources:'project')│
@@ -58,24 +58,31 @@ thức **tĩnh, khai báo sẵn** vào system prompt — đơn giản, đọc đ
 |---|---|---|---|
 | **Base profile** (chuẩn team) | viết tay, committed → `--profile` nạp vào prompt | mọi dự án cùng khuôn | `src/profiles/base/*.md` |
 | **Profile tự sinh** | agent quét repo lạ (chỉ đọc) → ghi ra file | riêng từng repo lạ | `generated-profiles/` (gitignore) |
-| **Ngữ cảnh monorepo** | CLAUDE.md + danh mục skill đóng gói, tự kích hoạt | chỉ khi cwd ∈ monorepo | `skills/monorepo/` |
+| **Ngữ cảnh monorepo** | CLAUDE.md + danh mục skill, tự kích hoạt | chỉ khi cwd ∈ monorepo | repo `Bow-T/bow-skill-flutter` (thư mục `monorepo/`, clone về cache) |
 
 Prompt luôn dặn: *nếu thực tế repo mâu thuẫn với profile → tin repo*. Tri thức là gợi ý
 mạnh, không phải luật cứng.
 
 ## 4. Skill — năng lực tái sử dụng
 
-Ba nguồn skill, agent tự chọn theo mô tả (không cần người dùng bật qua UI):
+bow-agent là **khung rỗng**: không còn thư mục `skills/` (data) trong repo. Skill tải từ
+repo GitHub, cache ở `~/.bow/skills-cache/<id>@<ref>`. Agent tự chọn theo mô tả (không cần
+người dùng bật qua UI):
 
 | Nguồn | Cơ chế | Phạm vi |
 |---|---|---|
 | **Repo đích** `.claude/skills/*/SKILL.md` | SDK auto-discover nhờ `settingSources:['project']` + `skills:'all'` | riêng từng dự án |
-| **bow-agent** `skills/prompt/*.md` (prompt-only) | `loadPromptSkills()` đọc → append vào system prompt | mọi repo |
-| **monorepo bundle** `skills/monorepo/skills/*` | danh mục (name+desc+path) trong prompt; agent tự `Read` full khi task khớp | chỉ monorepo |
+| **CORE** `Bow-T/bow-skill-core` (luôn tải) | `deployCoreSkills(cwd)`: skill kèm code (watch, qc-triage) trải vào `.claude/skills/` (STAMP `.bow-core`); prompt-only (coding-convention) gộp vào system prompt qua `loadPromptSkills()` | mọi repo |
+| **STACK** `Bow-T/bow-skill-flutter`/`-react-native`/`-nextjs` (tải khi chọn stack) | `deployExternalSkills(stackId, cwd)` trải vào `.claude/skills/` (STAMP `.bow-external`); repo Flutter còn kèm `monorepo/` cho ngữ cảnh monorepo | theo stack đã chọn |
 
-> **Không còn skill kèm code.** Bản đầu có server `bow-skills` (`src/skills/code.ts`) chạy
-> logic thật qua `tool()`. Đã gỡ — với model mạnh, Bash + các tool sẵn của Claude Code đã
-> đủ; một server MCP nội bộ chỉ để "chạy test" là phức tạp thừa.
+**Registry** (allowlist stack + repo core) nằm **ngoài repo**, ở `~/.bow-agent/registry.json`
+— seed lần đầu từ hằng `DEFAULT_REGISTRY` trong `src/config/env.ts`, override qua env
+`BOW_REGISTRY`.
+
+> **Không còn skill kèm code chạy qua MCP.** Bản đầu có server `bow-skills` (`src/skills/code.ts`)
+> chạy logic thật qua `tool()`. Đã gỡ — với model mạnh, Bash + các tool sẵn của Claude Code đã
+> đủ; một server MCP nội bộ chỉ để "chạy test" là phức tạp thừa. (Skill kèm code hiện là skill
+> Claude Code chuẩn — SKILL.md + script — tải từ repo core, không phải MCP server.)
 
 ## 5. Multi-agent (opt-in) — `core/subagents.ts`
 
@@ -100,19 +107,22 @@ tên); chỉ có tác dụng khi `--subagents` bật.
 
 ## 6. Ngữ cảnh monorepo — gói sẵn, kích hoạt có điều kiện
 
-Toàn bộ `.claude` của monorepo được COPY vào bow-agent (`skills/monorepo/`) để agent KHÔNG
-cần `.claude` trong monorepo nữa. Chỉ áp khi cwd là monorepo.
+Toàn bộ `.claude` của monorepo đến từ repo skill stack `Bow-T/bow-skill-flutter` (thư mục
+`monorepo/`, khai qua `monorepoDir` trong manifest `bow-skill.json`) — clone về
+`~/.bow/skills-cache/` để agent KHÔNG cần `.claude` trong monorepo nữa. Chỉ áp khi cwd là
+monorepo, và chỉ khi stack Flutter đã được tải về.
 
 - **Nhận diện** (`src/skills/monorepo.ts` → `isMonorepo`): cwd có segment `monorepo`. Tách
   riêng một hàm để sau này đổi sang marker file chỉ cần sửa một chỗ.
 - **Mã dự án Jira** (`detectJiraProjectKey`): ưu tiên `.env` (`BOW_PROJECT_KEY`), rồi branch,
   commit gần nhất, cuối cùng đoán từ tên thư mục. Skill/CLAUDE.md dùng placeholder
   `<PROJECT_KEY>` được map sang mã thật khi nạp.
-- **CLAUDE.md + danh mục skill** (`loadMonorepoContext`): CLAUDE.md đưa nguyên vào prompt;
-  skill chỉ đưa name+description+đường-dẫn (agent tự `Read` full khi task khớp) — tránh nhồi
-  cả nghìn dòng vào mọi lượt. Danh mục quét động nên số lượng tự cập nhật theo bundle.
-- **Hooks** (`src/skills/hooks.ts` → `buildMonorepoHooks`): bọc 4 script shell đã copy thành
-  SDK hook callback, chỉ gắn khi cwd là monorepo:
+- **CLAUDE.md + danh mục skill** (`loadMonorepoContext(cwd, monorepoDir)`): nhận thư mục
+  nguồn từ bản clone stack; CLAUDE.md đưa nguyên vào prompt; skill chỉ đưa
+  name+description+đường-dẫn (agent tự `Read` full khi task khớp) — tránh nhồi cả nghìn dòng
+  vào mọi lượt. Danh mục quét động nên số lượng tự cập nhật theo repo stack.
+- **Hooks** (`src/skills/hooks.ts` → `buildMonorepoHooks(cwd, hooksDir)`): nhận thư mục hook
+  từ bản clone stack, bọc 4 script shell thành SDK hook callback, chỉ gắn khi cwd là monorepo:
   - `PreToolUse(Bash)`: guard-push (chặn push khi quest gate fail), guard-commit-branch
     (chặn commit trên branch protected) → `exit 2` map thành `{ decision: 'block' }`.
   - `SessionStart`: ensure-githooks (wire core.hooksPath, không chặn).
@@ -120,15 +130,15 @@ cần `.claude` trong monorepo nữa. Chỉ áp khi cwd là monorepo.
   - Script tìm `scripts/*.sh` của monorepo qua `CLAUDE_PROJECT_DIR` = monorepo root.
   - **Fail-open**: hook lỗi hạ tầng không kéo sập agent.
 
-Bản gói là COPY (không đụng `.claude` của monorepo). Khi monorepo đổi skill/hook, đồng bộ
-lại bằng `npm run sync-monorepo` (`scripts/sync-monorepo.ts`) — làm mới `skills/monorepo/`,
-deref symlink (vd stripe-*) thành nội dung thật để bundle tự túc, dọn `.DS_Store`. Nguồn
-override qua arg hoặc `BOW_AGENT_MONOREPO_CLAUDE`. `.claude` monorepo giữ nguyên để vẫn
-dùng được Claude Code trực tiếp.
+Nguồn nằm trong repo `Bow-T/bow-skill-flutter` (thư mục `monorepo/`), không đụng `.claude`
+của monorepo. Khi monorepo đổi skill/hook, cập nhật trong repo stack đó rồi commit; bow-agent
+tự clone bản mới nhất về cache mỗi lần chạy khi chọn stack Flutter. `.claude` monorepo giữ
+nguyên để vẫn dùng được Claude Code trực tiếp. (Script `sync-monorepo` cũ đã gỡ — đích cũ
+`skills/monorepo/` không còn.)
 
-> **Lưu ý sync:** bundle hiện dùng prefix skill `bow-*`. Nếu
-> `.claude/skills` của monorepo còn `octopus-*`, chạy `sync-monorepo` sẽ kéo tên cũ về —
-> đồng bộ prefix ở monorepo gốc trước khi sync, hoặc điều chỉnh script sync.
+> **Lưu ý prefix skill:** monorepo context dùng prefix skill `bow-*`. Nếu `.claude/skills`
+> của monorepo còn `octopus-*`, đồng bộ prefix ở nguồn (repo `bow-skill-flutter`, thư mục
+> `monorepo/`) trước khi commit để bow-agent kéo về đúng tên.
 
 ## 7. MCP — dùng lại kết nối của Claude Code
 
@@ -185,14 +195,15 @@ dòng liệt kê "ticket có N ảnh: … (đã đính kèm ở trên)".
 video trực tiếp (không có content block video như ảnh). Phải quy về (frames JPEG +
 transcript) rồi Claude `Read` từng frame.
 
-**Giải pháp**: bundle skill `/watch` (từ `bradautomates/claude-video`, MIT) + tải video
-Jira về đĩa cho skill xử lý.
+**Giải pháp**: skill `/watch` (gốc `bradautomates/claude-video`, MIT) nay là skill **CORE**
+trong repo `Bow-T/bow-skill-core` (luôn tải mỗi lần chạy) + tải video Jira về đĩa cho skill xử lý.
 
-**Bundle & trải skill** — `skills/agent-skills/watch/` (bundle) → `src/skills/agentSkills.ts`:
-- Trước mỗi lần chạy, `deployBundledSkills(cwd)` copy skill vào `<cwd>/.claude/skills/watch/`
-  để SDK auto-discover (đã bật `settingSources: ['project']` + `skills: 'all'`). Nhờ đó agent
-  LUÔN thấy `/watch` ở mọi repo, không cần cài thủ công.
-- Idempotent (dấu chữ ký `.bow-bundled`, chỉ copy lại khi bundle đổi). AN TOÀN: nếu repo đích
+**Trải skill** — repo core clone → `src/skills/externalSkills.ts` → `deployCoreSkills(cwd)`:
+- Trước mỗi lần chạy, core được clone về `~/.bow/skills-cache/<id>@<ref>` rồi skill kèm code
+  (watch, qc-triage) copy vào `<cwd>/.claude/skills/watch/` để SDK auto-discover (đã bật
+  `settingSources: ['project']` + `skills: 'all'`). Nhờ đó agent LUÔN thấy `/watch` ở mọi repo,
+  không cần cài thủ công.
+- Idempotent (dấu chữ ký `.bow-core`, chỉ copy lại khi bản clone đổi). AN TOÀN: nếu repo đích
   đã có `.claude/skills/watch/` KHÔNG do ta trải (không có stamp) → coi là của người dùng,
   không ghi đè. Không đụng skill khác của người dùng.
 - Yêu cầu runtime: `ffmpeg` + `yt-dlp` (skill tự cài qua brew/apt lần đầu; Whisper key tùy chọn).

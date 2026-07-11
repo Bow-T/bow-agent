@@ -109,6 +109,42 @@ function seedMcpConfigIfMissing(mcpPath: string): void {
   }
 }
 
+/**
+ * Đường dẫn REGISTRY skill của bow-agent — allowlist các stack skill được duyệt + repo core.
+ * TÁCH KHỎI repo bow-agent (khung để rỗng, không chứa skills/). File cố định
+ * ~/.bow-agent/registry.json, seed lần đầu từ DEFAULT_REGISTRY dưới đây. Override qua BOW_REGISTRY.
+ */
+function getRegistryPath(): string {
+  return optional('BOW_REGISTRY') ?? join(homedir(), '.bow-agent', 'registry.json');
+}
+
+/**
+ * Registry MẶC ĐỊNH — nhúng trong code (KHÔNG đọc từ skills/ vì thư mục đó đã gỡ khỏi khung).
+ * `core` = repo skill LUÔN tải (watch/qc-triage/coding-convention). `stacks` = allowlist stack
+ * người dùng chọn. Admin sửa ~/.bow-agent/registry.json để ghim ref hoặc thêm stack, không cần
+ * sửa code. Đây chỉ là bản seed lần đầu.
+ */
+const DEFAULT_REGISTRY = {
+  version: 2,
+  core: { id: 'core', repo: 'github.com/Bow-T/bow-skill-core', ref: 'v1.0.0' },
+  stacks: [
+    { id: 'flutter-supabase', label: 'Flutter + Supabase', repo: 'github.com/Bow-T/bow-skill-flutter', ref: 'v1.1.0', default: true },
+    { id: 'react-native-supabase', label: 'React Native + Supabase', repo: 'github.com/Bow-T/bow-skill-react-native', ref: 'v1.0.0' },
+    { id: 'nextjs-supabase', label: 'Next.js + Supabase', repo: 'github.com/Bow-T/bow-skill-nextjs', ref: 'v1.0.0' },
+  ],
+};
+
+/** Seed registry LẦN ĐẦU từ DEFAULT_REGISTRY nếu file chưa có. Fail-open. */
+function seedRegistryIfMissing(regPath: string): void {
+  if (existsSync(regPath)) return;
+  try {
+    mkdirSync(dirname(regPath), { recursive: true });
+    writeFileSync(regPath, JSON.stringify(DEFAULT_REGISTRY, null, 2), 'utf8');
+  } catch {
+    // Seed thất bại → externalSkills sẽ dùng hằng fallback CORE_REPO/CORE_REF cho core.
+  }
+}
+
 export const config = {
   /** Agent có auth để chạy không? = đã login Claude CLI hoặc có Token config sẵn. */
   get hasAuth(): boolean {
@@ -132,6 +168,16 @@ export const config = {
   get mcpConfigPath(): string {
     const p = getMcpConfigPath();
     seedMcpConfigIfMissing(p);
+    return p;
+  },
+
+  /**
+   * Đường dẫn REGISTRY skill (allowlist stack + repo core), tách khỏi repo bow-agent.
+   * Seed lần đầu từ DEFAULT_REGISTRY. Đọc getter này = đảm bảo file đã tồn tại.
+   */
+  get registryPath(): string {
+    const p = getRegistryPath();
+    seedRegistryIfMissing(p);
     return p;
   },
 

@@ -1,28 +1,15 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, statSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join, resolve } from 'node:path';
 
 /**
- * Agent Skills bundle sẵn trong bow-agent (skills/agent-skills/<name>/SKILL.md + scripts)
- * được TRẢI vào `.claude/skills/<name>/` của repo đích trước khi agent chạy — nhờ đó agent
- * (SDK nạp qua settingSources:['project'] + skills:'all') LUÔN thấy, không cần cài thủ công.
+ * Lõi TRẢI skill vào `.claude/skills/<name>/` của repo đích — SDK auto-discover skill ở đó (nhờ
+ * settingSources:['project'] + skills:'all'). Mỗi folder skill (có SKILL.md) được copy sang,
+ * đánh STAMP để biết nguồn (core `.bow-core` / stack `.bow-external`) và chỉ ghi đè bản của mình.
  *
- * Vì sao trải chứ không nạp thẳng: SDK chỉ auto-discover skill trong `.claude/skills/` của
- * cwd. Bundle nằm trong repo bow-agent (cwd khác) nên phải copy sang. Xem DESIGN §7.2.
- *
- * Ví dụ: skill `watch` (xem video: yt-dlp tải, ffmpeg tách frame, Claude Read từng frame).
+ * bow-agent là KHUNG RỖNG — không còn skills/ nội bộ; skill nguồn đến từ repo GitHub đã clone
+ * (bow-skill-core / bow-skill-<stack>). Hàm ở đây chỉ lo phần COPY từ srcRoot sang, không biết
+ * nguồn ở đâu — externalSkills.ts truyền srcRoot + stamp vào. Xem DESIGN §7.2.
  */
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
-/** Thư mục chứa các Agent Skill bundle của bow-agent. */
-function bundleRoot(): string {
-  // File này ở <root>/src/skills/agentSkills.ts (tsx) hoặc <root>/dist/skills/… (build).
-  return resolve(__dirname, '../../skills/agent-skills');
-}
-
-/** Marker version để biết bản đã trải có khớp bundle không (tránh copy lại mỗi lần chạy). */
-const STAMP = '.bow-bundled';
 
 /** Đọc "chữ ký" một thư mục skill: danh sách file + tổng size — đủ để phát hiện đổi bản. */
 export function skillSignature(dir: string): string {
@@ -105,12 +92,4 @@ export function deploySkillsFrom(srcRoot: string, cwd: string, stamp: string): s
     }
   }
   return deployed;
-}
-
-/**
- * Trải mọi Agent Skill bundle NỘI BỘ (skills/agent-skills/*) vào `<cwd>/.claude/skills/`.
- * Xem `deploySkillsFrom`. Dùng STAMP `.bow-bundled`.
- */
-export function deployBundledSkills(cwd: string): string[] {
-  return deploySkillsFrom(bundleRoot(), cwd, STAMP);
 }

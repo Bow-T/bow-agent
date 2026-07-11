@@ -14,5 +14,6 @@ conversations/
 # Cấu hình Claude riêng theo máy (không đồng bộ) — memory ở .claude/memory/ thì vẫn commit
 .claude/settings.local.json
 
-# Agent Skills bow-agent tự TRẢI ra lúc runtime (nguồn ở skills/agent-skills/) — không track
+# Agent Skills bow-agent tự TRẢI lúc runtime (nguồn: repo GitHub bow-skill-core/<stack> clone
+# về ~/.bow/skills-cache/, rồi trải sang đây) — không track
 .claude/skills/

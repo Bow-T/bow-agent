@@ -1,13 +1,14 @@
 import { spawnSync } from 'node:child_process';
-import { dirname, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import type { HookCallbackMatcher, HookEvent } from '@anthropic-ai/claude-agent-sdk';
 import { isMonorepo, detectJiraProjectKey } from './monorepo.js';
 
 /**
- * Hook của monorepo (gói từ .claude/hooks). Bọc 4 script shell đã kiểm chứng
- * thành SDK hook callback — chỉ gắn khi cwd là monorepo.
+ * Hook của monorepo (4 script shell). Bọc thành SDK hook callback — chỉ gắn khi cwd là monorepo.
+ * Nguồn hook (`hooks/*.sh`) đến từ thư mục `monorepo/hooks` của repo skill stack đã clone (vd
+ * bow-skill-flutter) — bow-agent là khung rỗng, không còn skills/monorepo/hooks nội bộ. runner
+ * truyền `hooksDir` từ bản clone vào.
  *
  * Hợp đồng script (giữ nguyên như Claude Code chạy):
  * - Nhận payload JSON qua STDIN (có tool_input.command...).
@@ -15,12 +16,6 @@ import { isMonorepo, detectJiraProjectKey } from './monorepo.js';
  * - exit 0 = cho qua. stderr được đưa vào transcript.
  * Script tìm scripts/*.sh của repo qua $CLAUDE_PROJECT_DIR → ta set = monorepo root.
  */
-
-/** Thư mục hook đã gói trong bow-agent. */
-function hooksDir(): string {
-  const here = dirname(fileURLToPath(import.meta.url));
-  return resolve(here, '../../skills/monorepo/hooks');
-}
 
 /** Root monorepo suy ra từ cwd (segment tới hết ".../monorepo"). */
 function monorepoRoot(cwd: string): string {
@@ -104,10 +99,11 @@ export function buildReadAutoApproveHook(readTools: string[]): HookCallbackMatch
  */
 export function buildMonorepoHooks(
   cwd: string,
+  hooksDir: string,
 ): Partial<Record<HookEvent, HookCallbackMatcher[]>> | undefined {
   if (!isMonorepo(cwd)) return undefined;
-  const dir = hooksDir();
-  if (!existsSync(dir)) return undefined;
+  const dir = hooksDir;
+  if (!dir || !existsSync(dir)) return undefined;
   const root = monorepoRoot(cwd);
   const projectKey = detectJiraProjectKey(cwd);
 
