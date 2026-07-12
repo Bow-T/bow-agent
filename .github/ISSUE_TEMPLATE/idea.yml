@@ -1,0 +1,45 @@
+name: 💡 Idea / Use case
+description: Share an idea, a use case, or a problem you're facing — no code needed
+title: "[Idea] "
+labels: ["idea", "discussion"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for sharing. Half-formed ideas are welcome — you don't need a solution, just a problem worth solving.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's the problem or use case?
+      description: What are you trying to do? What gets in the way today?
+      placeholder: |
+        Example: "I want to let our designer use the agent to tweak UI copy, but every existing
+        mode either gives them nothing or lets them touch real source files."
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: Your idea (if you have one)
+      description: Totally fine to leave this blank — the problem alone is useful.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which area?
+      multiple: true
+      options:
+        - New role mode (designer, PM, security…)
+        - Stack profile (Rails, Django, Next.js, Go…)
+        - Approval gate / safety
+        - Web UI
+        - CLI
+        - Integrations (Jira, Supabase, GitHub…)
+        - Docs
+        - Something else
+    validations:
+      required: false
