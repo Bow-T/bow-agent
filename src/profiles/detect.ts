@@ -1,5 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { GENERATED_DIR } from './index.js';
+import { profileNameFromCwd } from './generate.js';
 
 /**
  * Tự nhận diện "đang làm ở source nào" từ thư mục repo (cwd).
@@ -15,6 +17,8 @@ export interface DetectedSource {
   empty: boolean;
   /** Mô tả ngắn cho UI/CLI. */
   summary: string;
+  /** Số ký tự kiến thức profile sẽ nhồi vào agent (chỉ có khi khớp profile đã sinh). */
+  profileChars?: number;
 }
 
 /** File tồn tại trong dir? */
@@ -52,11 +56,33 @@ function isEmpty(dir: string): boolean {
  * Nhận diện source từ cwd. Trả profile + stack + gợi ý.
  *
  * Quy tắc (mở rộng dễ khi thêm dự án):
+ * - Đã sinh profile riêng cho repo này (generated-profiles/<repo>.md) → ưu tiên dùng luôn.
  * - Flutter (pubspec) + Supabase (supabase/) → nhận diện flutter-supabase tổng quát (dùng 'none' + gợi ý sinh profile).
  * - Repo trống → gợi ý khởi tạo dự án mới.
  * - Còn lại → 'none' (agent tổng quát, dựa CLAUDE.md của repo).
  */
 export function detectSource(cwd: string): DetectedSource {
+  // Ưu tiên cao nhất: người dùng đã chủ động "Sinh profile cho repo này" →
+  // file generated-profiles/<repo>.md. Nếu có, AUTO nạp luôn nó (getProfile đọc
+  // được GENERATED_DIR). Đây là mắt xích nối "Sinh profile" ↔ selector AUTO.
+  const genName = profileNameFromCwd(cwd);
+  const genFile = join(GENERATED_DIR, `${genName}.md`);
+  if (existsSync(genFile)) {
+    let profileChars = 0;
+    try {
+      profileChars = readFileSync(genFile, 'utf8').length;
+    } catch {
+      /* đọc lỗi → bỏ qua kích thước, vẫn dùng profile */
+    }
+    return {
+      profile: genName,
+      stack: 'generated',
+      empty: false,
+      summary: `Dùng profile đã sinh cho repo này: ${genName}.`,
+      profileChars,
+    };
+  }
+
   if (isEmpty(cwd)) {
     return {
       profile: 'none',
