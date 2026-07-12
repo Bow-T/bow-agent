@@ -56,9 +56,9 @@ bow-agent is *built on* the Claude Agent SDK — the same engine as Claude Code.
 
 If you're a solo dev in a terminal, use Claude Code. If you want to hand an AI agent to people you don't want writing to `main`, that's this.
 
-## Five modes, one agent
+## Six modes, one agent
 
-Same core, same safety gate, five permission profiles. Each runs on its own port, so you can run them **all at once**:
+Same core, same safety gate, six permission profiles. Each runs on its own port, so you can run them **all at once**:
 
 | Mode | Command | For | Can do | Cannot do |
 | --- | --- | --- | --- | --- |
@@ -67,6 +67,7 @@ Same core, same safety gate, five permission profiles. Each runs on its own port
 | **Collab** | `npm run ui:collab` | Contractors | Write code, run tests | **Anything that writes — including git — without your approval** |
 | **BA** | `npm run ui:ba` | Business analysts | Write docs (`docs/`, `*.md`), full Jira | Source code, DB, deploy (hard-denied) |
 | **Reviewer** | `npm run ui:review:share` | Tech leads | Review PRs, comment & approve on GitHub, run tests | Edit code, merge, push |
+| **DevOps** | `npm run ui:devops:share` | Platform / infra engineers | Write infra files (Dockerfile, compose, `.github/workflows/*`, `*.tf`, k8s/Helm) & ops docs | Touch app source; deploy/apply is routed to admin for approval |
 
 Admin is determined by **the real socket IP being localhost** — a LAN client cannot spoof `X-Forwarded-For` to seize control. LAN users request access by name and wait for you to approve them.
 

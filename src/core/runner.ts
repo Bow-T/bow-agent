@@ -195,6 +195,18 @@ export interface RunOptions {
    */
   baMode?: boolean;
   /**
+   * DevOps Mode (Triển khai & Hạ tầng qua LAN). Chạy 'auto' nhưng phân quyền theo ĐÍCH ghi:
+   *  - ĐỌC repo (Read/Grep/Glob), WebSearch/WebFetch → cho phép.
+   *  - GHI FILE: chỉ file HẠ TẦNG (Dockerfile, docker-compose*, .github/workflows/*, *.tf/*.tfvars/
+   *    *.hcl, k8s/Helm manifests, .gitlab-ci.yml/Jenkinsfile…) + tài liệu vận hành (*.md) → cho phép;
+   *    source code ứng dụng (.ts/.tsx/.dart/.py…) → DENY CỨNG (không đổi logic app).
+   *  - LỆNH DEPLOY/APPLY (terraform apply, docker push, kubectl apply, gh workflow run…) và các
+   *    lệnh RỦI RO khác: KHÔNG deny cứng mà ĐỊNH TUYẾN duyệt lên admin (requireApprovalForWrites).
+   *  - MCP write ngoài đọc (execute_sql, apply_migration…): theo cổng duyệt chung (không mở riêng).
+   * Khác BA (deploy DENY cứng) và Collab (ghi code tự do): DevOps mở hạ tầng, khoá source.
+   */
+  devopsMode?: boolean;
+  /**
    * SIẾT DUYỆT GHI (M1–M5). Khi TRUE, MỌI thao tác ghi/side-effect đều phải qua onApproval
    * kể cả ở mode 'auto': ghi/sửa file (cả trong repo), lệnh Bash không-safe, MCP write.
    * Chỉ lệnh SAFE_COMMANDS đơn thuần (đọc/kiểm chứng) mới auto-allow. Dùng cho client
@@ -307,6 +319,11 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   // BA Mode: bật khi caller (web) truyền opts.baMode. Đọc từ opts (KHÔNG từ env) để phân
   // quyền theo target trong canUseTool. Xem opts.baMode ở RunOptions.
   const isBaMode = opts.baMode === true;
+  // DevOps Mode: bật khi caller (web) truyền opts.devopsMode. Như BA — phân quyền theo ĐÍCH
+  // ghi (hạ tầng ✅ / source ❌) — NHƯNG khác BA ở lệnh deploy/apply: BA DENY cứng, DevOps
+  // ĐỊNH TUYẾN duyệt lên admin (requireApprovalForWrites) vì deploy là việc HỢP LỆ của vai này.
+  // Xem opts.devopsMode ở RunOptions + khối `if (isDevOpsMode)` trong canUseTool.
+  const isDevOpsMode = opts.devopsMode === true;
 
   // Các tool ĐỌC được auto-duyệt. KHÔNG đưa chúng (và AskUserQuestion) vào
   // allowedTools: entry "trần" trong allowedTools auto-approve TRƯỚC khi tới
@@ -314,10 +331,10 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   // che). Thay vào đó auto-duyệt qua PreToolUse hook (buildReadAutoApproveHook)
   // để mọi tool khác vẫn rơi vào canUseTool. Xem hooks.ts.
   //
-  // QC/Reviewer Mode: KHÔNG auto-duyệt Read/Grep — để chúng rơi vào canUseTool kiểm
-  // tra file nhạy cảm / chặn Grep. Glob vẫn auto-duyệt như trước.
+  // QC/Reviewer/DevOps Mode: KHÔNG auto-duyệt Read/Grep — để chúng rơi vào canUseTool kiểm
+  // tra file nhạy cảm (DevOps chặn đọc .env/key/credentials như QC/Reviewer). Glob vẫn auto-duyệt.
   const readAutoTools = [
-    ...(isQcMode || isReviewerMode ? [] : ['Read', 'Grep']),
+    ...(isQcMode || isReviewerMode || isDevOpsMode ? [] : ['Read', 'Grep']),
     'Glob',
     // Cho agent chính spawn subagent không kẹt cổng duyệt — subagent đều read-only /
     // chỉ chạy lệnh kiểm chứng nên an toàn. Chỉ mở khi bật multi-agent.
@@ -370,11 +387,12 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     opts.onEvent({ type: 'tool', name: 'skills', describe: `📦 skill sẵn dùng: ${core.skills.join(', ')}` });
   }
   // STACK: user chọn ở dropdown. Các mode vai trò TỰ nạp stack tương ứng nếu user chưa chọn:
-  // BA→'ba' (nghiệp vụ BA), QC→'qc' (qc-triage), Reviewer→'review' (pr-review) — để vào
-  // ui:ba/ui:qc/ui:review là có skill ngay, khỏi phải chọn tay. Cả ba đều không khai monorepoDir
-  // nên không ảnh hưởng ngữ cảnh monorepo/hooks bên dưới.
+  // BA→'ba' (nghiệp vụ BA), QC→'qc' (qc-triage), Reviewer→'review' (pr-review), DevOps→'devops'
+  // (quy ước hạ tầng) — để vào ui:ba/ui:qc/ui:review/ui:devops là có skill ngay, khỏi phải chọn
+  // tay. Cả bốn đều không khai monorepoDir nên không ảnh hưởng ngữ cảnh monorepo/hooks bên dưới.
   const effectiveStack =
-    opts.stack || (isBaMode ? 'ba' : isQcMode ? 'qc' : isReviewerMode ? 'review' : '');
+    opts.stack ||
+    (isBaMode ? 'ba' : isQcMode ? 'qc' : isReviewerMode ? 'review' : isDevOpsMode ? 'devops' : '');
   const ext: ExternalDeployResult | null = effectiveStack ? deployExternalSkills(effectiveStack, opts.cwd) : null;
   if (ext?.error) {
     opts.onEvent({ type: 'tool', name: 'skills', describe: `⚠️ skill stack "${ext.stack.label || effectiveStack}": ${ext.error}` });
@@ -521,6 +539,30 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   /** Tool sửa/ghi file (trong repo). Ở 'edit-auto'/'auto' được auto-allow nếu đường dẫn nằm trong cwd. */
   const FILE_WRITE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
+  // Lệnh Bash SỬA FILE TẠI CHỖ (in-place) hoặc áp patch — có thể ghi vào BẤT KỲ path nào (kể cả
+  // source .ts/.dart) mà KHÔNG khớp RISKY_COMMANDS (không có rm/mv/cp/redirect-ghi). Dùng riêng cho
+  // DevOps Mode: DevOps deny-cứng source qua tool Edit/Write, nhưng CỐ Ý mở Bash cho deploy — nên
+  // các editor này là ĐƯỜNG LÁCH để ghi source qua Bash. Ta bắt chúng và LUÔN treo duyệt (kể cả
+  // admin) vì không thể chắc target là infra hay source chỉ từ chuỗi lệnh. Bao: sed -i / perl -i /
+  // ruby -i (sửa tại chỗ), patch, git apply/checkout-patch, ex/ed (editor script), install (ghi
+  // file), awk/gawk (thường kèm redirect nhưng bắt cả bản không redirect cho chắc), dd of= (đã
+  // trong RISKY nhưng để đây cho rõ). Neo đầu-token lệnh để tránh khớp hậu tố (vd 'used', 'exec').
+  const INPLACE_FILE_EDIT_COMMANDS = [
+    /(?:^|[\s;&|(])sed\s+[^\n]*-i/,            // sed -i / -i'' (GNU & BSD)
+    /(?:^|[\s;&|(])perl\s+[^\n]*-i/,           // perl -i -pe
+    /(?:^|[\s;&|(])ruby\s+[^\n]*-i/,           // ruby -i
+    /(?:^|[\s;&|(])patch(?=$|[\s/])/,          // patch (kể cả `patch f < diff` — redirect đọc không bị RISKY)
+    /(?:^|[\s;&|(])git\s+apply\b/,             // git apply <diff>
+    /(?:^|[\s;&|(])git\s+checkout\s+-p\b/,     // git checkout -p (áp hunk vào file)
+    /(?:^|[\s;&|(])(ex|ed)\s+-/,               // ex -sc / ed - (editor script sửa file)
+    /(?:^|[\s;&|(])install\s+[^\n]*\s[^\s]/,   // install <src> <dst> (ghi file đích)
+    /(?:^|[\s;&|(])(awk|gawk)\s+/,             // awk/gawk (đầu ra thường redirect vào file)
+  ];
+  /** True nếu lệnh Bash là editor sửa-file-tại-chỗ/áp-patch → DevOps LUÔN treo duyệt (kể cả admin),
+   *  vì nó có thể ghi source lách deny-cứng của tool Edit/Write. */
+  const isInPlaceFileEdit = (cmd: string): boolean =>
+    INPLACE_FILE_EDIT_COMMANDS.some((re) => re.test(cmd));
+
   /** True nếu đường dẫn trỏ tới file BÍ MẬT/nhạy cảm — chặn đọc/ghi trong QC Mode (M9).
    *  Danh sách được mở rộng để bịt các file từng lọt: .git-credentials, .ssh/*, .netrc,
    *  credentials.json (GCP), .docker/config.json (registry token), secrets.yaml… */
@@ -577,6 +619,41 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     const t = p.toLowerCase();
     if (/\.(md|mdx|markdown|txt|rst|adoc)$/.test(t)) return true;
     return /(^|[\/\\])(docs?|documentation)[\/\\]/.test(t);
+  };
+
+  /** True nếu đường dẫn là FILE HẠ TẦNG (đầu ra hợp lệ của DevOps Mode). Bao phủ 4 nhóm:
+   *   1) Container & Compose: Dockerfile / Dockerfile.* / *.dockerfile, docker-compose*.yml/.yaml,
+   *      .dockerignore.
+   *   2) CI/CD: .github/workflows/*, .gitlab-ci.yml, Jenkinsfile, azure-pipelines*.yml,
+   *      bitbucket-pipelines.yml, .circleci/*, codemagic.yaml.
+   *   3) IaC: *.tf / *.tfvars / *.hcl (Terraform); thư mục k8s|kubernetes|deploy|manifests|charts
+   *      + Helm (Chart.yaml, values*.yaml, thư mục templates/).
+   *   4) Docs vận hành: tái dùng isDocPath (*.md/docs/ — user chọn cho DevOps ghi thêm).
+   *  Mọi path khác — nhất là source ứng dụng (.ts/.tsx/.dart/.py/.go/.java…) — KHÔNG phải hạ
+   *  tầng → DevOps Mode chặn ghi (không đổi logic app). So sánh chữ thường; chấp cả '/' lẫn '\\'.
+   *  Lưu ý: *.yaml/*.yml chỉ tính là hạ tầng khi nằm trong thư mục hạ tầng hoặc trùng tên đặc
+   *  trưng (docker-compose/values/Chart) — không nhận MỌI yaml (config app cũng dùng yaml). */
+  const isInfraPath = (p: unknown): boolean => {
+    if (typeof p !== 'string' || !p) return false;
+    if (isDocPath(p)) return true; // docs vận hành (.md / docs/) — nhóm 4
+    const t = p.toLowerCase();
+    const base = t.split(/[\/\\]/).pop() ?? t;
+    // (1) Container & Compose
+    if (base === 'dockerfile' || base === '.dockerignore') return true;
+    if (/^dockerfile\./.test(base) || /\.dockerfile$/.test(base)) return true;
+    if (/^docker-compose[\w.-]*\.ya?ml$/.test(base) || /^compose[\w.-]*\.ya?ml$/.test(base)) return true;
+    // (2) CI/CD
+    if (/(^|[\/\\])\.github[\/\\]workflows[\/\\]/.test(t)) return true;
+    if (/(^|[\/\\])\.circleci[\/\\]/.test(t)) return true;
+    if (base === '.gitlab-ci.yml' || base === 'jenkinsfile' || base === 'bitbucket-pipelines.yml') return true;
+    if (/^azure-pipelines[\w.-]*\.ya?ml$/.test(base) || base === 'codemagic.yaml') return true;
+    // (3) IaC — Terraform / Helm / K8s manifests
+    if (/\.(tf|tfvars|hcl)$/.test(t)) return true;
+    if (base === 'chart.yaml' || /^values[\w.-]*\.ya?ml$/.test(base)) return true;
+    if (/(^|[\/\\])(k8s|kubernetes|manifests|charts|helm)[\/\\]/.test(t)) return true;
+    if (/(^|[\/\\])deploy(ment)?s?[\/\\].*\.ya?ml$/.test(t)) return true;
+    if (/(^|[\/\\])templates[\/\\].*\.(ya?ml|tpl)$/.test(t)) return true;
+    return false;
   };
 
   /** True nếu tool là MCP của Jira (jira read + write đều cho phép trong BA Mode). SDK đặt
@@ -664,7 +741,7 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     settingSources: ['project'],
     // Gắn canUseTool khi cần xử lý câu hỏi (mọi mode) hoặc có cổng duyệt (mọi mode thực thi).
     // AskUserQuestion xử lý riêng ở MỌI mode; tool ghi/bash qua cổng theo policy của từng mode.
-    ...(opts.onQuestion || (isExecuting && opts.onApproval) || isQcMode || isReviewerMode || isBaMode
+    ...(opts.onQuestion || (isExecuting && opts.onApproval) || isQcMode || isReviewerMode || isBaMode || isDevOpsMode
       ? {
           canUseTool: async (toolName, input, sdkOpts) => {
             // ── QC Mode: read-only + Skill + Jira (WHITELIST) ─────────────────────
@@ -824,6 +901,113 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
               }
               // Các tool còn lại (Read/Grep/Glob/WebSearch/WebFetch/Jira/AskUserQuestion/
               // TodoWrite/Agent…) đi tiếp — AskUserQuestion vẫn được xử lý ở khối dưới.
+            }
+
+            // ── DevOps Mode: ghi HẠ TẦNG; DENY source; deploy TREO DUYỆT ADMIN ─────
+            // Phân quyền theo ĐÍCH ghi như BA, NHƯNG khác BA ở lệnh deploy/apply: BA deny cứng,
+            // DevOps CHỈ chặn ghi source code — mọi thứ còn lại (Bash deploy/apply, MCP write như
+            // apply_migration) KHÔNG chặn ở đây mà để rơi xuống cổng duyệt chung cuối hàm, nơi
+            // requireApprovalForWrites (bật cho non-admin) định tuyến lên admin. Vậy deploy = việc
+            // hợp lệ của vai này, chỉ cần admin xác nhận, thay vì bị khoá hẳn.
+            if (isDevOpsMode) {
+              // ĐỌC file nhạy cảm: chặn (như QC/Reviewer). DevOps làm với hạ tầng nơi bí mật tập
+              // trung — CTV LAN không được lôi .env/key/credentials ra. Read/Grep KHÔNG auto qua hook
+              // (đã loại khỏi readAutoTools) nên rơi vào đây. Mọi file KHÁC vẫn đọc bình thường.
+              // Read/Grep KHÔNG auto qua hook (đã loại khỏi readAutoTools) nên rơi vào đây. Chặn nếu
+              // nhạy cảm; NGƯỢC LẠI allow THẲNG (không rơi xuống gate cuối hàm — tránh non-admin
+              // requireApprovalForWrites bắt admin duyệt TỪNG lần đọc, vốn là thao tác chỉ-đọc vô hại).
+              if (toolName === 'Read') {
+                const target = (input as Record<string, unknown>).file_path;
+                if (typeof target === 'string' && isSensitivePath(target)) {
+                  return {
+                    behavior: 'deny' as const,
+                    message: 'DevOps Mode: không được đọc file cấu hình nhạy cảm (bí mật/khóa). Chỉ đọc file hạ tầng/source thường.',
+                  };
+                }
+                return { behavior: 'allow' as const, updatedInput: input };
+              }
+              // Grep: chặn khi path nhắm rõ vào file/thư mục nhạy cảm (tránh lộ nội dung secret qua
+              // dòng khớp); ngược lại allow thẳng. Grep không path (quét cả cây) vẫn cho — muốn xem
+              // đầy đủ 1 file vẫn phải Read, mà Read secret đã bị chặn ở trên.
+              if (toolName === 'Grep') {
+                const gpath = (input as Record<string, unknown>).path;
+                if (typeof gpath === 'string' && isSensitivePath(gpath)) {
+                  return {
+                    behavior: 'deny' as const,
+                    message: 'DevOps Mode: không được grep vào file/thư mục cấu hình nhạy cảm.',
+                  };
+                }
+                return { behavior: 'allow' as const, updatedInput: input };
+              }
+              // Ghi/sửa file: chỉ cho file HẠ TẦNG (+docs vận hành); file nhạy cảm luôn chặn;
+              // source ứng dụng (.ts/.dart/.py…) DENY CỨNG (không đổi logic app).
+              if (FILE_WRITE_TOOLS.has(toolName)) {
+                const target =
+                  (input as Record<string, unknown>).file_path ??
+                  (input as Record<string, unknown>).path ??
+                  (input as Record<string, unknown>).notebook_path;
+                if (typeof target === 'string' && isSensitivePath(target)) {
+                  return {
+                    behavior: 'deny' as const,
+                    message: 'DevOps Mode: không được ghi file cấu hình nhạy cảm (bí mật/khóa).',
+                  };
+                }
+                if (isInfraPath(target)) {
+                  // File hạ tầng: cho đi tiếp xuống cổng duyệt chung. Admin localhost → auto;
+                  // non-admin (requireApprovalForWrites) → treo admin duyệt như mọi thao tác ghi.
+                  // (KHÔNG allow thẳng ở đây để không bỏ qua cổng duyệt của CTV DevOps.)
+                } else {
+                  return {
+                    behavior: 'deny' as const,
+                    message:
+                      'DevOps Mode chỉ ghi được file HẠ TẦNG (Dockerfile, docker-compose*, .github/workflows/*, *.tf/*.hcl, k8s/Helm manifests) và tài liệu vận hành (*.md). Không sửa source code ứng dụng.',
+                  };
+                }
+              }
+              // Bash: hầu hết để rơi xuống gate chung (SAFE auto-allow; deploy/apply risky → gate).
+              // NGOẠI LỆ — editor sửa-file-tại-chỗ/áp-patch (sed -i, perl -i, patch, git apply, ex,
+              // install, awk…): đây là ĐƯỜNG LÁCH ghi source qua Bash (deny-cứng chỉ chặn Edit/Write).
+              // Vì admin localhost ('auto', requireApprovalForWrites=false) sẽ auto-allow chúng ở
+              // gate chung, ta chặn SỚM tại đây bằng gate() để LUÔN treo duyệt (kể cả admin) — không
+              // thể chắc target là infra hay source chỉ từ chuỗi lệnh, nên buộc admin xác nhận.
+              if (toolName === 'Bash' && typeof input.command === 'string') {
+                const cmd = input.command.trim();
+                if (isInPlaceFileEdit(cmd) && isExecuting && opts.onApproval) {
+                  const approved = await opts.onApproval(toolName, input, {
+                    decisionReason:
+                      'DevOps Mode: lệnh sửa file tại chỗ/áp patch (sed -i, patch, git apply…) có thể ghi vào source — cần xác nhận không đụng code ứng dụng.',
+                  });
+                  return approved
+                    ? { behavior: 'allow' as const, updatedInput: input }
+                    : {
+                        behavior: 'deny' as const,
+                        message:
+                          'DevOps Mode từ chối lệnh sửa file tại chỗ. Chỉ chỉnh file HẠ TẦNG; muốn sửa source hãy dùng Collab/Dev Mode.',
+                      };
+                }
+              }
+              // MCP write (execute_sql/apply_migration…) — DEFENSE-IN-DEPTH như BA: KHÔNG để admin
+              // auto-allow DROP TABLE ở 'auto'. MCP read (mcpReadToolPatterns) đã auto qua hook nên
+              // không tới đây; tool mcp__* còn lại mà KHÔNG phải read tường minh → ép treo duyệt (kể
+              // cả admin). Non-admin vốn đã treo qua requireApprovalForWrites; đây bịt nốt admin.
+              if (
+                toolName.startsWith('mcp__') &&
+                !/(?:^|__)(?:list|get|search|describe|read|show|fetch)/i.test(toolName) &&
+                isExecuting &&
+                opts.onApproval
+              ) {
+                const approved = await opts.onApproval(toolName, input, {
+                  decisionReason: `DevOps Mode: thao tác MCP "${toolName}" có thể đổi DB/hạ tầng — cần xác nhận.`,
+                });
+                return approved
+                  ? { behavior: 'allow' as const, updatedInput: input }
+                  : {
+                      behavior: 'deny' as const,
+                      message: 'DevOps Mode từ chối thao tác MCP ghi. Hãy hỏi lại hoặc thao tác hạ tầng khác.',
+                    };
+              }
+              // Còn lại (Bash thường/deploy, tool đọc, AskUserQuestion) đi tiếp — deploy risky sẽ
+              // gặp gate chung; AskUserQuestion xử lý ở khối dưới.
             }
 
             // AskUserQuestion: render UI câu hỏi, gắn câu trả lời vào input trả cho agent.

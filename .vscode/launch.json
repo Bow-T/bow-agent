@@ -115,6 +115,29 @@
       }
     },
     {
+      // DevOps Mode — Triển khai & Hạ tầng qua LAN: ĐỌC repo, ghi FILE HẠ TẦNG (Dockerfile,
+      // compose, .github/workflows, *.tf, k8s/Helm) + docs; DENY sửa source ứng dụng; deploy/apply
+      // treo admin duyệt. Chạy `ui:devops:share` ở CẶP CỔNG RIÊNG (api :4005, web :5178) nên bật
+      // ĐỒNG THỜI với dev/QC/collab/BA/Reviewer. Mở localhost:5178.
+      "name": "🛠️ Chạy Web DevOps Mode (Triển khai & Hạ tầng)",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "ui:devops:share"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"],
+      "presentation": {
+        "group": "1_run",
+        "order": 6
+      },
+      "serverReadyAction": {
+        "pattern": "Local:\\s+(https?://localhost:5178)",
+        "uriFormat": "%s",
+        "action": "openExternally"
+      }
+    },
+    {
       // Debug backend Express (src/web/server.ts) qua tsx — ĐẶT BREAKPOINT được ở code .ts.
       // Chạy riêng phần api (:4000). Muốn xem UI thì chạy thêm "web: chạy" hoặc vite riêng.
       "name": "🐛 Debug Backend API (:4000)",
