@@ -17,6 +17,7 @@ import {
   Wifi,
   Moon,
   Sun1,
+  Ruler,
   CloseSquare,
   TickCircle,
   CloseCircle,
@@ -58,6 +59,9 @@ import {
   ShieldSearch,
   DocumentCode,
   Broom,
+  Gps,
+  Refresh2,
+  Box1,
   type Icon as IconType,
 } from 'iconsax-react';
 
@@ -77,6 +81,8 @@ const ICONS: Record<string, IconType> = {
   mcp: Wifi,
   moon: Moon,
   sun: Sun1,
+  blueprint: Ruler,
+  brutal: Box1,
   close: CloseSquare,
   // Pipeline / trạng thái
   pending: Timer1,
@@ -100,6 +106,9 @@ const ICONS: Record<string, IconType> = {
   warning: Warning2,
   info: InfoCircle,
   pin: RecordCircle,
+  // Star Chart — viewport kính thiên văn
+  target: Gps,
+  refresh: Refresh2,
   // Detect / attach
   search: SearchNormal1,
   folder: Folder,

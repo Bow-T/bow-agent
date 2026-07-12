@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 
 /**
  * Bản đồ vũ trụ tương tác 3D (3D Cosmic Journey) — vẽ bằng <canvas>, thuần code.
@@ -14,7 +14,8 @@ import { useEffect, useRef, useState } from 'react';
 export interface BrainStep {
   id: string;
   type: string; // start | tool | result | error | approval | thinking
-  label: string;
+  label: string; // mã thiên văn hiển thị to (VD: SOL, VEGA)
+  role?: string; // vai trò hiển thị nhỏ bên dưới (VD: điều phối, rà soát)
   detail?: string;
   active?: boolean;
   count?: number;
@@ -34,6 +35,33 @@ interface Particle {
   isSun?: boolean;
   /** Hạt cánh nền có thể nhuốm theo màu accent người dùng chọn (thay cho cyan/xanh cứng). */
   accentTint?: boolean;
+}
+
+/** Sao băng nền lướt qua khung nhìn theo chu kỳ — thuần trang trí, không tương tác. */
+interface Meteor {
+  active: boolean;
+  x: number; // toạ độ chuẩn hoá 0..1 theo bề rộng
+  y: number;
+  vx: number;
+  vy: number;
+  life: number; // 0..1, tiến từ 0→1 rồi tắt
+  speed: number;
+  len: number; // độ dài đuôi (chuẩn hoá)
+  nextIn: number; // đếm ngược tới lần xuất hiện kế tiếp
+  seed: number;
+}
+
+/** Thông tin camera/mục tiêu phát ra ngoài để App vẽ toạ độ RA/DEC "thật". */
+export interface CameraInfo {
+  ra: string; // "12ʰ34ᵐ"
+  dec: string; // "+05°"
+  zoom: number; // hệ số zoom hiện tại
+  targetLabel: string | null; // tên thiên thể đang khoá camera (nếu có)
+}
+
+/** Điều khiển mệnh lệnh từ App: đưa camera về góc mặc định. */
+export interface NeuralBrainHandle {
+  resetView: () => void;
 }
 
 function makeGalaxyParticles(n: number): Particle[] {
@@ -145,6 +173,47 @@ function makeGalaxyParticles(n: number): Particle[] {
   return particles;
 }
 
+/** Khởi tạo bể sao băng — mỗi cái tự lên lịch xuất hiện lệch pha nhau. */
+function makeMeteors(n: number): Meteor[] {
+  let seed = 424242;
+  const rnd = () => {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    return seed / 0x7fffffff;
+  };
+  const meteors: Meteor[] = [];
+  for (let i = 0; i < n; i++) {
+    meteors.push({
+      active: false,
+      x: 0, y: 0, vx: 0, vy: 0,
+      life: 0,
+      speed: 0.5 + rnd() * 0.5,
+      len: 0.12 + rnd() * 0.16,
+      nextIn: 1.5 + rnd() * 7, // lệch pha ban đầu để không đồng loạt
+      seed: rnd(),
+    });
+  }
+  return meteors;
+}
+
+/**
+ * Quy đổi góc camera (yaw/pitch) → chuỗi toạ độ thiên văn RA/DEC để hiển thị.
+ * Không phải toạ độ thiên văn thật — chỉ ánh xạ tuyến tính cho cảm giác "đài quan sát"
+ * sống động: xoay ngang đổi RA (giờ:phút), ngẩng/cúi đổi DEC (độ). Luôn trong dải hợp lệ.
+ */
+function cameraToCoords(yaw: number, pitch: number): { ra: string; dec: string } {
+  const TAU = Math.PI * 2;
+  // RA: 0..24h theo yaw (mod vòng tròn)
+  let raHours = ((yaw % TAU) / TAU) * 24;
+  raHours = ((raHours % 24) + 24) % 24;
+  const rh = Math.floor(raHours);
+  const rm = Math.floor((raHours - rh) * 60);
+  const ra = `${String(rh).padStart(2, '0')}ʰ${String(rm).padStart(2, '0')}ᵐ`;
+  // DEC: -60..+60 theo pitch (pitch dao động ~0.05..π/2)
+  const decDeg = Math.round(((pitch / (Math.PI / 2)) * 2 - 1) * 60);
+  const dec = `${decDeg >= 0 ? '+' : '−'}${String(Math.abs(decDeg)).padStart(2, '0')}°`;
+  return { ra, dec };
+}
+
 /**
  * Đọc màu accent thực (var(--brass)) từ CSS đã áp trên <html> và trả về "r, g, b".
  * --brass tự đổi theo theme (sáng/tối) + data-accent (blue/teal/…) nên galaxy chỉ cần
@@ -192,6 +261,24 @@ function stepPos(i: number, total: number): { r: number; theta: number } {
   // Phân bố đều các nút xung quanh vòng tròn
   const theta = (i / total) * 2 * Math.PI - Math.PI / 2;
   return { r: radius, theta };
+}
+
+/** Vẽ path chữ nhật bo góc (dùng cho pill nhãn). Tự kẹp bán kính không vượt nửa cạnh. */
+function roundRectPath(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number
+) {
+  const rr = Math.max(0, Math.min(r, w / 2, h / 2));
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
 }
 
 /** Vẽ thiên thể phối cảnh 3D đặc thù cho từng loại nút */
@@ -347,21 +434,24 @@ function drawSpaceObject(
   }
 }
 
-export function NeuralBrain({
-  active,
-  steps,
-  selectedId,
-  onSelect,
-  theme,
-  accent,
-}: {
+export const NeuralBrain = forwardRef<NeuralBrainHandle, {
   active: boolean;
   steps: BrainStep[];
   selectedId: string | null;
   onSelect: (step: BrainStep) => void;
   theme?: string;
   accent?: string;
-}) {
+  /** Phát ra ngoài toạ độ RA/DEC + zoom + mục tiêu mỗi khi camera đổi (throttle trong draw). */
+  onCamera?: (info: CameraInfo) => void;
+}>(function NeuralBrain({
+  active,
+  steps,
+  selectedId,
+  onSelect,
+  theme,
+  accent,
+  onCamera,
+}, ref) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const activeRef = useRef(active);
   const stepsRef = useRef(steps);
@@ -391,6 +481,20 @@ export function NeuralBrain({
   const isDraggingRef = useRef(false);
   const lastMouseRef = useRef({ x: 0, y: 0 });
 
+  // Yêu cầu đưa camera về góc mặc định — draw đọc & tự nội suy về 0 rồi hạ cờ.
+  const resetReqRef = useRef(false);
+  // Callback báo camera ra ngoài: giữ ref để không phải re-bind effect khi App đổi hàm.
+  const onCameraRef = useRef(onCamera);
+  onCameraRef.current = onCamera;
+  const lastCamKeyRef = useRef('');
+
+  // Cho phép App gọi resetView() để đưa góc nhìn về mặc định.
+  useImperativeHandle(ref, () => ({
+    resetView() {
+      resetReqRef.current = true;
+    },
+  }), []);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -398,8 +502,10 @@ export function NeuralBrain({
     if (!ctx) return;
 
     const particles = makeGalaxyParticles(480);
+    const meteors = makeMeteors(3); // tối đa 3 sao băng cùng lúc
     let raf = 0;
     let t = 0;
+    let lastT = t; // dùng để tính dt cho sao băng (độc lập tốc độ khung)
     let lastAccentKey = ''; // theme|accent lần đọc token gần nhất — đọc lại --brass khi đổi
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
 
@@ -488,13 +594,29 @@ export function NeuralBrain({
       const W = canvas.width;
       const H = canvas.height;
       t += 0.012; // slow, cosmic speed
+      const dt = t - lastT;
+      lastT = t;
       timeRef.current = t;
-      
+
+      // Yêu cầu reset góc nhìn: kéo mềm các offset camera về 0. Hạ cờ khi đã đủ gần.
+      if (resetReqRef.current) {
+        rotXRef.current *= 0.82;
+        rotYRef.current *= 0.82;
+        if (Math.abs(rotXRef.current) < 0.002 && Math.abs(rotYRef.current) < 0.002) {
+          rotXRef.current = 0;
+          rotYRef.current = 0;
+          resetReqRef.current = false;
+        }
+      }
+
       const on = activeRef.current;
       const st = stepsRef.current;
       const sel = selRef.current;
       const theme = themeRef.current;
-      const isLight = theme !== 'dark';
+      // Nền SÁNG gồm 'light' (giấy da) và 'brutal' (kem brutalism). 'dark'/'blueprint' là nền tối.
+      const isLight = theme === 'light' || theme === 'brutal';
+      const isBlueprint = theme === 'blueprint';
+      const isBrutal = theme === 'brutal';
       // Đọc lại token --brass chỉ khi theme/accent đổi (getComputedStyle đắt, không gọi mỗi frame).
       if (accentKeyRef.current !== lastAccentKey) {
         lastAccentKey = accentKeyRef.current;
@@ -506,11 +628,21 @@ export function NeuralBrain({
       
       // Deep space radial background — thích ứng theo theme
       const bg = ctx.createRadialGradient(W * 0.5, H * 0.5, 0, W * 0.5, H * 0.5, Math.max(W, H) * 0.7);
-      if (isLight) {
+      if (isBrutal) {
+        // Neo Brutalism: nền KEM phẳng, gần như đơn sắc (brutalism ít chiều sâu gradient).
+        bg.addColorStop(0, '#f2ecdd');   // Kem sáng ở tâm
+        bg.addColorStop(0.5, '#eae4d3'); // Kem
+        bg.addColorStop(1, '#e1dac6');   // Sạm rất nhẹ ở rìa
+      } else if (isLight) {
         // Light theme: nền GIẤY DA ấm, đồng bộ với vỏ observatory (bản đồ sao mực trên giấy).
         bg.addColorStop(0, '#efe8d7');   // Giấy sáng ở tâm
         bg.addColorStop(0.5, '#e4dcc7'); // Giấy da
         bg.addColorStop(1, '#d7ceb4');   // Sạm dần ở rìa
+      } else if (isBlueprint) {
+        // Blueprint theme: nền chàm-xanh sâu (giấy cyanotype), đồng bộ với vỏ bản vẽ.
+        bg.addColorStop(0, '#0b2246');   // Chàm sáng ở tâm
+        bg.addColorStop(0.5, '#071733');
+        bg.addColorStop(1, '#040e21');   // Chàm sạm ở rìa
       } else {
         // Dark theme: nền vũ trụ sâu thẳm
         bg.addColorStop(0, '#04091a');
@@ -615,21 +747,35 @@ export function NeuralBrain({
       // ── Lớp 2: Tính toán phép chiếu 3D cho các bước chòm sao (Constellation nodes) ──
       const total = st.length;
       const pts = st.map((s, i) => {
-        // Ghim thẳng các nút đại diện cho Agent vào các ngôi sao cụ thể của Dải Ngân Hà
-        // i = 0 (Main Agent) → Hệ Mặt Trời (particle[0], isSun: true)
-        // Các agent phụ → ghim vào sao ở các cánh xoắn ốc khác nhau (r lớn, dễ nhìn)
-        // Particles 0..119 = thanh ngang trung tâm (quá gần nhau), 120..479 = 4 cánh xoắn ốc
-        // Chọn sao trên các arm khác nhau: arm0 starts at 120, arm1 at 121, arm2 at 122, arm3 at 123
-        // Mỗi arm có ~90 sao. Chọn sao ở giữa arm (~index 45) để có r vừa phải
-        const armStarIndices = [0, 165, 256, 347, 210, 300, 390, 180, 270, 360]; // pre-computed good positions
-        const pIdx = i < armStarIndices.length ? armStarIndices[i] : (120 + ((i * 37) % 360));
-        const p = particles[pIdx];
+        // Bố cục các nút Agent để NHÃN KHÔNG ĐÈ NHAU:
+        // - Main (i=0) → ghim vào Hệ Mặt Trời (particle[0], isSun) — nhân điều phối.
+        // - 4 core còn lại → đặt trên một vòng bán kính lớn, cách đều 90° quanh nhân, quay
+        //   đồng bộ galaxy. Cách đều → 4 pill nhãn giãn ra 4 hướng, sạch & chuyên nghiệp.
+        // - Subagent phụ (nếu nhiều hơn) → ghim vào sao thật trên các cánh xoắn ốc.
+        let pr: number, pTheta0: number, pz: number, pSpin: number;
+        // Số nút nằm trên vòng ngoài (mọi nút trừ Main ở tâm) → chia đều góc quanh nhân.
+        const ringCount = Math.max(1, total - 1);
+        if (i === 0) {
+          const p = particles[0]; // Hệ Mặt Trời — Main ở nhân điều phối
+          pr = p.r; pTheta0 = p.theta; pz = p.z; pSpin = p.spinSpeed;
+        } else if (ringCount <= 8) {
+          // Vòng neo cách đều quanh nhân: bán kính lớn (0.72) để tách khỏi cụm sáng trung tâm,
+          // góc chia đều 2π/ringCount → các pill nhãn toả ra sạch, ít đè nhau nhất.
+          pr = 0.72;
+          pTheta0 = Math.PI / 5 + (i - 1) * ((Math.PI * 2) / ringCount);
+          pz = 0;
+          pSpin = 0.35 - (0.72 - 0.18) * 0.15; // quay đồng bộ như sao cùng bán kính
+        } else {
+          const pIdx = 120 + ((i * 53) % 360); // quá đông → ghim vào sao thật trên cánh xoắn ốc
+          const p = particles[pIdx];
+          pr = p.r; pTheta0 = p.theta; pz = p.z; pSpin = p.spinSpeed;
+        }
 
         // Orbit around Z-axis spin (quay đồng bộ theo vòng quay cánh xoắn ốc của ngôi sao)
-        const spinTheta = p.theta + t * p.spinSpeed;
-        const sx = Math.cos(spinTheta) * p.r;
-        const sy = Math.sin(spinTheta) * p.r;
-        const sz = p.z;
+        const spinTheta = pTheta0 + t * pSpin;
+        const sx = Math.cos(spinTheta) * pr;
+        const sy = Math.sin(spinTheta) * pr;
+        const sz = pz;
 
         // Yaw transformation
         const sx2 = sx * Math.cos(yaw) - sz * Math.sin(yaw);
@@ -687,16 +833,8 @@ export function NeuralBrain({
             ctx.fill();
           }
 
-          // Vẽ nhãn của Hệ Mặt Trời nếu được phóng to đủ gần
-          if (star.isSun && zoomRef.current > 1.25) {
-            ctx.save();
-            ctx.font = `700 ${8.5 * dpr * star.perspective}px 'Space Mono', ui-monospace, monospace`;
-            // Nhãn Hệ Mặt Trời dùng chính màu accent (đã đổi theo theme + màu người dùng chọn).
-            ctx.fillStyle = `rgba(${accentRGB}, 0.95)`;
-            ctx.textAlign = 'left';
-            ctx.fillText('Hệ Mặt Trời ☀️', star.x + star.size + 3 * dpr, star.y + 2 * dpr);
-            ctx.restore();
-          }
+          // (Nhãn "Hệ Mặt Trời" cũ đã bỏ: Main agent giờ ghim vào sao này với nhãn pill "SOL",
+          // vẽ ở RENDER PASS 4 nên nhãn trùng vị trí không còn cần thiết.)
         }
       };
 
@@ -706,6 +844,19 @@ export function NeuralBrain({
       drawStarGroup(backStars);
 
       // ── RENDER PASS 2: Vẽ Nhân Thiên Hà 3D (Galactic Core) ──
+      // Quầng sáng ngoài "hô hấp" (breathing) bao quanh nhân — chỉ theme tối, tạo chiều sâu.
+      if (!isLight) {
+        const breath = 0.5 + 0.5 * Math.sin(t * 0.6);
+        const haloR = currentScale * (0.28 + 0.03 * breath);
+        const haloGrad = ctx.createRadialGradient(cx, cy, currentScale * 0.08, cx, cy, haloR);
+        haloGrad.addColorStop(0, `rgba(${accentRGB}, ${0.12 + 0.05 * breath})`);
+        haloGrad.addColorStop(0.6, `rgba(${accentRGB}, 0.04)`);
+        haloGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        ctx.fillStyle = haloGrad;
+        ctx.beginPath();
+        ctx.arc(cx, cy, haloR, 0, Math.PI * 2);
+        ctx.fill();
+      }
       const coreGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, currentScale * 0.16);
       // Nhân sáng trắng/mực ở tâm, quầng giữa & rìa nhuốm accent để đồng bộ màu người dùng chọn.
       coreGrad.addColorStop(0, isLight ? 'rgba(28, 25, 23, 0.7)' : 'rgba(255, 255, 255, 0.95)');
@@ -817,18 +968,76 @@ export function NeuralBrain({
           ctx.fill();
         }
 
-        // Draw agent name label — luôn hiển thị tên agent bên cạnh ngôi sao
+        // Draw agent name label — pill nền mờ + viền, 2 dòng: mã sao (to) + vai trò (nhỏ, mờ).
+        // Chữ luôn rõ dù đè lên sao/galaxy nhờ nền backdrop. Tỷ lệ theo perspective.
         {
-          const labelFont = `700 ${9 * dpr * p.perspective}px 'Space Mono', ui-monospace, monospace`;
-          ctx.font = labelFont;
-          const labelAlpha = (isSel || p.s.active) ? 0.95 : 0.7;
+          const persp = p.perspective;
+          const code = p.s.label; // mã thiên văn (VD: SOL, VEGA)
+          const role = p.s.role ? p.s.role.toUpperCase() : '';
+          const emphasize = isSel || !!p.s.active;
+
+          const codeSize = 9.5 * dpr * persp;
+          const roleSize = 6.8 * dpr * persp;
+          const padX = 6 * dpr * persp;
+          const padY = 4 * dpr * persp;
+          const lineGap = role ? 2.5 * dpr * persp : 0;
+
+          // Đo bề rộng nội dung để vẽ pill vừa khít
+          ctx.font = `700 ${codeSize}px 'Space Mono', ui-monospace, monospace`;
+          const codeW = ctx.measureText(code).width;
+          let roleW = 0;
+          if (role) {
+            ctx.font = `400 ${roleSize}px 'Space Mono', ui-monospace, monospace`;
+            roleW = ctx.measureText(role).width;
+          }
+          const contentW = Math.max(codeW, roleW);
+          const contentH = codeSize + (role ? lineGap + roleSize : 0);
+          const boxW = contentW + padX * 2;
+          const boxH = contentH + padY * 2;
+
+          // Đặt nhãn TRÊN hay DƯỚI thiên thể tuỳ vị trí: nút ở nửa dưới galaxy → nhãn xuống
+          // dưới, nửa trên → nhãn lên trên. Nhờ vậy nhãn các nút đối nhau tự tách, ít đè.
+          const gap = 8 * dpr * persp;
+          const below = p.rawY > 0.04; // nửa dưới (rawY trước khi cộng tâm)
+          const boxX = p.x - boxW / 2;
+          const boxY = below
+            ? p.y + size + gap
+            : p.y - size - gap - boxH;
+          const rad = 3 * dpr * persp;
+
+          // Nền pill mờ (backdrop) — tối trên theme dark, giấy trên light
+          const bgA = emphasize ? 0.82 : 0.62;
+          ctx.beginPath();
+          roundRectPath(ctx, boxX, boxY, boxW, boxH, rad);
           ctx.fillStyle = isLight
-            ? `rgba(28, 25, 23, ${labelAlpha * p.perspective})`
-            : `rgba(255, 255, 255, ${labelAlpha * p.perspective})`;
+            ? `rgba(239, 232, 215, ${bgA})`
+            : `rgba(6, 10, 22, ${bgA})`;
+          ctx.fill();
+
+          // Viền accent theo màu loại thiên thể
+          ctx.beginPath();
+          roundRectPath(ctx, boxX, boxY, boxW, boxH, rad);
+          ctx.strokeStyle = `rgba(${r},${g},${bl},${(emphasize ? 0.85 : 0.5) * persp})`;
+          ctx.lineWidth = 1 * dpr * persp;
+          ctx.stroke();
+
           ctx.textAlign = 'center';
-          // Hiển thị tên agent (bỏ "Agent" suffix nếu label quá dài)
-          const shortLabel = p.s.label.replace(/ Agent$/, '');
-          ctx.fillText(shortLabel, p.x, p.y - size - 6 * dpr * p.perspective);
+          ctx.textBaseline = 'top';
+          // Dòng 1: mã sao — màu loại thiên thể, sáng
+          ctx.font = `700 ${codeSize}px 'Space Mono', ui-monospace, monospace`;
+          ctx.fillStyle = isLight
+            ? `rgba(${Math.round(r * 0.6)},${Math.round(g * 0.6)},${Math.round(bl * 0.6)},${persp})`
+            : `rgba(${Math.min(255, r + 60)},${Math.min(255, g + 60)},${Math.min(255, bl + 60)},${persp})`;
+          ctx.fillText(code, p.x, boxY + padY);
+          // Dòng 2: vai trò — mờ, nhỏ
+          if (role) {
+            ctx.font = `400 ${roleSize}px 'Space Mono', ui-monospace, monospace`;
+            ctx.fillStyle = isLight
+              ? `rgba(92, 82, 65, ${0.85 * persp})`
+              : `rgba(200, 195, 180, ${0.7 * persp})`;
+            ctx.fillText(role, p.x, boxY + padY + codeSize + lineGap);
+          }
+          ctx.textBaseline = 'alphabetic'; // khôi phục mặc định cho các pass sau
         }
 
         // Save hit targets (convert to CSS coordinates)
@@ -845,6 +1054,72 @@ export function NeuralBrain({
       // ── RENDER PASS 5: Vẽ các ngôi sao ở phía trước (Z3 <= 0, che phủ nhẹ lên chòm sao) ──
       ctx.globalCompositeOperation = isLight ? 'source-over' : 'lighter';
       drawStarGroup(frontStars);
+
+      // ── RENDER PASS 6: Sao băng nền lướt qua khung nhìn (chỉ theme tối) ──
+      // Light theme là "bản đồ mực trên giấy" — sao băng cộng-sáng không hợp, nên bỏ qua.
+      if (!isLight) {
+        ctx.globalCompositeOperation = 'lighter';
+        for (const m of meteors) {
+          if (!m.active) {
+            m.nextIn -= dt;
+            if (m.nextIn <= 0) {
+              // Sinh sao băng: vào từ mép trên, bay chéo xuống, hướng ngẫu nhiên nhẹ theo seed.
+              m.active = true;
+              m.life = 0;
+              m.x = 0.05 + m.seed * 0.9;
+              m.y = -0.05;
+              const ang = Math.PI * (0.62 + m.seed * 0.22); // chéo xuống-trái/xuống-phải
+              m.vx = Math.cos(ang) * m.speed;
+              m.vy = Math.abs(Math.sin(ang)) * m.speed;
+            }
+            continue;
+          }
+          // Tiến quỹ đạo
+          m.life += dt * 0.5 * m.speed;
+          m.x += m.vx * dt * 0.35;
+          m.y += m.vy * dt * 0.35;
+          if (m.life >= 1 || m.y > 1.1 || m.x < -0.1 || m.x > 1.1) {
+            m.active = false;
+            m.nextIn = 3 + m.seed * 9; // nghỉ trước lần kế
+            continue;
+          }
+          // Fade in/out theo life (sáng ở giữa hành trình)
+          const fade = Math.sin(m.life * Math.PI);
+          const hx = cx + (m.x - 0.5) * W;
+          const hy = cy + (m.y - 0.5) * H;
+          const tailX = hx - m.vx * m.len * W;
+          const tailY = hy - m.vy * m.len * H;
+          const g = ctx.createLinearGradient(tailX, tailY, hx, hy);
+          g.addColorStop(0, `rgba(${accentRGB}, 0)`);
+          g.addColorStop(0.7, `rgba(${accentRGB}, ${0.35 * fade})`);
+          g.addColorStop(1, `rgba(255, 255, 255, ${0.85 * fade})`);
+          ctx.strokeStyle = g;
+          ctx.lineWidth = 1.4 * dpr;
+          ctx.lineCap = 'round';
+          ctx.beginPath();
+          ctx.moveTo(tailX, tailY);
+          ctx.lineTo(hx, hy);
+          ctx.stroke();
+          // Đầu sao băng sáng
+          ctx.beginPath();
+          ctx.arc(hx, hy, 1.6 * dpr, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(255, 255, 255, ${0.95 * fade})`;
+          ctx.fill();
+        }
+      }
+
+      // ── Phát toạ độ RA/DEC + zoom + mục tiêu ra ngoài (throttle theo giá trị hiển thị) ──
+      if (onCameraRef.current) {
+        const coords = cameraToCoords(yaw, pitch);
+        const zoomView = zoomRef.current;
+        const targetLabel = sel ? (st.find((s) => s.id === sel)?.label ?? null) : null;
+        // Khoá ở 1 chữ số zoom để không spam setState mỗi frame.
+        const camKey = `${coords.ra}|${coords.dec}|${zoomView.toFixed(1)}|${targetLabel ?? ''}`;
+        if (camKey !== lastCamKeyRef.current) {
+          lastCamKeyRef.current = camKey;
+          onCameraRef.current({ ra: coords.ra, dec: coords.dec, zoom: zoomView, targetLabel });
+        }
+      }
 
       ctx.globalCompositeOperation = 'source-over';
       raf = requestAnimationFrame(draw);
@@ -903,4 +1178,4 @@ export function NeuralBrain({
       onMouseLeave={() => setHoverId(null)}
     />
   );
-}
+});
