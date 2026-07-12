@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { config } from '../config/env.js';
-import { deploySkillsFrom } from './agentSkills.js';
+import { deploySkillsFrom, parseStamp } from './agentSkills.js';
 import { loadPromptSkills } from './index.js';
 
 /**
@@ -34,7 +34,7 @@ const CORE_STAMP = '.bow-core';
  * Hằng FALLBACK cho core — dùng khi registry local thiếu field `core` (vd registry cũ/hỏng).
  * Core PHẢI luôn tải được, không phụ thuộc registry có mặt field `core` hay không.
  */
-const CORE_FALLBACK: RegistryStack = { id: 'core', label: 'Bow Core', repo: 'github.com/Bow-T/bow-skill-core', ref: 'v1.0.0' };
+const CORE_FALLBACK: RegistryStack = { id: 'core', label: 'Bow Core', repo: 'github.com/Bow-T/bow-skill-core', ref: 'v1.1.0' };
 
 /** Đường dẫn registry skill (allowlist) — tách khỏi repo, ở ~/.bow-agent/registry.json. */
 function registryPath(): string {
@@ -223,7 +223,7 @@ export function deployExternalSkills(stackId: string, cwd: string): ExternalDepl
     return { stack, ...empty, monorepoDir, hooksDir, error: `repo không có thư mục skills (${skillsDirOf(repoDir)}/)` };
   }
 
-  const skills = deploySkillsFrom(srcRoot, cwd, EXTERNAL_STAMP);
+  const skills = deploySkillsFrom(srcRoot, cwd, EXTERNAL_STAMP, stack.ref);
   return { stack, skills, monorepoDir, hooksDir, error: null };
 }
 
@@ -252,9 +252,9 @@ export function deployCoreSkills(cwd: string): CoreDeployResult {
     return { skills: [], promptText: '', error: `không tải được core ${core.repo}@${core.ref} (offline hoặc chưa cache?)` };
   }
 
-  // Skill kèm code → trải vào .claude/skills/ (STAMP riêng .bow-core).
+  // Skill kèm code → trải vào .claude/skills/ (STAMP riêng .bow-core), ghim ref core để badge so.
   const skillsRoot = join(repoDir, skillsDirOf(repoDir));
-  const skills = existsSync(skillsRoot) ? deploySkillsFrom(skillsRoot, cwd, CORE_STAMP) : [];
+  const skills = existsSync(skillsRoot) ? deploySkillsFrom(skillsRoot, cwd, CORE_STAMP, core.ref) : [];
 
   // Prompt-only → đọc *.md ghép thành text (KHÔNG trải vào .claude/skills/).
   const promptRel = dirFromManifest(repoDir, 'promptDir', 'prompt');
@@ -284,16 +284,55 @@ function isCached(source: RegistryStack): boolean {
   return existsSync(join(cacheRoot(), `${source.id}@${source.ref}`, '.git'));
 }
 
+/**
+ * REF đã TRẢI vào `<cwd>/.claude/skills/` cho một nguồn (đọc STAMP của nguồn đó), hoặc null nếu
+ * nguồn chưa trải skill nào vào project. Mọi skill cùng nguồn được trải cùng lúc nên mang cùng
+ * ref → chỉ cần đọc STAMP của skill folder ĐẦU TIÊN mang đúng STAMP. STAMP kiểu cũ (không có
+ * dòng ref) → parseStamp trả ref='' → coi như "đã trải nhưng không rõ ref" (badge sẽ báo stale).
+ *
+ * `stamp` là tên file marker của nguồn (CORE_STAMP / EXTERNAL_STAMP).
+ */
+function deployedRef(cwd: string, stamp: string): string | null {
+  const skillsRoot = join(resolve(cwd), '.claude', 'skills');
+  if (!existsSync(skillsRoot)) return null;
+  let names: string[];
+  try {
+    names = readdirSync(skillsRoot);
+  } catch {
+    return null;
+  }
+  for (const name of names) {
+    const stampFile = join(skillsRoot, name, stamp);
+    try {
+      if (!statSync(join(skillsRoot, name)).isDirectory() || !existsSync(stampFile)) continue;
+      return parseStamp(readFileSync(stampFile, 'utf8')).ref;
+    } catch {
+      // Bỏ qua folder lỗi, thử folder khác.
+    }
+  }
+  return null;
+}
+
+/** Trạng thái đồng bộ của một nguồn skill so với ref registry hiện tại. */
+export type SkillState =
+  | 'synced' // đã trải vào project VÀ ref khớp registry → agent dùng đúng bản mới nhất đã duyệt
+  | 'stale' // đã trải nhưng ref cũ hơn registry (admin đã bump) → cần sync lại
+  | 'missing'; // chưa trải vào project (dù cache có hay không) → lần chạy/ sync tới mới có
+
 /** Trạng thái tải của MỘT nguồn skill (core hoặc một stack). */
 export interface SkillSourceStatus {
   /** Định danh nguồn (`core`, `flutter-supabase`, …). */
   id: string;
   /** Nhãn hiển thị. */
   label: string;
-  /** Tag/commit đang ghim trong registry. */
+  /** Tag/commit đang ghim trong registry (bản MỚI NHẤT đã duyệt). */
   ref: string;
   /** Đã clone về `~/.bow/skills-cache/<id>@<ref>` chưa → chạy offline được. */
   cached: boolean;
+  /** Ref đang TRẢI trong `<cwd>/.claude/skills/` (null nếu chưa trải nguồn này vào project). */
+  deployedRef: string | null;
+  /** Đồng bộ / cũ hơn registry / chưa trải — badge dựa vào đây. */
+  state: SkillState;
 }
 
 /** Trạng thái skill tổng thể để UI dựng badge (đọc-only, không tải gì). */
@@ -303,31 +342,55 @@ export interface SkillStatus {
   /** Stack người dùng đang chọn (null nếu không chọn stack nào). */
   stack: SkillSourceStatus | null;
   /**
-   * Tổng kết: mọi nguồn cần thiết (core + stack đang chọn, nếu có) đều đã cache?
-   * true = sẵn sàng chạy offline; false = lần chạy tới sẽ phải tải (cần mạng/token).
+   * Tổng kết badge (nguồn xấu nhất quyết định):
+   * - `synced`: mọi nguồn đã trải & đúng ref → agent chạy đúng bản mới nhất (✅).
+   * - `stale`: có nguồn đã trải nhưng ref cũ hơn registry → cần sync lại (⚠️).
+   * - `missing`: có nguồn chưa trải vào project → phải sync/chạy mới có (⬇️).
    */
+  state: SkillState;
+  /** Giữ lại cho tương thích: `state === 'synced'`. */
   ready: boolean;
 }
 
 /**
- * Soi trạng thái tải skill cho stack đang chọn — KHÔNG tải gì (chỉ đọc đĩa + registry).
- * UI gọi để dựng badge "đã đủ / chưa tải". `stackId` rỗng = chỉ xét core.
+ * Tính trạng thái một nguồn: so ref đã TRẢI (trong project) với ref registry hiện tại.
+ * `cwd` rỗng → không soi project được, chỉ báo cache (deployedRef=null → 'missing').
  */
-export function skillStatus(stackId: string): SkillStatus {
-  const core = loadCore();
-  const coreStatus: SkillSourceStatus = { id: core.id, label: core.label, ref: core.ref, cached: isCached(core) };
+function sourceStatus(source: RegistryStack, cwd: string, stamp: string): SkillSourceStatus {
+  const dref = cwd ? deployedRef(cwd, stamp) : null;
+  let state: SkillState;
+  if (dref === null) state = 'missing'; // chưa trải nguồn này vào project
+  else if (dref === source.ref) state = 'synced'; // đã trải, đúng ref mới nhất
+  else state = 'stale'; // đã trải nhưng ref cũ (hoặc STAMP cũ không rõ ref)
+  return { id: source.id, label: source.label, ref: source.ref, cached: isCached(source), deployedRef: dref, state };
+}
+
+/** Nguồn xấu nhất quyết định badge tổng: missing (chưa có) > stale (cũ) > synced (đủ). */
+function worstState(states: SkillState[]): SkillState {
+  if (states.includes('missing')) return 'missing';
+  if (states.includes('stale')) return 'stale';
+  return 'synced';
+}
+
+/**
+ * Soi trạng thái đồng bộ skill cho stack đang chọn TRONG một project — KHÔNG tải gì (chỉ đọc
+ * đĩa + registry). Badge phân biệt: đã trải & đúng ref / đã trải nhưng cũ / chưa trải.
+ * `stackId` rỗng = chỉ xét core. `cwd` rỗng = không soi project (mọi nguồn coi như 'missing').
+ */
+export function skillStatus(stackId: string, cwd = ''): SkillStatus {
+  const coreStatus = sourceStatus(loadCore(), cwd, CORE_STAMP);
 
   let stackStatus: SkillSourceStatus | null = null;
   if (stackId) {
     const stack = findStack(stackId);
-    // Stack ngoài registry (chưa admin duyệt) → coi như chưa cache (không thể tải).
     stackStatus = stack
-      ? { id: stack.id, label: stack.label, ref: stack.ref, cached: isCached(stack) }
-      : { id: stackId, label: stackId, ref: '', cached: false };
+      ? sourceStatus(stack, cwd, EXTERNAL_STAMP)
+      : // Stack ngoài registry (chưa admin duyệt) → không tải/không trải được: luôn 'missing'.
+        { id: stackId, label: stackId, ref: '', cached: false, deployedRef: null, state: 'missing' };
   }
 
-  const ready = coreStatus.cached && (stackStatus ? stackStatus.cached : true);
-  return { core: coreStatus, stack: stackStatus, ready };
+  const state = worstState([coreStatus.state, ...(stackStatus ? [stackStatus.state] : [])]);
+  return { core: coreStatus, stack: stackStatus, state, ready: state === 'synced' };
 }
 
 /** Kết quả một nguồn sau khi đồng bộ thủ công. */

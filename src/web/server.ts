@@ -105,27 +105,53 @@ app.use((req, res, next) => {
   next();
 });
 
-const isSafeMode = process.env.BOW_SAFE_MODE === 'true';
+// QC Mode (trước đây "Safe Mode"): QC hỏi đáp read-only NHƯNG mở tool Skill (qc-triage) +
+// Jira read/write. Bật qua `npm run ui:qc` (đặt BOW_QC_MODE=true). Runner áp policy trong
+// canUseTool (isQcMode). Không còn nhận tên env cũ BOW_SAFE_MODE.
+const isQcMode = process.env.BOW_QC_MODE === 'true';
 // DEBUG: giả lập hết hạn mức phiên để verify luồng tự-chạy-tiếp mà không cần chờ limit thật.
 // BOW_SIMULATE_SESSION_LIMIT=true → LẦN CHẠY ĐẦU của mỗi phiên đang thực thi sẽ tự "hết hạn
 // mức" sau ~6s với resetsAt = now + 30s. Auto-resume (lần sau) chạy bình thường tới khi xong.
 const simulateSessionLimit = process.env.BOW_SIMULATE_SESSION_LIMIT === 'true';
-// Thư mục source cố định cho Safe Mode (QC hỏi đáp read-only). Cho phép trỏ tới
-// một repo khác (vd monorepo) mà không cần chạy server TỪ trong repo đó:
-//   BOW_SAFE_MODE=true BOW_SAFE_CWD=/path/to/monorepo npm run ui:safe
+// Thư mục source cố định cho QC Mode. Cho phép trỏ tới một repo khác (vd monorepo) mà
+// không cần chạy server TỪ trong repo đó:
+//   BOW_QC_MODE=true BOW_QC_CWD=/path/to/monorepo npm run ui:qc:share
 // Mặc định = process.cwd() (thư mục đang chạy server). Admin đổi lúc chạy qua
-// POST /api/safe-cwd (không cần restart) → lưu vào safeCwdOverride.
-let safeCwdOverride: string | null = null;
-const safeCwd = () => resolve(safeCwdOverride || process.env.BOW_SAFE_CWD || process.cwd());
+// POST /api/qc-cwd (không cần restart) → lưu vào qcCwdOverride.
+let qcCwdOverride: string | null = null;
+const qcCwd = () => resolve(qcCwdOverride || process.env.BOW_QC_CWD || process.cwd());
 
 // Collab Mode: cộng tác viên (CTV) qua LAN code gần như dev, nhưng lệnh HỦY HOẠI
 // (rm -rf, deploy, ghi ngoài repo…) phải được ADMIN (localhost) duyệt từ xa. Git
-// được tự do. Không đổi được MCP/workspace config (như Safe Mode). Khác Safe Mode ở
-// chỗ: Safe Mode = read-only tuyệt đối; Collab = ghi được, chỉ gác thao tác nguy hiểm.
+// được tự do. Không đổi được MCP/workspace config (như QC Mode). Khác QC Mode ở
+// chỗ: QC = read-only (chỉ mở Skill + Jira); Collab = ghi code được, chỉ gác thao tác nguy hiểm.
 //   BOW_COLLAB_MODE=true BOW_COLLAB_CWD=/path/to/repo npm run ui:collab
 const isCollabMode = process.env.BOW_COLLAB_MODE === 'true';
-// Repo cố định cho Collab (tương tự BOW_SAFE_CWD). Mặc định = cwd chạy server.
+// Repo cố định cho Collab (tương tự BOW_QC_CWD). Mặc định = cwd chạy server.
 const collabCwd = () => resolve(process.env.BOW_COLLAB_CWD || process.cwd());
+
+// BA Mode: Business Analyst qua LAN. Được ĐỌC toàn bộ repo (hiểu ngữ cảnh) + GHI TÀI LIỆU
+// (docs/, *.md/*.txt) + FULL Jira write (tạo/sửa/comment/transition ticket — đầu ra chính
+// của BA). NHƯNG bị chặn sửa source code (.ts/.dart/.sql…), ghi DB (execute_sql/migration),
+// deploy và lệnh huỷ hoại. Khác QC (read-only + Skill + Jira) và Collab (ghi code tự do): BA
+// phân quyền theo ĐÍCH ghi (tài liệu ✅ / source ❌), không theo read-vs-write thuần.
+//   BOW_BA_MODE=true BOW_BA_CWD=/path/to/repo npm run ui:ba
+const isBaMode = process.env.BOW_BA_MODE === 'true';
+// Repo cố định cho BA (tương tự BOW_QC_CWD/BOW_COLLAB_CWD). Admin đổi lúc chạy qua
+// POST /api/qc-cwd (gọi tới cổng BA 4003) → lưu vào baCwdOverride, không cần restart.
+let baCwdOverride: string | null = null;
+const baCwd = () => resolve(baCwdOverride || process.env.BOW_BA_CWD || process.cwd());
+
+// Reviewer Mode: Tech Lead/Reviewer qua LAN. ĐỌC code + review PR GitHub (`gh pr view/diff`) và
+// diff branch local (`git diff`), COMMENT/APPROVE PR (`gh pr comment`/`gh pr review`), chạy
+// test/analyze, Jira READ (đối chiếu ticket). DENY sửa code / merge / push / deploy. Ép 'plan'
+// như QC; policy chi tiết trong runner.canUseTool (isReviewerMode).
+//   BOW_REVIEWER_MODE=true BOW_REVIEWER_CWD=/path/to/repo npm run ui:review
+const isReviewerMode = process.env.BOW_REVIEWER_MODE === 'true';
+// Repo cố định cho Reviewer (tương tự BOW_QC_CWD). Admin đổi lúc chạy qua POST /api/qc-cwd
+// (gọi tới cổng Reviewer 4004) → lưu vào reviewerCwdOverride, không cần restart.
+let reviewerCwdOverride: string | null = null;
+const reviewerCwd = () => resolve(reviewerCwdOverride || process.env.BOW_REVIEWER_CWD || process.cwd());
 
 /**
  * Trả về TẤT CẢ địa chỉ IPv4 LAN của máy (bỏ loopback), đã sắp xếp: IP mạng nội bộ
@@ -176,12 +202,13 @@ const logAudit = (message: string, clientIp?: string, username?: string) => {
   }
 };
 
-// Chặn đổi cấu hình (MCP/workspace) ở CẢ Safe Mode LẪN Collab Mode — cả hai đều không
-// cho client đổi hạ tầng agent. (Safe = read-only; Collab = ghi code nhưng khoá config.)
-const checkSafeMode = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-  if (isSafeMode || isCollabMode) {
+// Chặn đổi cấu hình (MCP/workspace) ở QC/Reviewer/Collab/BA Mode — không mode chia sẻ nào cho
+// client đổi hạ tầng agent. (QC = read-only + Skill/Jira; Reviewer = read-only + gh pr review;
+// Collab = ghi code nhưng khoá config; BA = ghi tài liệu + Jira nhưng khoá config.)
+const checkReadonlyConfig = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (isQcMode || isReviewerMode || isCollabMode || isBaMode) {
     const cleanIp = getCleanIp(req);
-    const modeName = isSafeMode ? 'Safe Mode' : 'Collab Mode';
+    const modeName = isQcMode ? 'QC Mode' : isReviewerMode ? 'Reviewer Mode' : isCollabMode ? 'Collab Mode' : 'BA Mode';
     logAudit(`IP: ${cleanIp} - BỊ CHẶN: Thao tác ${req.method} ${req.originalUrl} bị chặn trong ${modeName}.`, cleanIp);
     res.status(403).json({ error: `Thao tác bị chặn trong chế độ ${modeName} (không đổi được cấu hình).` });
     return;
@@ -375,6 +402,8 @@ interface RunParams {
   cwd: string;
   mode: 'plan' | 'manual' | 'edit-auto' | 'auto';
   collabMode: boolean;
+  /** BA Mode: ghi tài liệu + Jira, DENY source/DB/deploy. Xem runner. */
+  baMode: boolean;
   effort: RunOptions['effort'];
   language: 'vi' | 'en';
   projectProfile?: string;
@@ -384,6 +413,8 @@ interface RunParams {
   userMcpServers?: Record<string, McpServerConfig>;
   /** Stack skill external người dùng chọn (id trong registry). Rỗng = chỉ skill nội bộ. */
   stack?: string;
+  /** Bật multi-agent (reviewer/verifier/impact-scout). Chỉ admin. Mặc định tắt. */
+  useSubagents?: boolean;
   model?: string;
   isExecuting: boolean;
   routeToAdmin: boolean;
@@ -399,7 +430,7 @@ interface RunParams {
 /**
  * Chạy agent trên một session web + tự lên lịch chạy tiếp nếu dừng vì hết hạn mức phiên.
  * `attempt` = lần thử hiện tại (0 = lần đầu do người dùng khởi động; 1..N = auto-resume).
- * Chỉ auto-resume khi `isExecuting` (phiên có việc dở đáng làm tiếp — plan/Safe thì thôi).
+ * Chỉ auto-resume khi `isExecuting` (phiên có việc dở đáng làm tiếp — plan/QC thì thôi).
  */
 function runAgentSession(session: ReturnType<typeof createSession>, params: RunParams, attempt: number): void {
   // Bắt session_id THẬT của SDK cho lần chạy này. Cần cho auto-resume (resume đúng phiên)
@@ -430,6 +461,7 @@ function runAgentSession(session: ReturnType<typeof createSession>, params: RunP
     cwd: params.cwd,
     mode: params.mode,
     collabMode: params.collabMode,
+    baMode: params.baMode,
     requireApprovalForWrites: params.requireApprovalForWrites,
     effort: params.effort,
     language: params.language,
@@ -441,6 +473,7 @@ function runAgentSession(session: ReturnType<typeof createSession>, params: RunP
         ? params.userMcpServers
         : undefined,
     stack: params.stack || undefined,
+    useSubagents: params.useSubagents,
     abortSignal: session.abort.signal,
     onEvent: (ev) => {
       // Bắt lỗi hết hạn mức trước khi đẩy event ra client — để lên lịch tự chạy tiếp.
@@ -561,28 +594,33 @@ app.post('/api/run', async (req, res) => {
       cwd,
       model,
       stack,
+      useSubagents,
       conversationId,
       resumeContext,
     } = req.body ?? {};
 
     // Admin = localhost (IP socket thật). Quyết định cả cwd (M8) lẫn mode ghi bên dưới.
     const isAdmin = isAdminReq(req);
-    // Repo cố định theo mode: Safe → safeCwd, Collab → collabCwd. Mode thường: chỉ ADMIN
+    // Repo cố định theo mode: QC → qcCwd, Collab → collabCwd. Mode thường: chỉ ADMIN
     // được tự chọn cwd; non-admin buộc dùng cwd server (M8) — tránh biến cả HOME thành
     // "trong repo" để lách sandbox ghi.
-    const workdir = isSafeMode
-      ? safeCwd()
-      : isCollabMode
-        ? collabCwd()
-        : isAdmin
-          ? (cwd || process.cwd())
-          : process.cwd();
+    const workdir = isQcMode
+      ? qcCwd()
+      : isReviewerMode
+        ? reviewerCwd()
+        : isCollabMode
+          ? collabCwd()
+          : isBaMode
+            ? baCwd()
+            : isAdmin
+              ? (cwd || process.cwd())
+              : process.cwd();
     const cleanIp = getCleanIp(req);
     // M11: guard kiểu — body do client gửi, ép về string để .trim() không ném TypeError
     // (trước đây {jiraRef:123} gây 500 + rò message lỗi nội bộ thay vì 400 đúng nghĩa).
     const textStr = typeof text === 'string' ? text : '';
     const jiraRefStr = typeof jiraRef === 'string' ? jiraRef : '';
-    const auditMode = isSafeMode ? 'plan' : isCollabMode ? 'auto (collab)' : mode;
+    const auditMode = isQcMode ? 'plan' : isReviewerMode ? 'plan (review)' : isCollabMode ? 'auto (collab)' : isBaMode ? 'auto (ba)' : mode;
     logAudit(`IP: ${cleanIp} - YÊU CẦU CHẠY: CWD=${workdir}, Mode=${auditMode}, Brief=${JSON.stringify(textStr || jiraRefStr || 'N/A')}`, cleanIp);
     let activeJiraRef = jiraRefStr;
     if (!activeJiraRef && textStr) {
@@ -710,17 +748,28 @@ app.post('/api/run', async (req, res) => {
 
     // 4 mode kiểu Claude. Nhận cả tên cũ 'execute' (→ 'manual') để tương thích client cũ.
     // Mọi mode ngoài 'plan' đều là "đang thực thi" (có cổng duyệt theo policy của runner).
-    // Safe Mode → ép 'plan' (read-only). Collab Mode → ép 'auto' (ghi tự do, chỉ gác lệnh
-    // hủy hoại — được định tuyến duyệt lên admin bên dưới).
+    // QC Mode → ép 'plan' (read-only source; Skill + Jira mở riêng trong runner.canUseTool).
+    // Collab Mode → ép 'auto' (ghi tự do, chỉ gác lệnh hủy hoại — định tuyến duyệt lên admin).
     // PHÂN QUYỀN (quan trọng): chỉ ADMIN (localhost) mới được chạy mode GHI. Client KHÔNG
     // phải admin bị ép 'plan' (read-only) ở mode thường — muốn ghi phải qua Collab (mọi
-    // thao tác duyệt bởi admin). Safe Mode → luôn 'plan'. Collab → 'auto' NHƯNG siết duyệt
+    // thao tác duyệt bởi admin). QC Mode → luôn 'plan'. Collab → 'auto' NHƯNG siết duyệt
     // bằng requireApprovalForWrites (mọi ghi phải admin duyệt), không còn "ghi tự do".
     // (isAdmin đã tính ở đầu handler.)
+    // BA Mode → ép 'auto' (ghi tài liệu + Jira không hỏi từng cái); source/DB/deploy bị
+    // DENY CỨNG trong runner (baMode), không phải "hỏi duyệt". Nên KHÔNG bật
+    // requireApprovalForWrites (nếu bật thì cả ghi .md cũng phải admin duyệt — sai vai trò BA).
     const VALID_MODES = new Set(['plan', 'manual', 'edit-auto', 'auto']);
     // Ở mode thường: admin dùng mode client gửi; non-admin bị ép 'plan'.
     const normalModeRequest = isAdmin ? mode : 'plan';
-    const requestedMode = isSafeMode ? 'plan' : isCollabMode ? 'auto' : normalModeRequest;
+    const requestedMode = isQcMode
+      ? 'plan'
+      : isReviewerMode
+        ? 'plan'
+        : isCollabMode
+          ? 'auto'
+          : isBaMode
+            ? 'auto'
+            : normalModeRequest;
     const runMode: 'plan' | 'manual' | 'edit-auto' | 'auto' =
       requestedMode === 'execute'
         ? 'manual'
@@ -729,9 +778,13 @@ app.post('/api/run', async (req, res) => {
           : 'plan';
     const isExecuting = runMode !== 'plan';
 
-    // Safe/QC Mode chỉ hỏi đáp read-only → luôn ép Sonnet (nhẹ/rẻ), KHÔNG tin model
-    // client gửi. Tránh lỡ dùng Opus 4.8 khi client cũ/lỗi hoặc localStorage còn Opus.
-    const effectiveModel = isSafeMode ? 'claude-sonnet-5' : model;
+    // QC/Reviewer Mode read-only → luôn ép Sonnet (nhẹ/rẻ), KHÔNG tin model client gửi.
+    // Tránh lỡ dùng Opus 4.8 khi client cũ/lỗi hoặc localStorage còn Opus.
+    const effectiveModel = isQcMode || isReviewerMode ? 'claude-sonnet-5' : model;
+
+    // Multi-agent (reviewer/verifier/impact-scout): tốn token hơn (spawn agent con) nên CHỈ
+    // admin localhost bật được. Non-admin gửi cờ lên cũng bị bỏ qua → single-agent như cũ.
+    const allowSubagents = isAdmin && useSubagents === true;
 
     // Cổng duyệt cho phiên này. CTV Collab (không phải admin localhost): MỌI thao tác ghi
     // được ĐỊNH TUYẾN lên ADMIN qua adminBus (routeToAdmin) và runner siết duyệt toàn bộ
@@ -757,6 +810,7 @@ app.post('/api/run', async (req, res) => {
         cwd: workdir,
         mode: runMode,
         collabMode: isCollabMode,
+        baMode: isBaMode,
         effort: effort ?? 'high',
         language: language === 'en' ? 'en' : 'vi',
         projectProfile,
@@ -764,6 +818,7 @@ app.post('/api/run', async (req, res) => {
         mcpServers: effectiveMcp,
         userMcpServers,
         stack: typeof stack === 'string' ? stack : undefined,
+        useSubagents: allowSubagents,
         model: effectiveModel,
         isExecuting,
         routeToAdmin,
@@ -1007,24 +1062,30 @@ app.get('/api/config', async (req, res) => {
 
   const isAdmin = isAdminReq(req);
 
-  // Source bị khoá theo mode: Safe → safeCwd, Collab → collabCwd; thường → cwd server.
-  const effectiveCwd = isSafeMode ? safeCwd() : isCollabMode ? collabCwd() : process.cwd();
-  // Cổng web LAN theo bản đang chạy (BOW_WEB_PORT: dev 5173 / share 5174 / collab 5175).
+  // Source bị khoá theo mode: QC → qcCwd, Reviewer → reviewerCwd, Collab → collabCwd, BA → baCwd.
+  const effectiveCwd = isQcMode ? qcCwd() : isReviewerMode ? reviewerCwd() : isCollabMode ? collabCwd() : isBaMode ? baCwd() : process.cwd();
+  // Cổng web LAN theo bản đang chạy (BOW_WEB_PORT: dev 5173 / qc 5174 / collab 5175 / ba 5176 / review 5177).
   const webPort = process.env.BOW_WEB_PORT || '5173';
 
   const currentPort = Number(process.env.BOW_AGENT_PORT || '4000');
   const modes = {
     dev: { repoName: '', defaultCwd: '' },
-    safe: { repoName: '', defaultCwd: '' },
-    collab: { repoName: '', defaultCwd: '' }
+    qc: { repoName: '', defaultCwd: '' },
+    collab: { repoName: '', defaultCwd: '' },
+    ba: { repoName: '', defaultCwd: '' },
+    review: { repoName: '', defaultCwd: '' }
   };
 
   if (currentPort === 4000) {
     modes.dev = { repoName: basename(effectiveCwd), defaultCwd: effectiveCwd };
   } else if (currentPort === 4001) {
-    modes.safe = { repoName: basename(effectiveCwd), defaultCwd: effectiveCwd };
+    modes.qc = { repoName: basename(effectiveCwd), defaultCwd: effectiveCwd };
   } else if (currentPort === 4002) {
     modes.collab = { repoName: basename(effectiveCwd), defaultCwd: effectiveCwd };
+  } else if (currentPort === 4003) {
+    modes.ba = { repoName: basename(effectiveCwd), defaultCwd: effectiveCwd };
+  } else if (currentPort === 4004) {
+    modes.review = { repoName: basename(effectiveCwd), defaultCwd: effectiveCwd };
   }
 
   const promises = [];
@@ -1032,10 +1093,16 @@ app.get('/api/config', async (req, res) => {
     promises.push(pingConfigPort(4000).then(res => { if (res) modes.dev = res; }));
   }
   if (currentPort !== 4001) {
-    promises.push(pingConfigPort(4001).then(res => { if (res) modes.safe = res; }));
+    promises.push(pingConfigPort(4001).then(res => { if (res) modes.qc = res; }));
   }
   if (currentPort !== 4002) {
     promises.push(pingConfigPort(4002).then(res => { if (res) modes.collab = res; }));
+  }
+  if (currentPort !== 4003) {
+    promises.push(pingConfigPort(4003).then(res => { if (res) modes.ba = res; }));
+  }
+  if (currentPort !== 4004) {
+    promises.push(pingConfigPort(4004).then(res => { if (res) modes.review = res; }));
   }
 
   await Promise.all(promises);
@@ -1047,8 +1114,10 @@ app.get('/api/config', async (req, res) => {
     // lanUrl: host đầu tiên (tương thích ngược). lanUrls: TẤT CẢ host — UI cho chọn/copy.
     lanUrl: `http://${localIp}:${webPort}`,
     lanUrls: (localIps.length ? localIps : ['localhost']).map((ip) => `http://${ip}:${webPort}`),
-    isSafeMode,
+    isQcMode,
+    isReviewerMode,
     isCollabMode,
+    isBaMode,
     isAdmin,
     claudeProfiles: listClaudeProfiles(),
     currentClaudeProfile: getCurrentProfile(),
@@ -1389,10 +1458,11 @@ app.delete('/api/profiles', requireAdmin, (req, res) => {
 });
 
 /**
- * POST /api/safe-cwd — Admin đổi thư mục source mà QC hỏi đáp (chỉ Safe Mode).
+ * POST /api/qc-cwd — Admin đổi thư mục source cố định của mode (QC/BA). Tên route theo QC
+ * Mode nhưng dùng chung: BA gọi cùng route (cổng 4003) để đổi baCwd.
  * body: { cwd }. Chỉ Admin (localhost) mới đổi được; không cần restart server.
  */
-app.post('/api/safe-cwd', requireAdmin, (req, res) => {
+app.post('/api/qc-cwd', requireAdmin, (req, res) => {
   const raw = typeof req.body?.cwd === 'string' ? req.body.cwd.trim() : '';
   if (!raw) {
     res.status(400).json({ error: 'Thiếu đường dẫn thư mục.' });
@@ -1403,7 +1473,11 @@ app.post('/api/safe-cwd', requireAdmin, (req, res) => {
     res.status(400).json({ error: 'Đường dẫn không tồn tại hoặc không phải thư mục.' });
     return;
   }
-  safeCwdOverride = dir;
+  // Ghi vào override đúng theo mode tiến trình đang chạy: BA → baCwdOverride, Reviewer →
+  // reviewerCwdOverride, còn lại → qcCwdOverride (dùng chung QC/dev — GET /api/config đọc theo mode).
+  if (isBaMode) baCwdOverride = dir;
+  else if (isReviewerMode) reviewerCwdOverride = dir;
+  else qcCwdOverride = dir;
   logAudit(`ADMIN đổi source → ${dir}`, '127.0.0.1');
   res.json({ ok: true, cwd: dir, repoName: basename(dir) });
 });
@@ -1501,7 +1575,10 @@ app.get('/api/skill-stacks', (_req, res) => {
 app.get('/api/skill-status', (req, res) => {
   try {
     const stack = typeof req.query.stack === 'string' ? req.query.stack : '';
-    res.json(skillStatus(stack));
+    // cwd để soi ĐÃ TRẢI vào project chưa (badge phân biệt synced/stale/missing). Thiếu cwd →
+    // chỉ báo cache (mọi nguồn 'missing'). Client gửi cwd đang chọn ở dropdown thư mục.
+    const cwd = typeof req.query.cwd === 'string' ? req.query.cwd : '';
+    res.json(skillStatus(stack, cwd));
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
@@ -1510,10 +1587,10 @@ app.get('/api/skill-status', (req, res) => {
 /**
  * POST /api/skill-sync — ĐỒNG BỘ THỦ CÔNG: tải (nếu chưa) + trải core + stack đang chọn vào
  * `.claude/skills/` của cwd, không cần chạy phiên. body: {cwd, stack?}. Gate requireAdmin +
- * checkSafeMode như /api/mcp: thao tác ghi vào máy (clone repo, trải file) chỉ admin localhost
+ * checkReadonlyConfig như /api/mcp: thao tác ghi vào máy (clone repo, trải file) chỉ admin localhost
  * làm, không mở cho user LAN. Fail-open: trả kết quả từng nguồn kèm error, không 500 vì 1 nguồn lỗi.
  */
-app.post('/api/skill-sync', requireAdmin, checkSafeMode, (req, res) => {
+app.post('/api/skill-sync', requireAdmin, checkReadonlyConfig, (req, res) => {
   const { cwd, stack } = req.body ?? {};
   if (typeof cwd !== 'string' || !cwd) {
     res.status(400).json({ error: 'Thiếu cwd.' });
@@ -1536,7 +1613,7 @@ app.get('/api/mcp', (_req, res) => {
 });
 
 /** POST /api/mcp — thêm MCP server stdio mới. body: {name, command, args?, env?} */
-app.post('/api/mcp', requireAdmin, checkSafeMode, (req, res) => {
+app.post('/api/mcp', requireAdmin, checkReadonlyConfig, (req, res) => {
   const { name, command, args, env } = req.body ?? {};
   if (typeof name !== 'string' || typeof command !== 'string') {
     res.status(400).json({ error: 'Thiếu name hoặc command.' });
@@ -1556,7 +1633,7 @@ app.post('/api/mcp', requireAdmin, checkSafeMode, (req, res) => {
 });
 
 /** DELETE /api/mcp/:name — xóa một MCP server. */
-app.delete('/api/mcp/:name', requireAdmin, checkSafeMode, (req, res) => {
+app.delete('/api/mcp/:name', requireAdmin, checkReadonlyConfig, (req, res) => {
   try {
     removeGlobalMcp(req.params.name);
     res.json({ ok: true, servers: listGlobalMcp() });
@@ -1566,9 +1643,9 @@ app.delete('/api/mcp/:name', requireAdmin, checkSafeMode, (req, res) => {
 });
 
 // ── MCP RIÊNG theo user (overlay lên MCP chung) — /api/my-mcp ──────────────────
-// KHÁC /api/mcp (chung, chỉ admin, bị chặn trong Safe/Collab): các route này cho USER
-// LAN đã duyệt tự quản MCP riêng của CHÍNH họ, KỂ CẢ trong Safe/Collab Mode — vì chỉ
-// ảnh hưởng họ, không đụng hạ tầng chung. Không dùng requireAdmin / checkSafeMode.
+// KHÁC /api/mcp (chung, chỉ admin, bị chặn trong QC/Collab): các route này cho USER
+// LAN đã duyệt tự quản MCP riêng của CHÍNH họ, KỂ CẢ trong QC/Collab Mode — vì chỉ
+// ảnh hưởng họ, không đụng hạ tầng chung. Không dùng requireAdmin / checkReadonlyConfig.
 
 /** Lấy user (đã duyệt) sở hữu request, hoặc trả 403 và null. Admin localhost không có
  *  token access → không dùng /api/my-mcp (admin quản MCP chung qua /api/mcp). */
@@ -1712,7 +1789,7 @@ app.get('/api/workspace/current', (req, res) => {
  * POST /api/workspace/repo — gán một repo vào workspace (tạo nếu chưa có).
  * body: { name, path, role }. Trả workspace sau cập nhật.
  */
-app.post('/api/workspace/repo', requireAdmin, checkSafeMode, (req, res) => {
+app.post('/api/workspace/repo', requireAdmin, checkReadonlyConfig, (req, res) => {
   const { name, path, role } = req.body ?? {};
   if (typeof name !== 'string' || !name.trim() || typeof path !== 'string' || !path.trim()) {
     res.status(400).json({ error: 'Thiếu name hoặc path.' });
@@ -1734,7 +1811,7 @@ app.post('/api/workspace/repo', requireAdmin, checkSafeMode, (req, res) => {
  * DELETE /api/workspace/repo — gỡ một repo khỏi workspace (xóa workspace nếu rỗng).
  * body: { name, path }.
  */
-app.delete('/api/workspace/repo', requireAdmin, checkSafeMode, (req, res) => {
+app.delete('/api/workspace/repo', requireAdmin, checkReadonlyConfig, (req, res) => {
   const { name, path } = req.body ?? {};
   if (typeof name !== 'string' || typeof path !== 'string') {
     res.status(400).json({ error: 'Thiếu name hoặc path.' });
@@ -1763,7 +1840,7 @@ app.get('/api/workspace/:slug/knowledge', (req, res) => {
 });
 
 /** PUT /api/workspace/:slug/shared — ghi đè tri thức chung shared.md. body: { content }. */
-app.put('/api/workspace/:slug/shared', requireAdmin, checkSafeMode, (req, res) => {
+app.put('/api/workspace/:slug/shared', requireAdmin, checkReadonlyConfig, (req, res) => {
   const ws = findWorkspace(req.params.slug);
   if (!ws) {
     res.status(404).json({ error: 'Workspace không tồn tại.' });
@@ -1994,8 +2071,11 @@ app.get('/api/chat/groups/:id/events', (req, res) => {
 const PORT = Number(process.env.BOW_AGENT_PORT ?? 4000);
 app.listen(PORT, () => {
   process.stdout.write(`\n🌐 bow-agent web API chạy tại http://localhost:${PORT}\n`);
-  if (isSafeMode) {
-    process.stdout.write(`   ⚠️ CHẾ ĐỘ AN TOÀN ĐANG BẬT (Safe/LAN Share Mode) - CHỈ CHO PHÉP HỎI ĐÁP/LẬP KẾ HOẠCH\n`);
+  if (isQcMode) {
+    process.stdout.write(`   ⚠️ QC MODE ĐANG BẬT (read-only + Skill + Jira) - CHỈ HỎI ĐÁP/CHẤM TICKET, KHÔNG SỬA SOURCE\n`);
+    process.stdout.write(`   Để chia sẻ với đồng nghiệp, chạy frontend bằng: npm run ui:web -- --host\n\n`);
+  } else if (isReviewerMode) {
+    process.stdout.write(`   ⚠️ REVIEWER MODE ĐANG BẬT (read-only + gh pr review) - REVIEW/COMMENT/APPROVE PR, KHÔNG SỬA CODE\n`);
     process.stdout.write(`   Để chia sẻ với đồng nghiệp, chạy frontend bằng: npm run ui:web -- --host\n\n`);
   } else {
     process.stdout.write(`   (dev frontend: chạy \`npm run ui:web\` rồi mở http://localhost:5173)\n\n`);

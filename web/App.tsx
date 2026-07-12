@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { PixelSelect } from './PixelSelect.js';
 import { AccentPicker } from './AccentPicker.js';
 import { ModeSelect, modeDef } from './ModeSelect.js';
-import { NeuralBrain } from './NeuralBrain.js';
+import { NeuralBrain, type CameraInfo, type NeuralBrainHandle } from './NeuralBrain.js';
 import { Markdown } from './Markdown.js';
 import { QuestionCard } from './QuestionCard.js';
 import { Icon, type IconName } from './Icon.js';
@@ -21,7 +21,10 @@ import type {
   WebEvent,
 } from './types.js';
 
-type Theme = 'light' | 'dark';
+type Theme = 'light' | 'dark' | 'blueprint' | 'brutal';
+
+/** Thứ tự xoay vòng khi bấm nút theme ở header: sáng → tối → blueprint → brutal → sáng. */
+const THEME_CYCLE: Theme[] = ['light', 'dark', 'blueprint', 'brutal'];
 
 /** Màu nhấn chọn ở header. 'brass' = mặc định (đồng thau), không đặt data-accent. */
 type Accent = 'brass' | 'blue' | 'teal' | 'purple' | 'pink' | 'red' | 'orange';
@@ -252,7 +255,7 @@ function formatTokens(n: number): string {
 }
 
 /** Một thanh usage: nhãn + % + bar. severity đổi màu khi gần đầy. */
-const API_PORTS = [4000, 4001, 4002];
+const API_PORTS = [4000, 4001, 4002, 4003, 4004];
 
 function getAdminApiOrigins(): string[] {
   const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
@@ -267,8 +270,10 @@ export function App() {
     mcpServers?: string[];
     lanUrl?: string;
     lanUrls?: string[];
-    isSafeMode?: boolean;
+    isQcMode?: boolean;
+    isReviewerMode?: boolean;
     isCollabMode?: boolean;
+    isBaMode?: boolean;
     isAdmin?: boolean;
     claudeProfiles?: { name: string; tokenSet: boolean }[];
     currentClaudeProfile?: string;
@@ -276,14 +281,18 @@ export function App() {
     tokenSet?: boolean;
     otherModes?: {
       dev: { repoName: string; defaultCwd: string };
-      safe: { repoName: string; defaultCwd: string };
+      qc: { repoName: string; defaultCwd: string };
       collab: { repoName: string; defaultCwd: string };
+      ba: { repoName: string; defaultCwd: string };
+      review: { repoName: string; defaultCwd: string };
     };
   } | null>(null);
   const [otherModes, setOtherModes] = useState<{
     dev: { repoName: string; defaultCwd: string };
-    safe: { repoName: string; defaultCwd: string };
+    qc: { repoName: string; defaultCwd: string };
     collab: { repoName: string; defaultCwd: string };
+    ba: { repoName: string; defaultCwd: string };
+    review: { repoName: string; defaultCwd: string };
   } | null>(null);
   const [task, setTask] = useState(() => localStorage.getItem('bow-task') || '');
   const [cwd, setCwd] = useState(() => localStorage.getItem('bow-cwd') || '');
@@ -297,8 +306,14 @@ export function App() {
   const [profile, setProfile] = useState(() => localStorage.getItem('bow-profile') || 'auto');
   const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem('bow-selectedModel') || 'claude-opus-4-8');
   const [effort, setEffort] = useState(() => localStorage.getItem('bow-effort') || 'high');
+  // Đội agent (multi-agent): bật reviewer/verifier/impact-scout. Chỉ admin. Mặc định tắt.
+  const [useSubagents, setUseSubagents] = useState(() => localStorage.getItem('bow-subagents') === '1');
   // Bước (điểm trên não neuron) đang được người dùng bấm chọn để xem chi tiết.
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
+  // Toạ độ RA/DEC + zoom + mục tiêu do NeuralBrain phát ra (dùng cho nhãn "đài quan sát").
+  const [cameraInfo, setCameraInfo] = useState<CameraInfo | null>(null);
+  // Ref điều khiển NeuralBrain: gọi resetView() để đưa góc nhìn về mặc định.
+  const neuralBrainRef = useRef<NeuralBrainHandle>(null);
   // Item Activity Log đang mở rộng để xem chi tiết (từng thao tác/lệnh/kết quả).
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   // Nhóm tool liên tiếp trong khung chat đang được mở (bung ra xem từng thao tác).
@@ -317,8 +332,9 @@ export function App() {
   // Danh sách stack có sẵn (nạp từ GET /api/skill-stacks lúc mount).
   const [skillStacks, setSkillStacks] = useState<{ id: string; label: string; ref: string; default: boolean }[]>([]);
   // Trạng thái TẢI skill (core + stack đang chọn) — badge cạnh dropdown Stack. null = chưa biết.
-  type SkillSrc = { id: string; label: string; ref: string; cached: boolean };
-  const [skillStatus, setSkillStatus] = useState<{ core: SkillSrc; stack: SkillSrc | null; ready: boolean } | null>(null);
+  type SkillState = 'synced' | 'stale' | 'missing';
+  type SkillSrc = { id: string; label: string; ref: string; cached: boolean; deployedRef: string | null; state: SkillState };
+  const [skillStatus, setSkillStatus] = useState<{ core: SkillSrc; stack: SkillSrc | null; state: SkillState; ready: boolean } | null>(null);
   const [skillSyncing, setSkillSyncing] = useState(false); // đang chạy Đồng bộ thủ công
   const [skillSyncMsg, setSkillSyncMsg] = useState(''); // kết quả lần đồng bộ gần nhất (hiện qua toast + tooltip badge)
   const [accumulatedCost, setAccumulatedCost] = useState(0);
@@ -334,11 +350,17 @@ export function App() {
     const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
     if (!isLocal) return [''];
     const origins = ['http://localhost:4000'];
-    if (otherModes?.safe?.defaultCwd) {
+    if (otherModes?.qc?.defaultCwd) {
       origins.push('http://localhost:4001');
     }
     if (otherModes?.collab?.defaultCwd) {
       origins.push('http://localhost:4002');
+    }
+    if (otherModes?.ba?.defaultCwd) {
+      origins.push('http://localhost:4003');
+    }
+    if (otherModes?.review?.defaultCwd) {
+      origins.push('http://localhost:4004');
     }
     return origins;
   }, [otherModes]);
@@ -415,6 +437,7 @@ export function App() {
   useEffect(() => { localStorage.setItem('bow-profile', profile); }, [profile]);
   useEffect(() => { localStorage.setItem('bow-selectedModel', selectedModel); }, [selectedModel]);
   useEffect(() => { localStorage.setItem('bow-effort', effort); }, [effort]);
+  useEffect(() => { localStorage.setItem('bow-subagents', useSubagents ? '1' : '0'); }, [useSubagents]);
   useEffect(() => { localStorage.setItem('bow-language', language); }, [language]);
   useEffect(() => { localStorage.setItem('bow-selectedMcps', JSON.stringify(selectedMcps)); }, [selectedMcps]);
   useEffect(() => { localStorage.setItem('bow-stack', stack); }, [stack]);
@@ -425,15 +448,16 @@ export function App() {
       .then((d) => setSkillStacks(Array.isArray(d.stacks) ? d.stacks : []))
       .catch(() => setSkillStacks([]));
   }, []);
-  // Soi trạng thái TẢI skill mỗi khi đổi stack (chỉ admin — endpoint gate requireAdmin).
-  // Không tải gì, chỉ đọc để dựng badge "đã đủ / chưa tải".
+  // Soi trạng thái skill mỗi khi đổi stack HOẶC đổi thư mục dự án (chỉ admin — endpoint gate
+  // requireAdmin). Không tải gì, chỉ đọc để dựng badge synced/stale/missing. Gửi kèm cwd để
+  // backend biết ĐÃ TRẢI vào project chưa (không có cwd chỉ báo được cache, không biết bản project).
   const refreshSkillStatus = useCallback(() => {
     if (!cfg?.isAdmin) { setSkillStatus(null); return; }
-    apiFetch(`/api/skill-status?stack=${encodeURIComponent(stack)}`)
+    apiFetch(`/api/skill-status?stack=${encodeURIComponent(stack)}&cwd=${encodeURIComponent(cwd || '')}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => setSkillStatus(d && d.core ? d : null))
       .catch(() => setSkillStatus(null));
-  }, [cfg?.isAdmin, stack]);
+  }, [cfg?.isAdmin, stack, cwd]);
   useEffect(() => { refreshSkillStatus(); }, [refreshSkillStatus]);
   // ĐỒNG BỘ THỦ CÔNG: tải + trải core + stack đang chọn vào .claude/skills/ của cwd, không cần chạy phiên.
   const syncSkillsNow = useCallback(async () => {
@@ -510,9 +534,9 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, conversationId]);
   const [pickerOpen, setPickerOpen] = useState(false);
-  // Đích của picker: 'cwd' = chọn thư mục làm việc thường; 'safe-cwd' = Admin đổi
-  // source mà QC hỏi đáp (Safe Mode). Quyết định nút "Chọn thư mục này" làm gì.
-  const [pickerTarget, setPickerTarget] = useState<'cwd' | 'dev-cwd' | 'safe-cwd' | 'collab-cwd'>('cwd');
+  // Đích của picker: 'cwd' = chọn thư mục làm việc thường; 'qc-cwd' = Admin đổi
+  // source mà QC hỏi đáp (QC Mode). Quyết định nút "Chọn thư mục này" làm gì.
+  const [pickerTarget, setPickerTarget] = useState<'cwd' | 'dev-cwd' | 'qc-cwd' | 'collab-cwd' | 'ba-cwd' | 'reviewer-cwd'>('cwd');
   const [pickerPath, setPickerPath] = useState('');
   const [pickerParent, setPickerParent] = useState<string | null>(null);
   const [pickerDirs, setPickerDirs] = useState<string[]>([]);
@@ -701,9 +725,12 @@ export function App() {
       .then((d: { usage: UsageSnapshot }) => {
         setUsage((prev) => ({
           ...d.usage,
-          contextTokens: prev?.contextTokens ?? d.usage.contextTokens,
-          contextMaxTokens: prev?.contextMaxTokens ?? d.usage.contextMaxTokens,
-          contextPercentage: prev?.contextPercentage ?? d.usage.contextPercentage,
+          // Luôn kế thừa context từ prev (kể cả null sau khi reset cuộc mới) — /api/usage
+          // đọc phiên trống nên context của nó không đáng tin; chỉ event 'usage' của lượt
+          // chạy mới đặt số thật. Không dùng `??` để tránh nạp lại context phiên trống.
+          contextTokens: prev ? prev.contextTokens : d.usage.contextTokens,
+          contextMaxTokens: prev ? prev.contextMaxTokens : d.usage.contextMaxTokens,
+          contextPercentage: prev ? prev.contextPercentage : d.usage.contextPercentage,
         }));
       })
       .catch(() => {})
@@ -1271,6 +1298,9 @@ export function App() {
       setPending([]);
       setQuestions([]);
       setSelectedStepId(null);
+      // Reset context window — số của cuộc trước không còn đúng. Lượt chạy đầu (resume)
+      // sẽ phát event 'usage' với context thật của cuộc vừa mở.
+      setUsage(prev => (prev ? { ...prev, contextTokens: null, contextMaxTokens: null, contextPercentage: null } : prev));
       sessionBaselineRef.current = (conversation.items ?? []).length;
       localStorage.removeItem('bow-session-id');
       setHistPanelOpen(false);
@@ -1322,15 +1352,19 @@ export function App() {
 
   const [devRepoLabel, setDevRepoLabel] = useState('');
   const [devCwd, setDevCwd] = useState('');
-  const [safeRepoLabel, setSafeRepoLabel] = useState('');
-  const [safeCwd, setSafeCwd] = useState('');
+  const [qcRepoLabel, setQcRepoLabel] = useState('');
+  const [qcCwd, setQcCwd] = useState('');
   const [collabRepoLabel, setCollabRepoLabel] = useState('');
   const [collabCwd, setCollabCwd] = useState('');
+  const [baRepoLabel, setBaRepoLabel] = useState('');
+  const [baCwd, setBaCwd] = useState('');
+  const [reviewerRepoLabel, setReviewerRepoLabel] = useState('');
+  const [reviewerCwd, setReviewerCwd] = useState('');
 
   // Nạp repo của các chế độ khác khi là admin
   useEffect(() => {
     if (!cfg?.isAdmin) return;
-    
+
     const fetchConfigs = () => {
       apiFetch('/api/config')
         .then((r) => r.json())
@@ -1338,10 +1372,18 @@ export function App() {
           if (c.otherModes) {
             setDevRepoLabel(c.otherModes.dev.repoName);
             setDevCwd(c.otherModes.dev.defaultCwd);
-            setSafeRepoLabel(c.otherModes.safe.repoName);
-            setSafeCwd(c.otherModes.safe.defaultCwd);
+            setQcRepoLabel(c.otherModes.qc.repoName);
+            setQcCwd(c.otherModes.qc.defaultCwd);
             setCollabRepoLabel(c.otherModes.collab.repoName);
             setCollabCwd(c.otherModes.collab.defaultCwd);
+            if (c.otherModes.ba) {
+              setBaRepoLabel(c.otherModes.ba.repoName);
+              setBaCwd(c.otherModes.ba.defaultCwd);
+            }
+            if (c.otherModes.review) {
+              setReviewerRepoLabel(c.otherModes.review.repoName);
+              setReviewerCwd(c.otherModes.review.defaultCwd);
+            }
           }
         })
         .catch(() => {});
@@ -1352,17 +1394,17 @@ export function App() {
     return () => clearInterval(interval);
   }, [cfg?.isAdmin]);
 
-  const openPicker = (initialPath: string, target: 'cwd' | 'dev-cwd' | 'safe-cwd' | 'collab-cwd' = 'cwd') => {
+  const openPicker = (initialPath: string, target: 'cwd' | 'dev-cwd' | 'qc-cwd' | 'collab-cwd' | 'ba-cwd' | 'reviewer-cwd' = 'cwd') => {
     setPickerError('');
     setPickerTarget(target);
     setPickerOpen(true);
     fetchDirs(initialPath || cfg?.defaultCwd || '');
   };
 
-  const applyPortCwd = async (target: 'dev-cwd' | 'safe-cwd' | 'collab-cwd', dir: string) => {
+  const applyPortCwd = async (target: 'dev-cwd' | 'qc-cwd' | 'collab-cwd' | 'ba-cwd' | 'reviewer-cwd', dir: string) => {
     try {
-      const port = target === 'dev-cwd' ? 4000 : target === 'safe-cwd' ? 4001 : 4002;
-      const res = await fetch(`http://localhost:${port}/api/safe-cwd`, {
+      const port = target === 'dev-cwd' ? 4000 : target === 'qc-cwd' ? 4001 : target === 'collab-cwd' ? 4002 : target === 'ba-cwd' ? 4003 : 4004;
+      const res = await fetch(`http://localhost:${port}/api/qc-cwd`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ cwd: dir }),
@@ -1370,10 +1412,10 @@ export function App() {
       const data = await res.json();
       if (!res.ok) { setPickerError(data.error ?? 'Đổi source thất bại.'); return; }
       
-      if (target === 'safe-cwd') {
-        setSafeRepoLabel(data.repoName);
-        setSafeCwd(data.cwd);
-        if (cfg?.isSafeMode) {
+      if (target === 'qc-cwd') {
+        setQcRepoLabel(data.repoName);
+        setQcCwd(data.cwd);
+        if (cfg?.isQcMode) {
           setCfg((c) => (c ? { ...c, defaultCwd: data.cwd, repoName: data.repoName } : c));
         }
       } else if (target === 'collab-cwd') {
@@ -1382,10 +1424,22 @@ export function App() {
         if (cfg?.isCollabMode) {
           setCfg((c) => (c ? { ...c, defaultCwd: data.cwd, repoName: data.repoName } : c));
         }
+      } else if (target === 'ba-cwd') {
+        setBaRepoLabel(data.repoName);
+        setBaCwd(data.cwd);
+        if (cfg?.isBaMode) {
+          setCfg((c) => (c ? { ...c, defaultCwd: data.cwd, repoName: data.repoName } : c));
+        }
+      } else if (target === 'reviewer-cwd') {
+        setReviewerRepoLabel(data.repoName);
+        setReviewerCwd(data.cwd);
+        if (cfg?.isReviewerMode) {
+          setCfg((c) => (c ? { ...c, defaultCwd: data.cwd, repoName: data.repoName } : c));
+        }
       } else if (target === 'dev-cwd') {
         setDevRepoLabel(data.repoName);
         setDevCwd(data.cwd);
-        if (!cfg?.isSafeMode && !cfg?.isCollabMode) {
+        if (!cfg?.isQcMode && !cfg?.isReviewerMode && !cfg?.isCollabMode && !cfg?.isBaMode) {
           setCfg((c) => (c ? { ...c, defaultCwd: data.cwd, repoName: data.repoName } : c));
         }
       }
@@ -1664,7 +1718,7 @@ export function App() {
   const [theme, setTheme] = useState<Theme>(() => {
     // Lần đầu: theo cài đặt hệ điều hành. Sau đó ưu tiên lựa chọn user đã lưu.
     const saved = localStorage.getItem('bow-theme') as Theme | null;
-    if (saved === 'light' || saved === 'dark') return saved;
+    if (saved && THEME_CYCLE.includes(saved)) return saved;
     return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   });
   // Màu nhấn (accent) — độc lập với sáng/tối. 'brass' = mặc định (không đặt data-accent).
@@ -1814,10 +1868,10 @@ export function App() {
           setOtherModes(c.otherModes);
         }
         if (!cwd && c.defaultCwd) setCwd(c.defaultCwd);
-        // Safe/QC Mode chỉ hỏi đáp read-only → LUÔN dùng Sonnet (nhẹ/rẻ), bất kể
+        // QC Mode chỉ hỏi đáp read-only → LUÔN dùng Sonnet (nhẹ/rẻ), bất kể
         // localStorage. Backend cũng ép Sonnet ở mode này nên UI phải khớp để không
         // hiển thị Opus mà thực chất chạy Sonnet.
-        if (c.isSafeMode) {
+        if (c.isQcMode) {
           setSelectedModel('claude-sonnet-5');
         }
         if (c.mcpServers) {
@@ -2107,6 +2161,7 @@ export function App() {
       language,
       cwd: cwd.trim() || undefined,
       model: selectedModel,
+      useSubagents,
     };
 
     let res: Response;
@@ -2128,6 +2183,7 @@ export function App() {
           language,
           cwd: cwd.trim() || undefined,
           model: selectedModel,
+          useSubagents,
           conversationId: conversationId || undefined,
           resumeContext: sentResumeContext || undefined,
         }),
@@ -2221,8 +2277,20 @@ export function App() {
           setAccumulatedCost((prev) => prev + ev.costUsd);
           break;
         case 'usage':
-          // Snapshot đầy đủ trong lượt chạy: hạn mức + context window THẬT của hội thoại.
-          setUsage(ev.usage);
+          // Cập nhật usage trong lượt chạy. Có 2 loại event: (1) realtime giữa chừng — chỉ
+          // mang context window mới, rateLimits rỗng; (2) đầy đủ ở cuối lượt — cả hạn mức
+          // gói + context. Merge để event realtime cập nhật context mà KHÔNG xóa rateLimits
+          // đang hiển thị: chỉ nhận rateLimits/subscription mới khi chúng thực sự có dữ liệu.
+          setUsage((prev) => {
+            const hasRL = ev.usage.rateLimits.length > 0;
+            return {
+              rateLimits: hasRL ? ev.usage.rateLimits : prev?.rateLimits ?? ev.usage.rateLimits,
+              subscriptionType: hasRL ? ev.usage.subscriptionType : prev?.subscriptionType ?? ev.usage.subscriptionType,
+              contextTokens: ev.usage.contextTokens,
+              contextMaxTokens: ev.usage.contextMaxTokens,
+              contextPercentage: ev.usage.contextPercentage,
+            };
+          });
           break;
         case 'error':
           if (ev.isSessionLimit) {
@@ -2424,6 +2492,9 @@ export function App() {
     setActiveConvId(null); // cuộc kế tiếp = bản ghi mới
     setNeedResumeContext(false);
     setSelectedStepId(null);
+    // Reset context window về trống — cuộc mới chưa có ngữ cảnh. Giữ rateLimits
+    // (hạn mức gói, không thuộc hội thoại); event 'usage' của lượt chạy đầu sẽ nạp số thật.
+    setUsage(prev => (prev ? { ...prev, contextTokens: null, contextMaxTokens: null, contextPercentage: null } : prev));
     localStorage.removeItem('bow-conversation-id');
     localStorage.removeItem('bow-active-conv-id');
     localStorage.removeItem('bow-session-id');
@@ -2582,35 +2653,52 @@ export function App() {
 
   const pipelineNodes = buildActivityNodes();
 
+  // Bộ mã sao/chòm sao cho subagent phụ động (ngoài 4 core). Chọn theo hash tên → ổn định
+  // giữa các lần render, không đụng mã của core (SOL/VEGA/ORION/LYRA).
+  const STAR_CODES = [
+    'RIGEL', 'ANTARES', 'ALTAIR', 'SIRIUS', 'DENEB', 'CAPELLA',
+    'POLLUX', 'SPICA', 'MIRA', 'CASTOR', 'ATLAS', 'MAIA',
+  ];
+  const starCodeFor = (name: string): string => {
+    let h = 0;
+    for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0x7fffffff;
+    return STAR_CODES[h % STAR_CODES.length];
+  };
+
   const buildAgentNodes = () => {
     const rawNodes = pipelineNodes;
-    const agentsMap = new Map<string, { id: string; label: string; type: string; detail: string; active: boolean }>();
+    const agentsMap = new Map<string, { id: string; label: string; role?: string; type: string; detail: string; active: boolean }>();
 
-    // Luôn hiển thị 4 default agents cốt lõi từ đầu
+    // Luôn hiển thị 4 default agents cốt lõi từ đầu.
+    // Nhãn đặt theo mã thiên văn (chủ đề Observatory): mã sao/chòm sao viết to + vai trò nhỏ.
     agentsMap.set('main', {
       id: 'main',
-      label: 'Bow Agent (Main)',
+      label: 'SOL', // Mặt Trời — nhân điều phối, khớp thái dương vàng
+      role: 'Điều phối',
       type: 'approval', // Thái dương vàng
       detail: 'Agent chính điều phối và thực thi thay đổi.',
       active: false,
     });
     agentsMap.set('reviewer', {
       id: 'reviewer',
-      label: 'Reviewer Agent',
+      label: 'VEGA', // Sao sáng chòm Thiên Cầm — rà soát
+      role: 'Rà soát',
       type: 'thinking', // Sao xung tím
       detail: 'Chưa hoạt động. Tự động kích hoạt khi có yêu cầu rà soát mã nguồn.',
       active: false,
     });
     agentsMap.set('verifier', {
       id: 'verifier',
-      label: 'Verifier Agent',
+      label: 'ORION', // Chòm Lạp Hộ — kiểm thử/xác minh
+      role: 'Kiểm thử',
       type: 'tool', // Hành tinh xanh lá
       detail: 'Chưa hoạt động. Tự động kích hoạt khi cần kiểm thử và xác minh thay đổi.',
       active: false,
     });
     agentsMap.set('impact-scout', {
       id: 'impact-scout',
-      label: 'Impact Scout Agent',
+      label: 'LYRA', // Chòm sao trinh sát — khảo sát tác động
+      role: 'Khảo sát',
       type: 'start', // Sao xanh lam khổng lồ
       detail: 'Chưa hoạt động. Tự động kích hoạt khi cần khảo sát tác động dự án.',
       active: false,
@@ -2643,11 +2731,12 @@ export function App() {
             existing.detail = detail;
           }
         } else {
-          // Viết hoa chữ cái đầu
-          const formattedLabel = agentName.charAt(0).toUpperCase() + agentName.slice(1) + ' Agent';
+          // Subagent phụ động: mã sao viết to + tên gốc (viết hoa đầu) làm vai trò.
+          const roleLabel = agentName.charAt(0).toUpperCase() + agentName.slice(1);
           agentsMap.set(agentKey, {
             id: agentKey,
-            label: formattedLabel,
+            label: starCodeFor(agentKey),
+            role: roleLabel,
             type,
             detail,
             active: isThisActive,
@@ -2696,18 +2785,22 @@ export function App() {
     }
   }
 
-  // Safe Mode (QC hỏi đáp read-only): ẩn bớt các nút/điều khiển kỹ thuật, khoá repo.
-  // Bật bằng cách chạy `npm run ui:safe` (đặt BOW_SAFE_MODE=true ở backend).
-  const safe = cfg ? !!cfg.isSafeMode : true;
+  // QC Mode (QC hỏi đáp read-only + Skill + Jira): ẩn bớt các nút/điều khiển kỹ thuật, khoá repo.
+  // Bật bằng cách chạy `npm run ui:qc` (đặt BOW_QC_MODE=true ở backend).
+  const qc = cfg ? !!cfg.isQcMode : true;
+  const reviewer = cfg ? !!cfg.isReviewerMode : false;
   const collab = cfg ? !!cfg.isCollabMode : false;
+  const ba = cfg ? !!cfg.isBaMode : false;
   const pendingAccessCount = accessUsers.filter((u) => u.status === 'pending').length;
   // Tên repo hiển thị ở badge "Source" trên header:
-  // - Safe Mode: repo bị khoá vào cfg (safeCwd) → dùng repoName/defaultCwd từ backend.
+  // - QC Mode: repo bị khoá vào cfg (qcCwd) → dùng repoName/defaultCwd từ backend.
   // - Thường: repo là cwd người dùng đang chọn ở composer (thứ lượt chạy sẽ dùng) →
   //   lấy tên thư mục từ chính cwd, để QC/mọi người luôn biết đang hỏi source nào.
   const cwdRepoLabel = cwd?.trim() ? cwd.trim().split('/').filter(Boolean).pop() : '';
-  const localSafeRepoLabel = cfg?.repoName || (cfg?.defaultCwd ? cfg.defaultCwd.split('/').filter(Boolean).pop() : '') || 'monorepo';
-  const repoLabel = safe ? localSafeRepoLabel : (cwdRepoLabel || '(chưa chọn)');
+  const localQcRepoLabel = cfg?.repoName || (cfg?.defaultCwd ? cfg.defaultCwd.split('/').filter(Boolean).pop() : '') || 'monorepo';
+  // QC và Reviewer đều là read-only-share: ẩn UI kỹ thuật + khoá repo giống nhau. Gộp vào 1 cờ.
+  const readonlyShare = qc || reviewer;
+  const repoLabel = readonlyShare ? localQcRepoLabel : (cwdRepoLabel || '(chưa chọn)');
 
   // Cổng duyệt truy cập theo tên: chưa được vào thì chặn toàn bộ app bằng màn khoá.
   if (gateState !== 'open') {
@@ -2782,11 +2875,23 @@ export function App() {
   }
 
   return (
-    <div className={`app${safe ? ' safe-mode' : ''}${collab ? ' collab-mode' : ''}`}>
+    <div className={`app${qc ? ' qc-mode' : ''}${reviewer ? ' reviewer-mode' : ''}${collab ? ' collab-mode' : ''}${ba ? ' ba-mode' : ''}`}>
       {collab && (
         <div className="collab-banner" role="status">
           🤝 <strong>Collab Mode</strong> — bạn code như dev; lệnh hủy hoại (xoá, deploy, ghi ngoài repo)
           {cfg?.isAdmin ? ' bạn tự duyệt.' : ' cần admin duyệt từ xa. Git tự do.'}
+        </div>
+      )}
+      {ba && (
+        <div className="ba-banner" role="status">
+          📋 <strong>BA Mode</strong> — bạn ĐỌC repo, ghi TÀI LIỆU (docs/, *.md) và tạo/sửa Jira ticket.
+          Không sửa source code, không đổi DB/hạ tầng.
+        </div>
+      )}
+      {reviewer && (
+        <div className="reviewer-banner" role="status">
+          🔍 <strong>Reviewer Mode</strong> — bạn ĐỌC code, review PR (git/gh diff) và comment/approve
+          qua <code>gh pr</code>. Không sửa code, không merge/push.
         </div>
       )}
       <header className="topbar">
@@ -2814,14 +2919,14 @@ export function App() {
                   <span className="rv" style={{ color: 'var(--brass)' }}>{devRepoLabel}</span>
                 </button>
               )}
-              {safeRepoLabel && (
+              {qcRepoLabel && (
                 <button
                   className="readout readout-btn"
-                  title={`Safe Mode Repo: ${safeCwd} — bấm để đổi`}
-                  onClick={() => openPicker(safeCwd || '', 'safe-cwd')}
+                  title={`QC Mode Repo: ${qcCwd} — bấm để đổi`}
+                  onClick={() => openPicker(qcCwd || '', 'qc-cwd')}
                 >
-                  <span className="rl">Safe Src</span>
-                  <span className="rv" style={{ color: 'var(--teal)' }}>{safeRepoLabel}</span>
+                  <span className="rl">QC Src</span>
+                  <span className="rv" style={{ color: 'var(--teal)' }}>{qcRepoLabel}</span>
                 </button>
               )}
               {collabRepoLabel && (
@@ -2834,9 +2939,29 @@ export function App() {
                   <span className="rv" style={{ color: 'var(--red)' }}>{collabRepoLabel}</span>
                 </button>
               )}
+              {baRepoLabel && (
+                <button
+                  className="readout readout-btn"
+                  title={`BA Mode Repo: ${baCwd} — bấm để đổi`}
+                  onClick={() => openPicker(baCwd || '', 'ba-cwd')}
+                >
+                  <span className="rl">BA Src</span>
+                  <span className="rv" style={{ color: 'var(--gold, #c9a227)' }}>{baRepoLabel}</span>
+                </button>
+              )}
+              {reviewerRepoLabel && (
+                <button
+                  className="readout readout-btn"
+                  title={`Reviewer Mode Repo: ${reviewerCwd} — bấm để đổi`}
+                  onClick={() => openPicker(reviewerCwd || '', 'reviewer-cwd')}
+                >
+                  <span className="rl">Review Src</span>
+                  <span className="rv" style={{ color: 'var(--violet, #8b5cf6)' }}>{reviewerRepoLabel}</span>
+                </button>
+              )}
             </>
           ) : (
-            (safe || collab) && (
+            (readonlyShare || collab) && (
               <span className="readout" title={`Đang hỏi đáp source: ${repoLabel}`}>
                 <span className="rl">Source</span>
                 <span className="rv" style={{ color: 'var(--brass)' }}>{repoLabel}</span>
@@ -2866,7 +2991,7 @@ export function App() {
               </span>
             </span>
           ) : null}
-          {!safe && (
+          {!readonlyShare && (
             <span className="readout" title="Chi phí tích lũy phiên này">
               <span className="rl">Cost</span>
               <span className="rv" style={{ color: accumulatedCost > 2 ? 'var(--danger)' : undefined }}>
@@ -2874,7 +2999,7 @@ export function App() {
               </span>
             </span>
           )}
-          {!safe && (
+          {!readonlyShare && (
             <span className="readout" title={modeDef(mode).desc}>
               <span className="rl">Mode</span>
               <span className={`rv mode-${mode}`}>
@@ -2945,7 +3070,7 @@ export function App() {
             </div>
           )}
           {/* Hạn mức phiên 5 giờ (Session) — gọn trên header. Bấm để mở panel usage đầy đủ. */}
-          {!safe && (() => {
+          {!readonlyShare && (() => {
             const s = usage?.rateLimits.find((w) => /session|5\s*h|5hr/i.test(w.label));
             const pct = s && s.utilization != null ? Math.round(s.utilization) : null;
             return (
@@ -2971,7 +3096,7 @@ export function App() {
           })()}
           {/* Context window — dung lượng token đã dùng / tối đa (vd 22.0k / 1M) của
               hội thoại hiện tại, kèm % trong tooltip. */}
-          {!safe && (() => {
+          {!readonlyShare && (() => {
             const has = usage?.contextTokens != null && !!usage.contextMaxTokens;
             const pct = has && usage!.contextPercentage != null ? Math.round(usage!.contextPercentage) : null;
             const used = has ? formatTokens(usage!.contextTokens!) : null;
@@ -3022,9 +3147,9 @@ export function App() {
           >
             <Icon name="chat" size={18} />
           </button>
-          {/* Admin: MCP CHUNG (mọi mode trừ Safe read-only). User LAN đã duyệt: MCP RIÊNG
-              của họ — hiện KỂ CẢ Safe/Collab, vì chỉ ảnh hưởng chính họ, không đụng chung. */}
-          {((cfg?.isAdmin && !safe) || (!cfg?.isAdmin && gateState === 'open')) && (
+          {/* Admin: MCP CHUNG (mọi mode trừ QC read-only). User LAN đã duyệt: MCP RIÊNG
+              của họ — hiện KỂ CẢ QC/Collab, vì chỉ ảnh hưởng chính họ, không đụng chung. */}
+          {((cfg?.isAdmin && !readonlyShare) || (!cfg?.isAdmin && gateState === 'open')) && (
             <button
               className="theme-btn"
               title={cfg?.isAdmin ? 'Quản lý MCP server chung (Jira/Supabase/... cho agent)' : 'MCP riêng của bạn (ghi đè MCP trùng tên do admin cấu hình)'}
@@ -3033,7 +3158,7 @@ export function App() {
               <Icon name="mcp" size={18} />
             </button>
           )}
-          {!safe && (
+          {!readonlyShare && (
             <button
               className="theme-btn"
               title="Workspace — nhóm nhiều repo (BE/FE/...) thành 1 sản phẩm + trí nhớ chung"
@@ -3078,10 +3203,34 @@ export function App() {
           <AccentPicker value={accent} options={ACCENTS} onChange={(id) => setAccent(id as Accent)} />
           <button
             className="theme-btn"
-            title={theme === 'light' ? 'Chuyển giao diện tối' : 'Chuyển giao diện sáng'}
-            onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
+            title={(() => {
+              // Nút hiển thị icon + đích của theme KẾ TIẾP trong vòng lặp (light→dark→blueprint→…).
+              const next = THEME_CYCLE[(THEME_CYCLE.indexOf(theme) + 1) % THEME_CYCLE.length];
+              const label: Record<Theme, string> = {
+                light: 'giao diện sáng (giấy da)',
+                dark: 'giao diện tối (đài quan sát)',
+                blueprint: 'giao diện blueprint (bản vẽ)',
+                brutal: 'giao diện Neo Brutalism (khối phẳng)',
+              };
+              return `Chuyển sang ${label[next]}`;
+            })()}
+            onClick={() =>
+              setTheme(THEME_CYCLE[(THEME_CYCLE.indexOf(theme) + 1) % THEME_CYCLE.length])
+            }
           >
-            <Icon name={theme === 'light' ? 'moon' : 'sun'} size={18} />
+            <Icon
+              name={(() => {
+                const next = THEME_CYCLE[(THEME_CYCLE.indexOf(theme) + 1) % THEME_CYCLE.length];
+                return next === 'light'
+                  ? 'sun'
+                  : next === 'dark'
+                    ? 'moon'
+                    : next === 'blueprint'
+                      ? 'blueprint'
+                      : 'brutal';
+              })()}
+              size={18}
+            />
           </button>
         </div>
       </header>
@@ -3089,16 +3238,74 @@ export function App() {
       <div className="main-layout">
         <aside className="sidebar-pipeline">
           {/* Usage (Session 5hr + Context) đã chuyển lên header cho gọn. */}
-          <div className="sidebar-pipeline-title">Star Chart</div>
-          <div className="neural-net-container">
+          {(() => {
+            const liveCount = agentNodes.filter((n) => n.active).length;
+            return (
+              <div className="sidebar-pipeline-title star-chart-title">
+                <span>Star Chart</span>
+                <span
+                  className={`star-status${running ? ' live' : ''}`}
+                  title={running ? 'Agent đang hoạt động' : 'Không có agent hoạt động'}
+                >
+                  <span className="star-status-dot" />
+                  {running ? (liveCount > 0 ? `TRACKING · ${liveCount}` : 'TRACKING') : 'IDLE'}
+                </span>
+              </div>
+            );
+          })()}
+          <div className={`neural-net-container${running ? ' is-live' : ''}`}>
             <NeuralBrain
+              ref={neuralBrainRef}
               active={running}
               steps={agentNodes}
               selectedId={selectedStepId}
               onSelect={(s) => setSelectedStepId((prev) => (prev === s.id ? null : s.id))}
               theme={theme}
               accent={accent}
+              onCamera={setCameraInfo}
             />
+            {/* Dấu định vị 4 góc — khung ngắm kính thiên văn */}
+            <span className="viewport-corner tl" />
+            <span className="viewport-corner tr" />
+            <span className="viewport-corner bl" />
+            <span className="viewport-corner br" />
+            {/* Nhãn toạ độ động do camera phát ra (thay nhãn tĩnh cũ trong CSS) */}
+            <div className="viewport-readout">
+              {cameraInfo
+                ? `RA ${cameraInfo.ra} · DEC ${cameraInfo.dec}`
+                : 'RA 12ʰ00ᵐ · DEC +05°'}
+            </div>
+            {cameraInfo && cameraInfo.zoom > 1.05 && (
+              <div className="viewport-zoom">×{cameraInfo.zoom.toFixed(1)}</div>
+            )}
+            {cameraInfo?.targetLabel && (
+              <div className="viewport-target" title={`Camera đang khoá: ${cameraInfo.targetLabel}`}>
+                <Icon name="target" size={11} />
+                {cameraInfo.targetLabel.replace(/ Agent$/, '')}
+              </div>
+            )}
+            {/* Nút đưa góc nhìn về mặc định */}
+            <button
+              className="viewport-reset"
+              title="Đưa góc nhìn về mặc định"
+              onClick={() => {
+                neuralBrainRef.current?.resetView();
+                setSelectedStepId(null);
+              }}
+            >
+              <Icon name="refresh" size={13} />
+            </button>
+          </div>
+
+          {/* Chú giải loại thiên thể + gợi ý điều khiển. Mã sao khớp nhãn trên galaxy. */}
+          <div className="star-legend">
+            <span className="star-legend-item" data-k="approval"><i /> SOL<em>Điều phối</em></span>
+            <span className="star-legend-item" data-k="thinking"><i /> VEGA<em>Rà soát</em></span>
+            <span className="star-legend-item" data-k="tool"><i /> ORION<em>Kiểm thử</em></span>
+            <span className="star-legend-item" data-k="start"><i /> LYRA<em>Khảo sát</em></span>
+          </div>
+          <div className="star-hint">
+            <Icon name="info" size={11} /> Kéo để xoay · Ctrl + cuộn để phóng to · bấm thiên thể để xem chi tiết
           </div>
 
           {/* Chi tiết bước được bấm trên bản đồ vũ trụ — "đang làm gì ở bước đó". */}
@@ -3115,7 +3322,9 @@ export function App() {
               <div className={`step-detail step-${sel.type}`}>
                 <div className="step-detail-head">
                   <span className="step-detail-label">
-                    {sel.active && <Icon name="pending" size={14} className="step-detail-spin" />}{sel.label}
+                    {sel.active && <Icon name="pending" size={14} className="step-detail-spin" />}
+                    {sel.label}
+                    {sel.role && <span className="step-detail-role"> · {sel.role}</span>}
                   </span>
                   <button
                     className="step-detail-close"
@@ -3483,7 +3692,7 @@ export function App() {
                 👤 Từ <strong>{a.clientIp}</strong> · phiên <code>{a.sessionId.slice(0, 8)}</code>
                 {a.apiOrigin && (
                   <span style={{ marginLeft: '6px', color: 'var(--brass)', fontSize: '11px' }}>
-                    ({a.apiOrigin.includes('4002') ? 'Collab' : a.apiOrigin.includes('4001') ? 'Safe' : 'Dev'})
+                    ({a.apiOrigin.includes('4002') ? 'Collab' : a.apiOrigin.includes('4001') ? 'QC' : a.apiOrigin.includes('4003') ? 'BA' : a.apiOrigin.includes('4004') ? 'Review' : 'Dev'})
                   </span>
                 )}
               </div>
@@ -3610,16 +3819,19 @@ export function App() {
         }}
       >
         <div className="controls">
-          {/* Safe/QC Mode: backend ép chế độ 'plan' → ẩn ô Chế độ (chọn cũng vô nghĩa).
+          {/* Hàng 1 — CẤU HÌNH CHẠY: chế độ, model, profile, stack skill.
+              Nhóm theo chức năng (xuống hàng có chủ đích) cho gọn thay vì 1 hàng dài. */}
+          <div className="control-row" data-group="Cấu hình">
+          {/* QC Mode: backend ép chế độ 'plan' → ẩn ô Chế độ (chọn cũng vô nghĩa).
               Vẫn cho QC đổi Model/Profile/Effort để chọn model nhẹ hơn khi hỏi. */}
-          {!safe && (
+          {!readonlyShare && (
           <div className="field">
             Chế độ:
             <ModeSelect value={mode} onChange={setMode} disabled={running} />
           </div>
           )}
-          {safe ? (
-            // Safe/QC Mode cố định Sonnet (backend cũng ép) → khoá picker, chỉ hiện nhãn.
+          {readonlyShare ? (
+            // QC Mode cố định Sonnet (backend cũng ép) → khoá picker, chỉ hiện nhãn.
             <label>
               Model:
               <PixelSelect
@@ -3674,18 +3886,34 @@ export function App() {
               {/* Badge trạng thái tải skill + nút Đồng bộ thủ công — chỉ admin (endpoint gate requireAdmin).
                   Badge cho biết core + stack đang chọn đã cache (chạy offline được) chưa; nút Sync tải + trải ngay.
                   Kết quả lần đồng bộ gần nhất (skillSyncMsg) gộp luôn vào tooltip của badge → không chiếm 1 dòng riêng. */}
-              {cfg?.isAdmin && skillStatus && (
-                <span
-                  title={
-                    `Core (${skillStatus.core.ref}): ${skillStatus.core.cached ? 'đã tải' : 'chưa tải'}` +
-                    (skillStatus.stack ? `\nStack ${skillStatus.stack.label} (${skillStatus.stack.ref}): ${skillStatus.stack.cached ? 'đã tải' : 'chưa tải'}` : '') +
-                    (skillSyncMsg ? `\n\n${skillSyncMsg}` : '')
-                  }
-                  style={{ fontSize: '14px', lineHeight: 1, cursor: 'default' }}
-                >
-                  {skillStatus.ready ? '✅' : '⬇️'}
-                </span>
-              )}
+              {cfg?.isAdmin && skillStatus && (() => {
+                // Mô tả 1 nguồn cho tooltip: state + ref registry, kèm ref đã trải nếu lệch.
+                const srcLine = (label: string, s: SkillSrc) => {
+                  const tag =
+                    s.state === 'synced' ? `✅ đã trải, đúng bản (${s.ref})`
+                    : s.state === 'stale' ? `⚠️ đã trải bản cũ ${s.deployedRef || '?'} → registry đã lên ${s.ref}${s.cached ? '' : ' (chưa cache)'}`
+                    : `⬇️ chưa trải vào dự án (${s.ref})${s.cached ? ', đã cache sẵn' : ''}`;
+                  return `${label}: ${tag}`;
+                };
+                const icon = skillStatus.state === 'synced' ? '✅' : skillStatus.state === 'stale' ? '⚠️' : '⬇️';
+                const head =
+                  skillStatus.state === 'synced' ? 'Skill đã đồng bộ với dự án'
+                  : skillStatus.state === 'stale' ? 'Skill trong dự án CŨ hơn registry — bấm 🔄 để cập nhật'
+                  : 'Skill CHƯA trải vào dự án — bấm 🔄 để tải & trải';
+                return (
+                  <span
+                    title={
+                      head + '\n\n' +
+                      srcLine('Core', skillStatus.core) +
+                      (skillStatus.stack ? '\n' + srcLine(`Stack ${skillStatus.stack.label}`, skillStatus.stack) : '') +
+                      (skillSyncMsg ? `\n\n${skillSyncMsg}` : '')
+                    }
+                    style={{ fontSize: '14px', lineHeight: 1, cursor: 'default' }}
+                  >
+                    {icon}
+                  </span>
+                );
+              })()}
               {cfg?.isAdmin && (
                 <button
                   type="button"
@@ -3699,6 +3927,9 @@ export function App() {
               )}
             </label>
           )}
+          </div>
+          {/* Hàng 2 — TÀI KHOẢN & AGENT: profile Claude, effort, đội agent, và repo (đẩy phải). */}
+          <div className="control-row" data-group="Agent">
           {cfg?.claudeProfiles && cfg.claudeProfiles.length > 0 && (
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
               Tài khoản:
@@ -3853,11 +4084,28 @@ export function App() {
               ]}
             />
           </label>
+          {/* Đội agent (multi-agent): bật reviewer/verifier/impact-scout. Tốn token hơn nên
+              CHỈ admin thấy/dùng; server cũng cưỡng chế lại (allowSubagents = isAdmin && …). */}
+          {cfg?.isAdmin && (
+            <label
+              className={`bow-switch${useSubagents ? ' on' : ''}${running ? ' disabled' : ''}`}
+              title="Bật đội agent phụ: reviewer (phản biện kế hoạch), verifier (kiểm chứng runtime), impact-scout (quét ảnh hưởng). Chất lượng cao hơn nhưng tốn token hơn."
+            >
+              <input
+                type="checkbox"
+                checked={useSubagents}
+                disabled={running}
+                onChange={(e) => setUseSubagents(e.target.checked)}
+              />
+              <span className="bow-switch-track" aria-hidden="true"><span className="bow-switch-thumb" /></span>
+              <span className="bow-switch-label">🤖 Đội agent</span>
+            </label>
+          )}
           {/* Ô chọn thư mục repo (cwd) — thu gọn, nằm cuối hàng bên phải Effort.
               Chỉ HIỂN THỊ tên folder (basename, vd "monorepo"); cwd đầy đủ vẫn giữ ở state
               để gửi backend, và hiện qua tooltip khi hover.
-              Ẩn ở Safe/QC Mode: repo bị khoá vào safeCwd, chỉ Admin đổi được (chỗ khác). */}
-          {!safe && (
+              Ẩn ở QC Mode: repo bị khoá vào qcCwd, chỉ Admin đổi được (chỗ khác). */}
+          {!readonlyShare && (
             <div
               className="cwd-container"
               style={{ display: 'flex', gap: '6px', alignItems: 'stretch', marginLeft: 'auto', flexShrink: 0 }}
@@ -3896,12 +4144,20 @@ export function App() {
               )}
             </div>
           )}
+          </div>
         </div>
 
-        {!safe && detected && (
+        {!readonlyShare && detected && (
           <div className="detected">
             <Icon name="search" size={14} /> {detected.summary}
-            {profile === 'auto' && detected.profile !== 'none' && ` → profile: ${detected.profile}`}
+            {profile === 'auto' && detected.profile !== 'none' && (
+              <span className="profile-badge" title="Kiến thức repo này được nhồi sẵn vào agent khi để PROFILE: AUTO">
+                {' '}→ profile: <strong>{detected.profile}</strong>
+                {detected.profileChars
+                  ? ` (~${Math.round(detected.profileChars / 1000)}K ký tự nhồi vào agent)`
+                  : ''}
+              </span>
+            )}
             {detected.profile === 'none' && !detected.empty && (
               <button className="btn genprof" disabled={running} onClick={genProfile}>
                 Sinh profile cho repo này
@@ -3912,7 +4168,7 @@ export function App() {
 
         {/* Chỉ báo workspace: cwd này thuộc sản phẩm nào, gồm những repo anh em nào.
             Cho người dùng biết agent đang có ngữ cảnh cả nhóm repo + trí nhớ tích lũy. */}
-        {!safe && currentWs && (
+        {!readonlyShare && currentWs && (
           <div className="detected" style={{ cursor: 'pointer' }} onClick={openWsPanel}
                title="Bấm để quản lý workspace / xem nhật ký">
             <Icon name="routing" size={14} /> Workspace <b>{currentWs.slug}</b> · {currentWs.repos.length} repo:{' '}
@@ -3959,9 +4215,9 @@ export function App() {
 
         {!running && (
           <div className="quick-prompts">
-            {/* Safe Mode (QC read-only): chỉ giữ gợi ý "Giải thích codebase" —
+            {/* QC Mode (read-only): chỉ giữ gợi ý "Giải thích codebase" —
                 ẩn các gợi ý hướng tới sửa/thực thi (Sửa bug, Làm theo đề xuất). */}
-            {(safe ? QUICK_PROMPTS.filter((qp) => qp.label === 'Giải thích codebase') : QUICK_PROMPTS).map((qp) => (
+            {(readonlyShare ? QUICK_PROMPTS.filter((qp) => qp.label === 'Giải thích codebase') : QUICK_PROMPTS).map((qp) => (
               <button
                 key={qp.label}
                 type="button"
@@ -4042,7 +4298,7 @@ export function App() {
         <div className="modal-overlay" onClick={() => setPickerOpen(false)}>
           <div className="modal-content pixel-panel" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <span className="modal-title"><Icon name="folder" size={16} /> {pickerTarget === 'safe-cwd' ? 'Chọn source để hỏi đáp' : 'Chọn thư mục làm việc'}</span>
+              <span className="modal-title"><Icon name="folder" size={16} /> {pickerTarget === 'qc-cwd' ? 'Chọn source để hỏi đáp' : 'Chọn thư mục làm việc'}</span>
               <button className="close-btn" onClick={() => setPickerOpen(false)}><Icon name="close" size={16} /></button>
             </div>
             <div className="modal-body">
@@ -4913,7 +5169,7 @@ export function App() {
                                     display: 'inline-block',
                                     marginTop: '2px'
                                   }}>
-                                    {u.apiOrigin.includes('4002') ? 'Collab' : u.apiOrigin.includes('4001') ? 'Safe' : 'Dev'}
+                                    {u.apiOrigin.includes('4002') ? 'Collab' : u.apiOrigin.includes('4001') ? 'QC' : u.apiOrigin.includes('4003') ? 'BA' : u.apiOrigin.includes('4004') ? 'Review' : 'Dev'}
                                   </span>
                                 )}
                               </td>

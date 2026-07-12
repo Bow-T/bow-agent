@@ -107,6 +107,114 @@
   --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
+/* ───────────────────────────  Tokens · Blueprint (bản vẽ kỹ thuật)  ───────────────────────────
+ * Theme thứ 3: nền chàm-xanh đậm như giấy blueprint, đường nét cyan sáng — kiểu bản vẽ
+ * cyanotype của kỹ sư. Vẫn là nền TỐI (cùng họ với dark: galaxy giữ nền vũ trụ), nhưng đổi
+ * hẳn sắc sang lam-chàm + accent cyan thay cho đồng thau. Giữ đúng chất Star Atlas: khung
+ * kép, kẻ tóc graticule, nhãn small-caps — chỉ đổi bảng màu và độ đậm graticule (rõ hơn để
+ * ra chất "lưới bản vẽ"). */
+[data-theme='blueprint'] {
+  color-scheme: dark;
+
+  --bg: #0a1f3c;          /* chàm blueprint đậm */
+  --surface: #0e2a4f;
+  --surface-2: #123258;
+  --surface-3: #173c66;
+
+  --ink: #dce9fb;         /* chữ trắng ngả lam (mực trắng trên bản vẽ) */
+  --ink-2: #94b4dd;
+  --muted: #5b7aa6;
+
+  --brass: #4fc3f7;       /* cyan sáng — nét vẽ trên nền chàm */
+  --brass-bright: #7ad4fa;
+  --brass-soft: rgba(79, 195, 247, 0.15);
+  --on-brass: #05233f;
+
+  --teal: #4dd0c4;
+  --danger: #ff8a80;
+  --danger-soft: rgba(255, 138, 128, 0.15);
+
+  /* graticule rõ hơn 2 theme kia → ra chất "lưới kẻ ô bản vẽ kỹ thuật" */
+  --hairline: rgba(180, 210, 250, 0.2);
+  --hairline-2: rgba(180, 210, 250, 0.11);
+  --graticule: rgba(150, 190, 245, 0.12);
+
+  --grid: rgba(150, 190, 245, 0.09);
+  --glow-a: rgba(79, 195, 247, 0.18);
+  --glow-b: rgba(77, 208, 196, 0.13);
+  --glass: 80%;
+  --highlight: rgba(200, 225, 255, 0.09);
+  --depth: 0 24px 64px -18px rgba(0, 12, 30, 0.75), 0 4px 16px -8px rgba(0, 8, 22, 0.55);
+  --viewport-bg: #061630;
+  --viewport-glow: 0 0 60px -12px rgba(79, 195, 247, 0.45);
+
+  /* hạt film — chấm sáng ngả lam trên nền chàm */
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.7 0 0 0 0 0.85 0 0 0 0 1 0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* ───────────────────────────  Tokens · Neo Brutalism (khối phẳng, viền đen, bóng cứng)  ───────────────────────────
+ * Theme thứ 4 — NGHỊCH hẳn chất Star Atlas mềm mại: nền kem chói, chữ đen tuyền, accent
+ * vàng bão hòa cao. Đặc trưng brutalism ghi đè 3 trục:
+ *   • góc VUÔNG   → --r / --r-lg = 0
+ *   • viền ĐEN DÀY → --hairline = đen đặc, --bd-thin = 2px (mọi `border: var(--bd-thin) solid var(--hairline)` dày lên)
+ *   • bóng CỨNG   → --depth = offset đặc, KHÔNG blur, KHÔNG spread âm (hard drop shadow)
+ * Không hạt film, không quầng glow mờ (glow-a/b về gần trong suốt) — brutalism là phẳng, thô. */
+[data-theme='brutal'] {
+  color-scheme: light;
+
+  --bg: #fbf6e9;          /* kem chói (gần trắng, hơi ngả vàng như poster) */
+  --surface: #fffdf5;     /* thẻ trắng kem tinh */
+  --surface-2: #fdf3d6;   /* vàng kem rất nhạt cho inset */
+  --surface-3: #f9ead1;
+
+  --ink: #0a0a0a;         /* đen tuyền */
+  --ink-2: #1a1a1a;       /* phụ vẫn rất đậm */
+  --muted: #4a4a4a;       /* mờ — nhưng brutalism ít dùng chữ xám nhạt */
+
+  --brass: #ffcf24;       /* vàng brutalist bão hòa cao (accent chính, như nền title mẫu) */
+  --brass-bright: #ffda52;
+  --brass-soft: rgba(255, 207, 36, 0.28);
+  --on-brass: #0a0a0a;    /* chữ ĐEN trên nút vàng (đúng chất brutalism) */
+
+  /* Bảng 3 màu NÓNG như mẫu poster: vàng (accent) + đỏ-hồng + tím lavender.
+   * teal → tím lavender, danger → đỏ-hồng coral. Cả hai đi kèm viền đen nên vẫn "đọc" tốt. */
+  --teal: #b8a4ff;        /* tím lavender (khối tím trong mẫu) */
+  --danger: #ff5a5a;      /* đỏ-hồng coral (marquee + khối vuông trong mẫu) */
+  --danger-soft: rgba(255, 90, 90, 0.22);
+
+  /* viền đen đặc & DÀY — trục nhận diện chính của brutalism (mẫu dùng viền rất dày) */
+  --hairline: #0a0a0a;
+  --hairline-2: rgba(10, 10, 10, 0.6);
+  --graticule: rgba(10, 10, 10, 0.08);
+  --bd-thin: 3px;         /* viền dày hơn nữa cho ra chất poster */
+
+  /* nền CHẤM BI (dot grid) thay lưới kẻ ô — khớp mẫu. Tô ở --grid dưới dạng radial-gradient
+   * chấm đen; .app đọc --grid nên chỉ cần đổi token này + kiểu nền (xử lý ở block .app riêng). */
+  --grid: rgba(10, 10, 10, 0.42);
+  --glow-a: transparent;  /* không glow môi trường — bề mặt phẳng */
+  --glow-b: transparent;
+  --glass: 100%;          /* không kính mờ — đục hoàn toàn */
+  --highlight: transparent;
+  /* bóng CỨNG dày: offset 8px xuống-phải, đen đặc, KHÔNG blur (mẫu dùng bóng rất dày) */
+  --depth: 8px 8px 0 0 #0a0a0a;
+  --viewport-bg: #f2ecdb;
+  --viewport-glow: none;
+
+  --grain: none;          /* không hạt film */
+
+  /* góc VUÔNG */
+  --r: 0px;
+  --r-lg: 0px;
+}
+
+/* Nền CHẤM BI cho brutal: ghi đè background-image của .app (mặc định là hạt film + lưới kẻ).
+ * Chấm tròn đen thưa trên nền kem — đúng dot grid của ảnh mẫu. */
+[data-theme='brutal'] .app {
+  background-image: radial-gradient(var(--grid) 1.4px, transparent 1.6px);
+  background-size: 22px 22px;
+  background-position: 0 0;
+}
+
 /* ───────────────────────────  Accent · màu nhấn chọn ở header  ───────────────────────────
  * Nền sáng/tối (paper/night) GIỮ NGUYÊN — chỉ hoán màu nhấn (brass mặc định → hồng/lam/…).
  * Người dùng chọn 1 trong 7 swatch; App.tsx đặt <html data-accent="…">.
@@ -129,7 +237,8 @@
   --on-brass: #eef4fc;
   --glow-a: rgba(42, 120, 214, 0.1);
 }
-[data-theme='dark'][data-accent='blue'] {
+[data-theme='dark'][data-accent='blue'],
+[data-theme='blueprint'][data-accent='blue'] {
   --brass: #5c9fea;
   --brass-bright: #78b1f0;
   --brass-soft: rgba(92, 159, 234, 0.14);
@@ -145,7 +254,8 @@
   --on-brass: #eaf6f3;
   --glow-a: rgba(10, 138, 114, 0.1);
 }
-[data-theme='dark'][data-accent='teal'] {
+[data-theme='dark'][data-accent='teal'],
+[data-theme='blueprint'][data-accent='teal'] {
   --brass: #3bb89d;
   --brass-bright: #55c7af;
   --brass-soft: rgba(59, 184, 157, 0.14);
@@ -161,7 +271,8 @@
   --on-brass: #efedf9;
   --glow-a: rgba(74, 58, 167, 0.1);
 }
-[data-theme='dark'][data-accent='purple'] {
+[data-theme='dark'][data-accent='purple'],
+[data-theme='blueprint'][data-accent='purple'] {
   --brass: #9085e9;
   --brass-bright: #a49bef;
   --brass-soft: rgba(144, 133, 233, 0.14);
@@ -177,7 +288,8 @@
   --on-brass: #fbedf3;
   --glow-a: rgba(177, 58, 104, 0.1);
 }
-[data-theme='dark'][data-accent='pink'] {
+[data-theme='dark'][data-accent='pink'],
+[data-theme='blueprint'][data-accent='pink'] {
   --brass: #e084ac;
   --brass-bright: #e89dbe;
   --brass-soft: rgba(224, 132, 172, 0.14);
@@ -193,7 +305,8 @@
   --on-brass: #fceeed;
   --glow-a: rgba(193, 68, 63, 0.1);
 }
-[data-theme='dark'][data-accent='red'] {
+[data-theme='dark'][data-accent='red'],
+[data-theme='blueprint'][data-accent='red'] {
   --brass: #e66767;
   --brass-bright: #ec8080;
   --brass-soft: rgba(230, 103, 103, 0.14);
@@ -209,7 +322,8 @@
   --on-brass: #fbefe7;
   --glow-a: rgba(192, 90, 26, 0.1);
 }
-[data-theme='dark'][data-accent='orange'] {
+[data-theme='dark'][data-accent='orange'],
+[data-theme='blueprint'][data-accent='orange'] {
   --brass: #e88f4c;
   --brass-bright: #efa367;
   --brass-soft: rgba(232, 143, 76, 0.14);
@@ -236,6 +350,27 @@
   --surface-2: color-mix(in srgb, var(--brass) 9%, #171c23);
   --surface-3: color-mix(in srgb, var(--brass) 10%, #1f252e);
   --viewport-bg: color-mix(in srgb, var(--brass) 6%, #05070c);
+}
+/* Blueprint: nhuốm accent vào nền CHÀM (không phải mực đen như dark). */
+[data-theme='blueprint'][data-accent] {
+  --bg: color-mix(in srgb, var(--brass) 8%, #0a1f3c);
+  --surface: color-mix(in srgb, var(--brass) 8%, #0e2a4f);
+  --surface-2: color-mix(in srgb, var(--brass) 9%, #123258);
+  --surface-3: color-mix(in srgb, var(--brass) 10%, #173c66);
+  --viewport-bg: color-mix(in srgb, var(--brass) 6%, #061630);
+}
+
+/* Neo Brutalism: dùng sắc LIGHT của accent (nền sáng), nhưng ÉP lại đúng chất brutalism:
+ * chữ ĐEN trên mọi nút accent, soft đậm hơn, và giữ nguyên viền/bóng/glow của theme (không
+ * nhuốm nền — brutalism ưa nền phẳng, khối accent tự nổi nhờ viền đen). Một luật cho MỌI màu. */
+[data-theme='brutal'][data-accent] {
+  --on-brass: #0a0a0a;
+  --brass-soft: color-mix(in srgb, var(--brass) 22%, transparent);
+  --glow-a: transparent;
+  --bg: color-mix(in srgb, var(--brass) 5%, #fbf6e9);
+  --surface: #fffdf5;
+  --surface-2: color-mix(in srgb, var(--brass) 8%, #fdf3d6);
+  --surface-3: color-mix(in srgb, var(--brass) 10%, #f9ead1);
 }
 
 /* ───────────────────────────  Base  ─────────────────────────── */
@@ -639,6 +774,48 @@ a { color: var(--brass); text-underline-offset: 2px; }
   background: var(--hairline);
 }
 
+/* ── Header Star Chart: chừa chỗ cho badge trạng thái ── */
+.star-chart-title { gap: 8px; }
+.star-chart-title > span:first-child { flex-shrink: 0; }
+/* Đường hairline chèn giữa tiêu đề và badge (thay ::after mặc định) */
+.star-chart-title::after {
+  order: 1;
+}
+.star-status {
+  order: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  font-size: 8.5px;
+  letter-spacing: 0.14em;
+  padding: 2px 7px 2px 6px;
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  color: var(--muted);
+  background: var(--surface-2);
+}
+.star-status-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.55;
+}
+.star-status.live {
+  color: var(--brass);
+  border-color: color-mix(in srgb, var(--brass) 45%, transparent);
+  background: var(--brass-soft);
+}
+.star-status.live .star-status-dot {
+  opacity: 1;
+  box-shadow: 0 0 5px currentColor;
+  animation: star-pulse 1.4s ease-in-out infinite;
+}
+@keyframes star-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.5); opacity: 0.5; }
+}
+
 /* ── Viewport galaxy — màn hình kính thiên văn ── */
 .neural-net-container {
   position: relative;
@@ -647,8 +824,15 @@ a { color: var(--brass); text-underline-offset: 2px; }
   flex-shrink: 0;
   background: var(--viewport-bg);
   box-shadow: var(--viewport-glow);
+  border: 1px solid var(--hairline);
   overflow: hidden;
   z-index: 2;
+  transition: box-shadow var(--med), border-color var(--med);
+}
+/* Khi có agent hoạt động: viền nhuốm accent + glow mạnh hơn */
+.neural-net-container.is-live {
+  border-color: color-mix(in srgb, var(--brass) 40%, transparent);
+  box-shadow: var(--viewport-glow), 0 0 0 1px color-mix(in srgb, var(--brass) 22%, transparent) inset;
 }
 /* crosshair graticule + toạ độ */
 .neural-net-container::before {
@@ -660,19 +844,151 @@ a { color: var(--brass); text-underline-offset: 2px; }
     linear-gradient(var(--graticule) 0 0) center / 1px 100% no-repeat,
     linear-gradient(var(--graticule) 0 0) center / 100% 1px no-repeat;
 }
-/* nhãn góc kiểu bản đồ sao */
-.neural-net-container::after {
-  content: 'RA 12ʰ · DEC +05°';
+
+/* Dấu định vị 4 góc viewport — khung ngắm kính thiên văn (L-shaped) */
+.viewport-corner {
   position: absolute;
-  right: 8px; bottom: 7px;
+  width: 12px; height: 12px;
+  z-index: 4;
+  pointer-events: none;
+  border: solid color-mix(in srgb, var(--brass) 55%, transparent);
+  border-width: 0;
+}
+.viewport-corner.tl { top: 6px; left: 6px; border-top-width: 1.5px; border-left-width: 1.5px; }
+.viewport-corner.tr { top: 6px; right: 6px; border-top-width: 1.5px; border-right-width: 1.5px; }
+.viewport-corner.bl { bottom: 6px; left: 6px; border-bottom-width: 1.5px; border-left-width: 1.5px; }
+.viewport-corner.br { bottom: 6px; right: 6px; border-bottom-width: 1.5px; border-right-width: 1.5px; }
+
+/* Nhãn toạ độ động kiểu bản đồ sao (thay nhãn ::after tĩnh cũ) */
+.viewport-readout {
+  position: absolute;
+  right: 10px; bottom: 8px;
   font-family: var(--mono);
   font-size: 9px;
-  letter-spacing: 0.1em;
-  color: rgba(214, 164, 65, 0.6);
+  letter-spacing: 0.08em;
+  color: color-mix(in srgb, var(--brass) 70%, transparent);
   pointer-events: none;
-  z-index: 4;
+  z-index: 5;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
 }
-/* dấu định vị 4 góc viewport */
+/* Hệ số zoom — góc trái dưới, chỉ hiện khi đã phóng to */
+.viewport-zoom {
+  position: absolute;
+  left: 10px; bottom: 8px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--brass) 60%, transparent);
+  pointer-events: none;
+  z-index: 5;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+/* Nhãn mục tiêu camera đang khoá — góc trái trên */
+.viewport-target {
+  position: absolute;
+  left: 10px; top: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: calc(100% - 60px);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  color: var(--brass);
+  pointer-events: none;
+  z-index: 5;
+  padding: 2px 6px;
+  background: color-mix(in srgb, var(--viewport-bg) 72%, transparent);
+  border: 1px solid color-mix(in srgb, var(--brass) 35%, transparent);
+  border-radius: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Nút đưa góc nhìn về mặc định — góc phải trên */
+.viewport-reset {
+  position: absolute;
+  right: 8px; top: 8px;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center; justify-content: center;
+  width: 24px; height: 24px;
+  padding: 0;
+  color: color-mix(in srgb, var(--brass) 75%, transparent);
+  background: color-mix(in srgb, var(--viewport-bg) 65%, transparent);
+  border: 1px solid color-mix(in srgb, var(--brass) 30%, transparent);
+  border-radius: 3px;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity var(--fast), transform var(--fast), background var(--fast), color var(--fast);
+}
+.neural-net-container:hover .viewport-reset { opacity: 1; transform: translateY(0); }
+.viewport-reset:hover {
+  color: var(--on-brass, #fff);
+  background: var(--brass);
+  border-color: var(--brass);
+}
+
+/* ── Chú giải loại thiên thể ── */
+.star-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  margin: 9px 14px 0;
+  z-index: 2;
+  position: relative;
+}
+.star-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  color: var(--ink-2);
+  text-transform: uppercase;
+  font-weight: 700;
+}
+/* Vai trò: chữ thường, mờ, nhỏ hơn — đứng cạnh mã sao */
+.star-legend-item em {
+  font-style: normal;
+  font-weight: 400;
+  text-transform: none;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+  margin-left: 3px;
+}
+.star-legend-item i {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.star-legend-item[data-k="approval"] i { background: #f59e0b; box-shadow: 0 0 5px rgba(245, 158, 11, 0.7); }
+.star-legend-item[data-k="thinking"] i { background: #a78bfa; box-shadow: 0 0 5px rgba(167, 139, 250, 0.7); }
+.star-legend-item[data-k="tool"] i { background: #4ade80; box-shadow: 0 0 5px rgba(74, 222, 128, 0.7); }
+.star-legend-item[data-k="start"] i { background: #38bdf8; box-shadow: 0 0 5px rgba(56, 189, 248, 0.7); }
+
+/* Gợi ý điều khiển viewport */
+.star-hint {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 6px 14px 0;
+  font-family: var(--mono);
+  font-size: 9px;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  opacity: 0.75;
+  z-index: 2;
+  position: relative;
+}
+.star-hint svg { flex-shrink: 0; opacity: 0.8; }
+
+/* dấu định vị 4 góc viewport (giữ tương thích cũ) */
 .viewport-ticks { position: relative; }
 
 /* Chi tiết bước được chọn = READOUT */
@@ -709,6 +1025,8 @@ a { color: var(--brass); text-underline-offset: 2px; }
   background: var(--surface);
 }
 .step-detail-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Vai trò trong tiêu đề chi tiết — mờ, chữ thường, không in hoa */
+.step-detail-role { color: var(--muted); font-weight: 400; text-transform: none; letter-spacing: 0.02em; }
 .step-detail-close {
   background: transparent; border: none;
   color: var(--muted); font-size: 13px; line-height: 1;
@@ -1515,6 +1833,36 @@ a { color: var(--brass); text-underline-offset: 2px; }
 @media (prefers-color-scheme: dark) {
   .collab-banner { color: #ffd27a; }
 }
+/* ─────────────────────  BA Mode  ───────────────────── */
+/* Banner đầu trang cho BA: ghi tài liệu + Jira, không sửa code. Tông xanh dương phân biệt
+   với Collab (cam) và QC (teal). */
+.ba-banner {
+  padding: 8px 16px;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+  color: #1e40af;
+  background: color-mix(in srgb, #3b82f6 18%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, #3b82f6 50%, transparent);
+}
+@media (prefers-color-scheme: dark) {
+  .ba-banner { color: #93c5fd; }
+}
+/* ─────────────────────  Reviewer Mode  ───────────────────── */
+/* Banner cho Reviewer: review PR + comment/approve, KHÔNG sửa code. Tông tím phân biệt
+   với QC (teal), Collab (cam), BA (xanh dương). */
+.reviewer-banner {
+  padding: 8px 16px;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+  color: #6d28d9;
+  background: color-mix(in srgb, #8b5cf6 18%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, #8b5cf6 50%, transparent);
+}
+@media (prefers-color-scheme: dark) {
+  .reviewer-banner { color: #c4b5fd; }
+}
 /* Panel admin duyệt lệnh hủy hoại của CTV — xếp chồng nhiều yêu cầu, cuộn nếu dài. */
 .collab-approvals {
   gap: 8px;
@@ -1787,25 +2135,61 @@ a { color: var(--brass); text-underline-offset: 2px; }
 }
 .composer:focus-within { border-color: var(--brass); }
 
-/* Hàng điều khiển: ưu tiên MỘT dòng nhờ đã icon-hóa nút cho ngắn. KHÔNG dùng
-   overflow ở đây — menu xổ của PixelSelect định vị absolute, overflow sẽ CẮT MẤT nó.
-   Nên vẫn cho phép wrap: màn hẹp thì rớt dòng (hiếm), nhưng dropdown luôn mở được.
-   Các field không co (flex-shrink:0); ô repo tự đẩy phải bằng margin-left:auto. */
+/* Hàng điều khiển: nhóm theo chức năng thành 2 hàng (.control-row) cho gọn —
+   hàng 1 = cấu hình chạy (chế độ/model/profile/stack), hàng 2 = tài khoản/effort/agent + repo.
+   KHÔNG dùng overflow: menu xổ của PixelSelect định vị absolute, overflow sẽ CẮT MẤT nó.
+   Trong mỗi hàng field không co (flex-shrink:0); ô repo tự đẩy phải bằng margin-left:auto. */
 .controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+/* Mỗi hàng chức năng: flex ngang, cho wrap khi màn quá hẹp (hiếm). Nhãn nhóm mờ ở
+   đầu hàng (data-group) giúp phân biệt hai cụm mà không tốn thêm màu/khối. */
+.control-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 14px;
+  position: relative;
+  padding-left: 86px;              /* mốc x cố định → field 2 hàng thẳng cột */
 }
-.controls > label, .controls > .field, .controls > .cwd-container {
+/* Nhãn nhóm: căn TRÁI trong ô rộng cố định → chữ 2 hàng bắt đầu cùng mốc, không
+   còn cảm giác so le do độ dài chữ khác nhau ("Cấu hình" vs "Agent"). */
+.control-row::before {
+  content: attr(data-group);
+  position: absolute;
+  left: 0; top: 50%;
+  transform: translateY(-50%);
+  width: 72px;
+  text-align: left;
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--brass);
+  opacity: 0.7;
+  pointer-events: none;
+}
+/* Vạch mảnh ngăn cách nhãn nhóm với cụm field — cùng mốc x ở cả hai hàng. */
+.control-row::after {
+  content: '';
+  position: absolute;
+  left: 80px; top: 50%;
+  height: 16px;
+  transform: translateY(-50%);
+  border-left: 1px solid var(--hairline-2, var(--hairline));
+}
+.control-row > label, .control-row > .field, .control-row > .cwd-container {
   flex-shrink: 0;                  /* không cho field co → nhãn không bị cắt */
   position: relative;
 }
 /* Vạch phân cách mảnh giữa các field liền kề → nhóm nhìn có tổ chức, không rời rạc. */
-.controls > label + label::before,
-.controls > label + .field::before,
-.controls > .field + label::before,
-.controls > .field + .field::before {
+.control-row > label + label::before,
+.control-row > label + .field::before,
+.control-row > .field + label::before,
+.control-row > .field + .field::before {
   content: '';
   position: absolute;
   left: -7px; top: 50%;
@@ -1815,7 +2199,7 @@ a { color: var(--brass); text-underline-offset: 2px; }
 }
 /* Ô repo dạt phải: giữ khoảng đệm trái tối thiểu khi hàng cuộn ngang (lúc đó
    margin-left:auto không còn tác dụng) để không dính sát field liền trước. */
-.controls > .cwd-container { padding-left: 8px; }
+.control-row > .cwd-container { padding-left: 8px; }
 .controls label, .field {
   display: inline-flex;
   align-items: center;
@@ -1826,6 +2210,61 @@ a { color: var(--brass); text-underline-offset: 2px; }
   font-size: 10px;
   color: var(--muted);
   white-space: nowrap;
+}
+
+/* ───── Công tắc bật/tắt (dùng cho "Đội agent" — multi-agent) ─────
+   Ăn theo accent (--brass) + 3 theme qua các biến chung. Checkbox thật bị ẩn (a11y giữ
+   nguyên: focus/keyboard vẫn hoạt động), phần nhìn thấy là track + thumb vẽ tay. */
+.bow-switch {
+  cursor: pointer;
+  user-select: none;
+}
+.bow-switch.disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+/* Ẩn checkbox thật nhưng vẫn nhận focus/bàn phím. */
+.bow-switch > input {
+  position: absolute;
+  width: 1px; height: 1px;
+  opacity: 0;
+  margin: 0;
+  pointer-events: none;
+}
+.bow-switch-track {
+  position: relative;
+  display: inline-block;
+  width: 30px;
+  height: 16px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: var(--surface-2);
+  transition: background var(--fast), border-color var(--fast);
+  flex-shrink: 0;
+}
+.bow-switch-thumb {
+  position: absolute;
+  top: 1px; left: 1px;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform var(--fast), background var(--fast);
+}
+.bow-switch.on .bow-switch-track {
+  background: var(--brass);
+  border-color: var(--brass);
+}
+.bow-switch.on .bow-switch-thumb {
+  transform: translateX(14px);
+  background: var(--on-brass);
+}
+.bow-switch.on .bow-switch-label {
+  color: var(--brass);
+}
+/* Vòng focus bàn phím rơi lên track khi tab tới checkbox ẩn. */
+.bow-switch > input:focus-visible + .bow-switch-track {
+  outline: 2px solid var(--brass);
+  outline-offset: 2px;
 }
 
 /* ───── Bộ chọn CHẾ ĐỘ (popover) — kiểu "Modes" nhưng vẽ theo phong cách observatory ───── */
@@ -2415,4 +2854,81 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 }
 .px-select-delete-btn:hover {
   color: #ff1744 !important;
+}
+
+/* ───────────────────────────  Neo Brutalism · tinh chỉnh "poster"  ───────────────────────────
+ * Chỉ áp khi data-theme=brutal. Bắt vibe ảnh mẫu: heading in hoa cực đậm, nút bấm "lún" theo
+ * bóng cứng, liên kết gạch chân dày. Không đụng layout — chỉ nhấn mạnh chất chữ + tương tác. */
+
+/* Heading markdown → poster: in hoa, dày, ken chữ chặt, gạch dưới đen dày ở h1/h2. */
+[data-theme='brutal'] .pipeline-expand .md h1,
+[data-theme='brutal'] .pipeline-expand .md h2,
+[data-theme='brutal'] .pipeline-expand .md h3 {
+  text-transform: uppercase;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+[data-theme='brutal'] .pipeline-expand .md h1,
+[data-theme='brutal'] .pipeline-expand .md h2 {
+  border-bottom: 3px solid var(--ink);
+  padding-bottom: 4px;
+}
+
+/* Nút chính có bóng CỨNG + viền dày (ghi đè bóng blur mặc định của .btn.run/allow). */
+[data-theme='brutal'] .btn.primary,
+[data-theme='brutal'] .btn.run,
+[data-theme='brutal'] .btn.allow,
+[data-theme='brutal'] .btn.stop,
+[data-theme='brutal'] .btn.deny,
+[data-theme='brutal'] .theme-btn {
+  border-width: var(--bd-thin);
+  box-shadow: var(--depth) !important;
+}
+[data-theme='brutal'] .btn.run,
+[data-theme='brutal'] .btn.allow {
+  background: var(--brass);        /* phẳng, bỏ gradient */
+  border-color: var(--ink);
+}
+[data-theme='brutal'] .btn.run:hover:not(:disabled),
+[data-theme='brutal'] .btn.allow:hover:not(:disabled) {
+  background: var(--brass-bright);
+  border-color: var(--ink);
+}
+
+/* Nút bấm "lún theo bóng": khi hover dịch xuống-phải, khi nhấn dán sát (bóng co lại).
+ * Đây là micro-interaction kinh điển của Neo Brutalism — khối như bị ấn xuống mặt bàn.
+ * Chỉ áp cho nút CÓ bóng cứng (.btn.primary/run/allow/stop/deny + .theme-btn). */
+[data-theme='brutal'] .btn.primary,
+[data-theme='brutal'] .btn.run,
+[data-theme='brutal'] .btn.allow,
+[data-theme='brutal'] .btn.stop,
+[data-theme='brutal'] .btn.deny,
+[data-theme='brutal'] .theme-btn {
+  transition: transform var(--fast), box-shadow var(--fast);
+}
+[data-theme='brutal'] .btn.primary:hover:not(:disabled),
+[data-theme='brutal'] .btn.run:hover:not(:disabled),
+[data-theme='brutal'] .btn.allow:hover:not(:disabled),
+[data-theme='brutal'] .btn.stop:hover:not(:disabled),
+[data-theme='brutal'] .btn.deny:hover:not(:disabled),
+[data-theme='brutal'] .theme-btn:hover {
+  transform: translate(2px, 2px);
+  box-shadow: 4px 4px 0 0 var(--ink) !important;
+}
+[data-theme='brutal'] .btn.primary:active:not(:disabled),
+[data-theme='brutal'] .btn.run:active:not(:disabled),
+[data-theme='brutal'] .btn.allow:active:not(:disabled),
+[data-theme='brutal'] .btn.stop:active:not(:disabled),
+[data-theme='brutal'] .btn.deny:active:not(:disabled),
+[data-theme='brutal'] .theme-btn:active {
+  transform: translate(8px, 8px);
+  box-shadow: 0 0 0 0 var(--ink) !important;
+}
+
+/* Liên kết: gạch chân dày kiểu marker, không mảnh. */
+[data-theme='brutal'] a {
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+  font-weight: 700;
 }

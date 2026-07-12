@@ -120,17 +120,19 @@ function getRegistryPath(): string {
 
 /**
  * Registry MẶC ĐỊNH — nhúng trong code (KHÔNG đọc từ skills/ vì thư mục đó đã gỡ khỏi khung).
- * `core` = repo skill LUÔN tải (watch/qc-triage/coding-convention). `stacks` = allowlist stack
- * người dùng chọn. Admin sửa ~/.bow-agent/registry.json để ghim ref hoặc thêm stack, không cần
- * sửa code. Đây chỉ là bản seed lần đầu.
+ * `core` = repo skill LUÔN tải (watch/coding-convention). `stacks` = allowlist stack người dùng
+ * chọn (hoặc auto: BA→ba, QC→qc). Admin sửa ~/.bow-agent/registry.json để ghim ref hoặc thêm
+ * stack, không cần sửa code. Đây chỉ là bản seed lần đầu.
  */
 const DEFAULT_REGISTRY = {
   version: 2,
-  core: { id: 'core', repo: 'github.com/Bow-T/bow-skill-core', ref: 'v1.0.0' },
+  core: { id: 'core', repo: 'github.com/Bow-T/bow-skill-core', ref: 'v1.1.0' },
   stacks: [
     { id: 'flutter-supabase', label: 'Flutter + Supabase', repo: 'github.com/Bow-T/bow-skill-flutter', ref: 'v1.1.0', default: true },
     { id: 'react-native-supabase', label: 'React Native + Supabase', repo: 'github.com/Bow-T/bow-skill-react-native', ref: 'v1.0.0' },
     { id: 'nextjs-supabase', label: 'Next.js + Supabase', repo: 'github.com/Bow-T/bow-skill-nextjs', ref: 'v1.0.0' },
+    { id: 'qc', label: 'QC', repo: 'github.com/Bow-T/bow-skill-qc', ref: 'v1.0.0' },
+    { id: 'review', label: 'Reviewer', repo: 'github.com/Bow-T/bow-skill-review', ref: 'v1.0.0' },
   ],
 };
 

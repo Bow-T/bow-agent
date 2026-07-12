@@ -137,4 +137,6 @@ export interface DetectedSource {
   stack: string;
   empty: boolean;
   summary: string;
+  /** Số ký tự kiến thức profile sẽ nhồi vào agent (chỉ có khi khớp profile đã sinh). */
+  profileChars?: number;
 }

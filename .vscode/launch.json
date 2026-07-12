@@ -25,14 +25,14 @@
       }
     },
     {
-      // Safe Mode — chia sẻ LAN cho người non-dev (QC, BA, PM…) hỏi đáp read-only.
-      // Chạy `ui:share` ở CẶP CỔNG RIÊNG (api :4001, web :5174) nên bật ĐỒNG THỜI với
+      // QC Mode — chia sẻ LAN cho QC hỏi đáp read-only + Skill (qc-triage) + Jira.
+      // Chạy `ui:qc:share` ở CẶP CỔNG RIÊNG (api :4001, web :5174) nên bật ĐỒNG THỜI với
       // "▶ Chạy Web" (dev :4000/:5173) mà không đụng cổng. Mở http://localhost:5174.
-      "name": "🔒 Chạy Web Safe Mode (chia sẻ hỏi đáp)",
+      "name": "🔒 Chạy Web QC Mode (chia sẻ hỏi đáp)",
       "type": "node",
       "request": "launch",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "ui:share"],
+      "runtimeArgs": ["run", "ui:qc:share"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "skipFiles": ["<node_internals>/**"],
@@ -50,7 +50,7 @@
       // Collab Mode — cộng tác viên (CTV) qua LAN code gần như dev, nhưng lệnh HỦY HOẠI
       // (rm -rf, deploy, ghi ngoài repo…) phải được ADMIN (localhost) duyệt từ xa; Git tự do.
       // Chạy `ui:collab` ở CẶP CỔNG RIÊNG (api :4002, web :5175) nên bật ĐỒNG THỜI với dev
-      // (:4000/:5173) và share (:4001/:5174). Mở http://localhost:5175.
+      // (:4000/:5173) và QC (:4001/:5174). Mở http://localhost:5175.
       "name": "🤝 Chạy Web Collab Mode (CTV code có duyệt)",
       "type": "node",
       "request": "launch",
@@ -65,6 +65,51 @@
       },
       "serverReadyAction": {
         "pattern": "Local:\\s+(https?://localhost:5175)",
+        "uriFormat": "%s",
+        "action": "openExternally"
+      }
+    },
+    {
+      // BA Mode — Business Analyst qua LAN: ĐỌC repo, ghi TÀI LIỆU (docs/, *.md) + tạo/sửa
+      // Jira ticket; DENY source code / DB / deploy. Chạy `ui:ba` ở CẶP CỔNG RIÊNG (api :4003,
+      // web :5176) nên bật ĐỒNG THỜI với dev (:4000/:5173), QC (:4001/:5174) và collab
+      // (:4002/:5175). Mở http://localhost:5176.
+      "name": "📋 Chạy Web BA Mode (Business Analyst)",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "ui:ba"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"],
+      "presentation": {
+        "group": "1_run",
+        "order": 4
+      },
+      "serverReadyAction": {
+        "pattern": "Local:\\s+(https?://localhost:5176)",
+        "uriFormat": "%s",
+        "action": "openExternally"
+      }
+    },
+    {
+      // Reviewer Mode — Tech Lead/Reviewer qua LAN: ĐỌC code, review PR (git/gh diff),
+      // comment/approve qua `gh pr`; DENY sửa code / merge / push. Chạy `ui:review:share` ở CẶP
+      // CỔNG RIÊNG (api :4004, web :5177) nên bật ĐỒNG THỜI với dev/QC/collab/BA. Mở localhost:5177.
+      "name": "🔍 Chạy Web Reviewer Mode (Tech Lead review PR)",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "ui:review:share"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"],
+      "presentation": {
+        "group": "1_run",
+        "order": 5
+      },
+      "serverReadyAction": {
+        "pattern": "Local:\\s+(https?://localhost:5177)",
         "uriFormat": "%s",
         "action": "openExternally"
       }

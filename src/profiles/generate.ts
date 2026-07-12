@@ -61,6 +61,27 @@ Bắt đầu ngay bằng phần mô tả, không lời mở đầu.
 `.trim();
 
 /**
+ * Lọc bỏ "câu dẫn" của agent (I'll scan…, Let me…, Now let me…, I have enough…) khỏi
+ * danh sách text block, chỉ giữ block MANG KIẾN THỨC THẬT. Câu dẫn thường là 1 block
+ * ngắn, văn xuôi, KHÔNG có heading/list/code/bảng markdown. Giữ block nếu nó có dấu
+ * hiệu cấu trúc (#, -, *, số thứ tự, ```, |) HOẶC đủ dài (không phải câu điều phối).
+ */
+const CHATTER_RE =
+  /^(I['’]ll|I will|I['’]ve|I have|Let me|Let['’]s|Now\b|First,|Next,|Then,|Based on|Here['’]s|Here is|Waiting for|The (three|two|exploration|parallel|agents|structure)\b|I['’]m going to|I need to|I can now)/i;
+
+export function stripAgentChatter(chunks: string[]): string[] {
+  return chunks.filter((c) => {
+    const t = c.trim();
+    if (!t) return false;
+    const hasStructure = /(^|\n)\s*(#{1,6}\s|[-*]\s|\d+[.)]\s|```|\|)/.test(t);
+    if (hasStructure) return true; // có markdown → chắc chắn là kiến thức, giữ.
+    // Không cấu trúc: chỉ loại nếu là câu dẫn NGẮN (điều phối). Đoạn văn dài vẫn giữ.
+    if (CHATTER_RE.test(t) && t.length < 400) return false;
+    return true;
+  });
+}
+
+/**
  * Quét repo (chỉ đọc) bằng agent → trả CHUỖI mô tả. KHÔNG lưu file. Dùng chung cho
  * "sinh profile" (lưu) và "xem cấu trúc" (chỉ hiển thị). `prompt` chọn góc nhìn.
  */
@@ -101,7 +122,7 @@ export async function scanRepoKnowledge(
     }
   }
 
-  const knowledge = textChunks.length ? textChunks.join('\n\n') : resultText;
+  const knowledge = stripAgentChatter(textChunks).join('\n\n') || resultText;
   if (!knowledge) throw new Error('Agent không quét được thông tin từ repo.');
   return knowledge;
 }
