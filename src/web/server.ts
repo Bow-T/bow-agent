@@ -153,6 +153,19 @@ const isReviewerMode = process.env.BOW_REVIEWER_MODE === 'true';
 let reviewerCwdOverride: string | null = null;
 const reviewerCwd = () => resolve(reviewerCwdOverride || process.env.BOW_REVIEWER_CWD || process.cwd());
 
+// DevOps Mode (mode thứ 6): Triển khai & Hạ tầng qua LAN. ĐỌC repo + GHI FILE HẠ TẦNG
+// (Dockerfile, docker-compose*, .github/workflows/*, *.tf/*.hcl, k8s/Helm manifests) + tài liệu
+// vận hành (*.md), NHƯNG chặn sửa source code ứng dụng (.ts/.dart/.py…). Lệnh DEPLOY/APPLY
+// (terraform apply, docker push, kubectl apply…) KHÔNG bị deny cứng mà TREO ADMIN DUYỆT từ xa
+// (như Collab) — deploy là việc hợp lệ của vai này, chỉ cần admin xác nhận. Ép 'auto'; policy
+// theo target trong runner.canUseTool (isDevOpsMode).
+//   BOW_DEVOPS_MODE=true BOW_DEVOPS_CWD=/path/to/repo npm run ui:devops
+const isDevOpsMode = process.env.BOW_DEVOPS_MODE === 'true';
+// Repo cố định cho DevOps (tương tự BOW_QC_CWD). Admin đổi lúc chạy qua POST /api/qc-cwd
+// (gọi tới cổng DevOps 4005) → lưu vào devopsCwdOverride, không cần restart.
+let devopsCwdOverride: string | null = null;
+const devopsCwd = () => resolve(devopsCwdOverride || process.env.BOW_DEVOPS_CWD || process.cwd());
+
 /**
  * Trả về TẤT CẢ địa chỉ IPv4 LAN của máy (bỏ loopback), đã sắp xếp: IP mạng nội bộ
  * thật (192.168.x / 10.x / 172.16–31.x) lên trước, các dải khác (VPN/Docker/link-local)
@@ -202,13 +215,14 @@ const logAudit = (message: string, clientIp?: string, username?: string) => {
   }
 };
 
-// Chặn đổi cấu hình (MCP/workspace) ở QC/Reviewer/Collab/BA Mode — không mode chia sẻ nào cho
-// client đổi hạ tầng agent. (QC = read-only + Skill/Jira; Reviewer = read-only + gh pr review;
-// Collab = ghi code nhưng khoá config; BA = ghi tài liệu + Jira nhưng khoá config.)
+// Chặn đổi cấu hình (MCP/workspace) ở QC/Reviewer/Collab/BA/DevOps Mode — không mode chia sẻ nào
+// cho client đổi hạ tầng agent. (QC = read-only + Skill/Jira; Reviewer = read-only + gh pr review;
+// Collab = ghi code nhưng khoá config; BA = ghi tài liệu + Jira nhưng khoá config; DevOps = ghi
+// file hạ tầng nhưng khoá config agent.)
 const checkReadonlyConfig = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-  if (isQcMode || isReviewerMode || isCollabMode || isBaMode) {
+  if (isQcMode || isReviewerMode || isCollabMode || isBaMode || isDevOpsMode) {
     const cleanIp = getCleanIp(req);
-    const modeName = isQcMode ? 'QC Mode' : isReviewerMode ? 'Reviewer Mode' : isCollabMode ? 'Collab Mode' : 'BA Mode';
+    const modeName = isQcMode ? 'QC Mode' : isReviewerMode ? 'Reviewer Mode' : isCollabMode ? 'Collab Mode' : isBaMode ? 'BA Mode' : 'DevOps Mode';
     logAudit(`IP: ${cleanIp} - BỊ CHẶN: Thao tác ${req.method} ${req.originalUrl} bị chặn trong ${modeName}.`, cleanIp);
     res.status(403).json({ error: `Thao tác bị chặn trong chế độ ${modeName} (không đổi được cấu hình).` });
     return;
@@ -404,6 +418,8 @@ interface RunParams {
   collabMode: boolean;
   /** BA Mode: ghi tài liệu + Jira, DENY source/DB/deploy. Xem runner. */
   baMode: boolean;
+  /** DevOps Mode: ghi file hạ tầng + docs, DENY source; deploy treo admin duyệt. Xem runner. */
+  devopsMode: boolean;
   effort: RunOptions['effort'];
   language: 'vi' | 'en';
   projectProfile?: string;
@@ -462,6 +478,7 @@ function runAgentSession(session: ReturnType<typeof createSession>, params: RunP
     mode: params.mode,
     collabMode: params.collabMode,
     baMode: params.baMode,
+    devopsMode: params.devopsMode,
     requireApprovalForWrites: params.requireApprovalForWrites,
     effort: params.effort,
     language: params.language,
@@ -612,15 +629,17 @@ app.post('/api/run', async (req, res) => {
           ? collabCwd()
           : isBaMode
             ? baCwd()
-            : isAdmin
-              ? (cwd || process.cwd())
-              : process.cwd();
+            : isDevOpsMode
+              ? devopsCwd()
+              : isAdmin
+                ? (cwd || process.cwd())
+                : process.cwd();
     const cleanIp = getCleanIp(req);
     // M11: guard kiểu — body do client gửi, ép về string để .trim() không ném TypeError
     // (trước đây {jiraRef:123} gây 500 + rò message lỗi nội bộ thay vì 400 đúng nghĩa).
     const textStr = typeof text === 'string' ? text : '';
     const jiraRefStr = typeof jiraRef === 'string' ? jiraRef : '';
-    const auditMode = isQcMode ? 'plan' : isReviewerMode ? 'plan (review)' : isCollabMode ? 'auto (collab)' : isBaMode ? 'auto (ba)' : mode;
+    const auditMode = isQcMode ? 'plan' : isReviewerMode ? 'plan (review)' : isCollabMode ? 'auto (collab)' : isBaMode ? 'auto (ba)' : isDevOpsMode ? 'auto (devops)' : mode;
     logAudit(`IP: ${cleanIp} - YÊU CẦU CHẠY: CWD=${workdir}, Mode=${auditMode}, Brief=${JSON.stringify(textStr || jiraRefStr || 'N/A')}`, cleanIp);
     let activeJiraRef = jiraRefStr;
     if (!activeJiraRef && textStr) {
@@ -761,6 +780,9 @@ app.post('/api/run', async (req, res) => {
     const VALID_MODES = new Set(['plan', 'manual', 'edit-auto', 'auto']);
     // Ở mode thường: admin dùng mode client gửi; non-admin bị ép 'plan'.
     const normalModeRequest = isAdmin ? mode : 'plan';
+    // DevOps Mode → ép 'auto' (ghi file hạ tầng không hỏi từng cái khi admin chạy trực tiếp);
+    // ghi source bị DENY CỨNG trong runner (devopsMode), còn deploy/apply được TREO ADMIN duyệt
+    // qua requireApprovalForWrites (bật cho non-admin, như Collab).
     const requestedMode = isQcMode
       ? 'plan'
       : isReviewerMode
@@ -769,7 +791,9 @@ app.post('/api/run', async (req, res) => {
           ? 'auto'
           : isBaMode
             ? 'auto'
-            : normalModeRequest;
+            : isDevOpsMode
+              ? 'auto'
+              : normalModeRequest;
     const runMode: 'plan' | 'manual' | 'edit-auto' | 'auto' =
       requestedMode === 'execute'
         ? 'manual'
@@ -786,10 +810,12 @@ app.post('/api/run', async (req, res) => {
     // admin localhost bật được. Non-admin gửi cờ lên cũng bị bỏ qua → single-agent như cũ.
     const allowSubagents = isAdmin && useSubagents === true;
 
-    // Cổng duyệt cho phiên này. CTV Collab (không phải admin localhost): MỌI thao tác ghi
-    // được ĐỊNH TUYẾN lên ADMIN qua adminBus (routeToAdmin) và runner siết duyệt toàn bộ
-    // (requireApprovalForWrites). Admin localhost chạy trực tiếp thì auto như cũ.
-    const routeToAdmin = isCollabMode && !isAdmin;
+    // Cổng duyệt cho phiên này. CTV Collab hoặc DevOps (không phải admin localhost): MỌI thao
+    // tác ghi được ĐỊNH TUYẾN lên ADMIN qua adminBus (routeToAdmin) và runner siết duyệt toàn bộ
+    // (requireApprovalForWrites). Với DevOps, đây là cách "deploy/apply phải admin duyệt": lệnh
+    // hạ tầng hợp lệ nhưng non-admin không tự chạy — treo admin xác nhận. Admin localhost chạy
+    // trực tiếp thì auto như cũ. (BA KHÔNG route vì BA deny cứng, không có gì để admin duyệt.)
+    const routeToAdmin = (isCollabMode || isDevOpsMode) && !isAdmin;
     const requireApprovalForWrites = routeToAdmin;
 
     // MCP RIÊNG của user LAN (theo token → user.id): overlay lên MCP chung, TỰ áp mọi lần
@@ -811,6 +837,7 @@ app.post('/api/run', async (req, res) => {
         mode: runMode,
         collabMode: isCollabMode,
         baMode: isBaMode,
+        devopsMode: isDevOpsMode,
         effort: effort ?? 'high',
         language: language === 'en' ? 'en' : 'vi',
         projectProfile,
@@ -1062,9 +1089,11 @@ app.get('/api/config', async (req, res) => {
 
   const isAdmin = isAdminReq(req);
 
-  // Source bị khoá theo mode: QC → qcCwd, Reviewer → reviewerCwd, Collab → collabCwd, BA → baCwd.
-  const effectiveCwd = isQcMode ? qcCwd() : isReviewerMode ? reviewerCwd() : isCollabMode ? collabCwd() : isBaMode ? baCwd() : process.cwd();
-  // Cổng web LAN theo bản đang chạy (BOW_WEB_PORT: dev 5173 / qc 5174 / collab 5175 / ba 5176 / review 5177).
+  // Source bị khoá theo mode: QC → qcCwd, Reviewer → reviewerCwd, Collab → collabCwd, BA → baCwd,
+  // DevOps → devopsCwd.
+  const effectiveCwd = isQcMode ? qcCwd() : isReviewerMode ? reviewerCwd() : isCollabMode ? collabCwd() : isBaMode ? baCwd() : isDevOpsMode ? devopsCwd() : process.cwd();
+  // Cổng web LAN theo bản đang chạy (BOW_WEB_PORT: dev 5173 / qc 5174 / collab 5175 / ba 5176 /
+  // review 5177 / devops 5178).
   const webPort = process.env.BOW_WEB_PORT || '5173';
 
   const currentPort = Number(process.env.BOW_AGENT_PORT || '4000');
@@ -1073,7 +1102,8 @@ app.get('/api/config', async (req, res) => {
     qc: { repoName: '', defaultCwd: '' },
     collab: { repoName: '', defaultCwd: '' },
     ba: { repoName: '', defaultCwd: '' },
-    review: { repoName: '', defaultCwd: '' }
+    review: { repoName: '', defaultCwd: '' },
+    devops: { repoName: '', defaultCwd: '' }
   };
 
   if (currentPort === 4000) {
@@ -1086,6 +1116,8 @@ app.get('/api/config', async (req, res) => {
     modes.ba = { repoName: basename(effectiveCwd), defaultCwd: effectiveCwd };
   } else if (currentPort === 4004) {
     modes.review = { repoName: basename(effectiveCwd), defaultCwd: effectiveCwd };
+  } else if (currentPort === 4005) {
+    modes.devops = { repoName: basename(effectiveCwd), defaultCwd: effectiveCwd };
   }
 
   const promises = [];
@@ -1104,6 +1136,9 @@ app.get('/api/config', async (req, res) => {
   if (currentPort !== 4004) {
     promises.push(pingConfigPort(4004).then(res => { if (res) modes.review = res; }));
   }
+  if (currentPort !== 4005) {
+    promises.push(pingConfigPort(4005).then(res => { if (res) modes.devops = res; }));
+  }
 
   await Promise.all(promises);
 
@@ -1118,6 +1153,7 @@ app.get('/api/config', async (req, res) => {
     isReviewerMode,
     isCollabMode,
     isBaMode,
+    isDevOpsMode,
     isAdmin,
     claudeProfiles: listClaudeProfiles(),
     currentClaudeProfile: getCurrentProfile(),
@@ -1474,9 +1510,11 @@ app.post('/api/qc-cwd', requireAdmin, (req, res) => {
     return;
   }
   // Ghi vào override đúng theo mode tiến trình đang chạy: BA → baCwdOverride, Reviewer →
-  // reviewerCwdOverride, còn lại → qcCwdOverride (dùng chung QC/dev — GET /api/config đọc theo mode).
+  // reviewerCwdOverride, DevOps → devopsCwdOverride, còn lại → qcCwdOverride (dùng chung QC/dev —
+  // GET /api/config đọc theo mode).
   if (isBaMode) baCwdOverride = dir;
   else if (isReviewerMode) reviewerCwdOverride = dir;
+  else if (isDevOpsMode) devopsCwdOverride = dir;
   else qcCwdOverride = dir;
   logAudit(`ADMIN đổi source → ${dir}`, '127.0.0.1');
   res.json({ ok: true, cwd: dir, repoName: basename(dir) });
@@ -2076,6 +2114,9 @@ app.listen(PORT, () => {
     process.stdout.write(`   Để chia sẻ với đồng nghiệp, chạy frontend bằng: npm run ui:web -- --host\n\n`);
   } else if (isReviewerMode) {
     process.stdout.write(`   ⚠️ REVIEWER MODE ĐANG BẬT (read-only + gh pr review) - REVIEW/COMMENT/APPROVE PR, KHÔNG SỬA CODE\n`);
+    process.stdout.write(`   Để chia sẻ với đồng nghiệp, chạy frontend bằng: npm run ui:web -- --host\n\n`);
+  } else if (isDevOpsMode) {
+    process.stdout.write(`   ⚠️ DEVOPS MODE ĐANG BẬT (ghi file hạ tầng + deploy treo admin duyệt) - KHÔNG SỬA SOURCE ỨNG DỤNG\n`);
     process.stdout.write(`   Để chia sẻ với đồng nghiệp, chạy frontend bằng: npm run ui:web -- --host\n\n`);
   } else {
     process.stdout.write(`   (dev frontend: chạy \`npm run ui:web\` rồi mở http://localhost:5173)\n\n`);

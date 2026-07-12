@@ -1863,6 +1863,21 @@ a { color: var(--brass); text-underline-offset: 2px; }
 @media (prefers-color-scheme: dark) {
   .reviewer-banner { color: #c4b5fd; }
 }
+/* ─────────────────────  DevOps Mode  ───────────────────── */
+/* Banner cho DevOps: ghi file hạ tầng + docs, KHÔNG sửa source; deploy/apply treo admin duyệt.
+   Tông xanh lá emerald phân biệt với QC (teal), Collab (cam), BA (xanh dương), Reviewer (tím). */
+.devops-banner {
+  padding: 8px 16px;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+  color: #047857;
+  background: color-mix(in srgb, #10b981 18%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, #10b981 50%, transparent);
+}
+@media (prefers-color-scheme: dark) {
+  .devops-banner { color: #6ee7b7; }
+}
 /* Panel admin duyệt lệnh hủy hoại của CTV — xếp chồng nhiều yêu cầu, cuộn nếu dài. */
 .collab-approvals {
   gap: 8px;
@@ -2857,78 +2872,344 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 }
 
 /* ───────────────────────────  Neo Brutalism · tinh chỉnh "poster"  ───────────────────────────
- * Chỉ áp khi data-theme=brutal. Bắt vibe ảnh mẫu: heading in hoa cực đậm, nút bấm "lún" theo
- * bóng cứng, liên kết gạch chân dày. Không đụng layout — chỉ nhấn mạnh chất chữ + tương tác. */
+ * Chỉ áp khi data-theme=brutal. Bắt vibe Neo Brutalism đích thực:
+ * 1. Khối phẳng đục hoàn toàn (background solid), triệt tiêu các lớp glow/kính mờ/hạt film.
+ * 2. Đường viền đen đặc và DÀY (3px) cho mọi cấu trúc phân mảnh (panel, container, card, button, input).
+ * 3. Bóng đổ cứng (hard shadow) đen đặc lệch 6px - 8px, không nhạt nhòa, không mờ.
+ * 4. Micro-interaction: di chuột (hover) dịch lên góc trái và tăng bóng để tạo độ nổi khối,
+ *    khi ấn (active) thì lún sâu dán sát mặt phẳng (bóng thu về 0).
+ * 5. Các chi tiết rườm rà (kính mờ, double border, khung hairline lồng lót) bị triệt tiêu hoàn toàn.
+ * 6. Sử dụng các swatch màu chói lội phẳng (vàng bão hòa, hồng đỏ coral, tím lavender).
+ */
 
-/* Heading markdown → poster: in hoa, dày, ken chữ chặt, gạch dưới đen dày ở h1/h2. */
-[data-theme='brutal'] .pipeline-expand .md h1,
-[data-theme='brutal'] .pipeline-expand .md h2,
-[data-theme='brutal'] .pipeline-expand .md h3 {
-  text-transform: uppercase;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  color: var(--ink);
-}
-[data-theme='brutal'] .pipeline-expand .md h1,
-[data-theme='brutal'] .pipeline-expand .md h2 {
-  border-bottom: 3px solid var(--ink);
-  padding-bottom: 4px;
+/* Triệt tiêu khung hairline lồng lót (device frame) & quầng sáng thừa */
+[data-theme='brutal'] .chat-container::before,
+[data-theme='brutal'] .sidebar-pipeline::before,
+[data-theme='brutal'] .modal-content::before,
+[data-theme='brutal'] .pixel-panel::before,
+[data-theme='brutal'] .panel-frame::before {
+  display: none !important;
 }
 
-/* Nút chính có bóng CỨNG + viền dày (ghi đè bóng blur mặc định của .btn.run/allow). */
-[data-theme='brutal'] .btn.primary,
-[data-theme='brutal'] .btn.run,
-[data-theme='brutal'] .btn.allow,
-[data-theme='brutal'] .btn.stop,
-[data-theme='brutal'] .btn.deny,
-[data-theme='brutal'] .theme-btn {
-  border-width: var(--bd-thin);
+/* Biến đổi các vùng chứa chính thành khối phẳng viền dày & bóng cứng */
+[data-theme='brutal'] .topbar {
+  background: var(--surface) !important;
+  border-bottom: var(--bd-thin) solid var(--hairline) !important;
+}
+[data-theme='brutal'] .brand {
+  border-right: var(--bd-thin) solid var(--hairline) !important;
+}
+[data-theme='brutal'] .readout,
+[data-theme='brutal'] .readout-btn {
+  border-right: var(--bd-thin) solid var(--hairline) !important;
+}
+[data-theme='brutal'] .readout-btn:hover:not(:disabled) {
+  background-color: var(--surface-2) !important;
+}
+[data-theme='brutal'] .topbar-right {
+  border-left: var(--bd-thin) solid var(--hairline) !important;
+}
+
+[data-theme='brutal'] .chat-container,
+[data-theme='brutal'] .sidebar-pipeline,
+[data-theme='brutal'] .step-detail,
+[data-theme='brutal'] .pixel-panel,
+[data-theme='brutal'] .modal-content,
+[data-theme='brutal'] .accent-menu,
+[data-theme='brutal'] .lan-url-menu {
+  background: var(--surface) !important;
+  border: var(--bd-thin) solid var(--hairline) !important;
   box-shadow: var(--depth) !important;
-}
-[data-theme='brutal'] .btn.run,
-[data-theme='brutal'] .btn.allow {
-  background: var(--brass);        /* phẳng, bỏ gradient */
-  border-color: var(--ink);
-}
-[data-theme='brutal'] .btn.run:hover:not(:disabled),
-[data-theme='brutal'] .btn.allow:hover:not(:disabled) {
-  background: var(--brass-bright);
-  border-color: var(--ink);
+  border-radius: 0 !important;
+  outline: none !important;
 }
 
-/* Nút bấm "lún theo bóng": khi hover dịch xuống-phải, khi nhấn dán sát (bóng co lại).
- * Đây là micro-interaction kinh điển của Neo Brutalism — khối như bị ấn xuống mặt bàn.
- * Chỉ áp cho nút CÓ bóng cứng (.btn.primary/run/allow/stop/deny + .theme-btn). */
-[data-theme='brutal'] .btn.primary,
+/* Canvas Star Chart container */
+[data-theme='brutal'] .neural-net-container {
+  border: var(--bd-thin) solid var(--hairline) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  margin: 12px 12px 0 !important;
+}
+[data-theme='brutal'] .neural-net-container.is-live {
+  border-color: var(--hairline) !important;
+}
+[data-theme='brutal'] .viewport-corner {
+  border-color: var(--hairline) !important;
+  border-width: 0 !important;
+}
+[data-theme='brutal'] .viewport-corner.tl { border-top-width: 3px !important; border-left-width: 3px !important; }
+[data-theme='brutal'] .viewport-corner.tr { border-top-width: 3px !important; border-right-width: 3px !important; }
+[data-theme='brutal'] .viewport-corner.bl { border-bottom-width: 3px !important; border-left-width: 3px !important; }
+[data-theme='brutal'] .viewport-corner.br { border-bottom-width: 3px !important; border-right-width: 3px !important; }
+
+/* Tiêu đề thanh sidebar / modal header */
+[data-theme='brutal'] .sidebar-pipeline-title,
+[data-theme='brutal'] .modal-header {
+  background-color: var(--surface-2) !important;
+  color: var(--ink) !important;
+  font-family: var(--sans) !important;
+  font-weight: 900 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 13px !important;
+  border-bottom: var(--bd-thin) solid var(--hairline) !important;
+  padding: 12px 14px !important;
+  margin: 0 !important;
+}
+[data-theme='brutal'] .sidebar-pipeline-title::after {
+  display: none !important;
+}
+
+/* Nút phẳng icon ở header (theme-btn) */
+[data-theme='brutal'] .theme-btn {
+  background-color: var(--surface) !important;
+  color: var(--ink) !important;
+  border: var(--bd-thin) solid var(--hairline) !important;
+  box-shadow: 4px 4px 0 0 var(--hairline) !important;
+  border-radius: 0 !important;
+  transition: transform var(--fast), box-shadow var(--fast), background-color var(--fast) !important;
+}
+[data-theme='brutal'] .theme-btn:hover:not(:disabled) {
+  background-color: var(--surface-2) !important;
+  transform: translate(-2px, -2px) !important;
+  box-shadow: 6px 6px 0 0 var(--hairline) !important;
+}
+[data-theme='brutal'] .theme-btn:active:not(:disabled) {
+  transform: translate(4px, 4px) !important;
+  box-shadow: 0 0 0 0 var(--hairline) !important;
+}
+
+/* Swatches và Accent dot */
+[data-theme='brutal'] .accent-dot {
+  border-radius: 0 !important;
+  border: 2px solid var(--hairline) !important;
+  box-shadow: none !important;
+}
+[data-theme='brutal'] .accent-swatch {
+  border-radius: 0 !important;
+  border: 2px solid var(--hairline) !important;
+  box-shadow: none !important;
+}
+[data-theme='brutal'] .accent-swatch.selected {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--hairline) !important;
+}
+
+/* Bong bóng chat (User, Agent, Tool, Error, System) */
+[data-theme='brutal'] .bubble.user {
+  align-self: flex-end;
+  background-color: var(--surface-2) !important;
+  border: var(--bd-thin) solid var(--hairline) !important;
+  box-shadow: 5px 5px 0 0 var(--hairline) !important;
+  border-radius: 0 !important;
+  color: var(--ink) !important;
+  padding: 12px 16px !important;
+  margin: 10px 0 !important;
+}
+[data-theme='brutal'] .bubble.user::before {
+  content: '» ';
+  color: var(--ink) !important;
+  font-family: var(--mono);
+  font-weight: 800;
+}
+[data-theme='brutal'] .bubble.agent {
+  align-self: flex-start;
+  background-color: var(--surface) !important;
+  border: var(--bd-thin) solid var(--hairline) !important;
+  box-shadow: 5px 5px 0 0 var(--hairline) !important;
+  border-radius: 0 !important;
+  color: var(--ink) !important;
+  padding: 12px 16px !important;
+  margin: 10px 0 !important;
+}
+[data-theme='brutal'] .bubble.tool {
+  background-color: var(--surface-3) !important;
+  border: var(--bd-thin) solid var(--hairline) !important;
+  box-shadow: 3px 3px 0 0 var(--hairline) !important;
+  border-radius: 0 !important;
+  color: var(--ink) !important;
+  padding: 8px 12px !important;
+  margin: 6px 0 !important;
+}
+[data-theme='brutal'] .bubble.tool::before {
+  color: var(--ink) !important;
+}
+[data-theme='brutal'] .bubble.tool.tool-group {
+  display: block !important;
+  background-color: var(--surface-3) !important;
+  border: var(--bd-thin) solid var(--hairline) !important;
+  box-shadow: 4px 4px 0 0 var(--hairline) !important;
+  border-radius: 0 !important;
+  padding: 8px 12px !important;
+  margin: 10px 0 !important;
+}
+[data-theme='brutal'] .tool-group-head {
+  color: var(--ink) !important;
+}
+[data-theme='brutal'] .tool-group-list {
+  border-left: 2px solid var(--hairline) !important;
+  margin-left: 4px !important;
+  padding-left: 12px !important;
+}
+[data-theme='brutal'] .bubble.error {
+  background-color: var(--danger-soft) !important;
+  border: var(--bd-thin) solid var(--hairline) !important;
+  box-shadow: 5px 5px 0 0 var(--hairline) !important;
+  border-radius: 0 !important;
+  color: var(--ink) !important;
+  padding: 12px 16px !important;
+  margin: 10px 0 !important;
+}
+[data-theme='brutal'] .bubble.result {
+  color: var(--ink) !important;
+  font-weight: 800;
+  padding: 12px 0 !important;
+}
+[data-theme='brutal'] .bubble.result::before,
+[data-theme='brutal'] .bubble.result::after {
+  height: 2px !important;
+  background: var(--hairline) !important;
+}
+
+/* Ô nhập gộp (Composer) */
+[data-theme='brutal'] .composer-input {
+  background-color: var(--surface) !important;
+  border: var(--bd-thin) solid var(--hairline) !important;
+  box-shadow: 5px 5px 0 0 var(--hairline) !important;
+  border-radius: 0 !important;
+  transition: box-shadow var(--fast) !important;
+}
+[data-theme='brutal'] .composer-input:focus-within {
+  box-shadow: 7px 7px 0 0 var(--brass) !important;
+}
+[data-theme='brutal'] .composer-bar {
+  border-top: var(--bd-thin) solid var(--hairline) !important;
+  background-color: var(--surface-2) !important;
+}
+
+/* Các trường input/textarea thông thường */
+[data-theme='brutal'] input,
+[data-theme='brutal'] textarea,
+[data-theme='brutal'] select {
+  background-color: var(--surface) !important;
+  color: var(--ink) !important;
+  border: var(--bd-thin) solid var(--hairline) !important;
+  border-radius: 0 !important;
+  padding: 8px 12px !important;
+  transition: box-shadow var(--fast) !important;
+}
+[data-theme='brutal'] input:focus,
+[data-theme='brutal'] textarea:focus,
+[data-theme='brutal'] select:focus {
+  border-color: var(--hairline) !important;
+  box-shadow: 4px 4px 0 0 var(--brass) !important;
+}
+
+/* Các nút điều khiển & tương tác (Primary, Run, Allow, Stop, Deny, Outline, Secondary) */
+[data-theme='brutal'] .btn,
+[data-theme='brutal'] .px-select-btn {
+  border: var(--bd-thin) solid var(--hairline) !important;
+  box-shadow: 4px 4px 0 0 var(--hairline) !important;
+  border-radius: 0 !important;
+  font-weight: 800 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  transition: transform var(--fast), box-shadow var(--fast), background-color var(--fast) !important;
+}
+
+/* Màu sắc nút trong brutal */
 [data-theme='brutal'] .btn.run,
 [data-theme='brutal'] .btn.allow,
-[data-theme='brutal'] .btn.stop,
-[data-theme='brutal'] .btn.deny,
-[data-theme='brutal'] .theme-btn {
-  transition: transform var(--fast), box-shadow var(--fast);
+[data-theme='brutal'] .btn.primary {
+  background-color: var(--brass) !important;
+  color: var(--on-brass) !important;
 }
-[data-theme='brutal'] .btn.primary:hover:not(:disabled),
 [data-theme='brutal'] .btn.run:hover:not(:disabled),
 [data-theme='brutal'] .btn.allow:hover:not(:disabled),
-[data-theme='brutal'] .btn.stop:hover:not(:disabled),
-[data-theme='brutal'] .btn.deny:hover:not(:disabled),
-[data-theme='brutal'] .theme-btn:hover {
-  transform: translate(2px, 2px);
-  box-shadow: 4px 4px 0 0 var(--ink) !important;
+[data-theme='brutal'] .btn.primary:hover:not(:disabled) {
+  background-color: var(--brass-bright) !important;
 }
-[data-theme='brutal'] .btn.primary:active:not(:disabled),
-[data-theme='brutal'] .btn.run:active:not(:disabled),
-[data-theme='brutal'] .btn.allow:active:not(:disabled),
-[data-theme='brutal'] .btn.stop:active:not(:disabled),
-[data-theme='brutal'] .btn.deny:active:not(:disabled),
-[data-theme='brutal'] .theme-btn:active {
-  transform: translate(8px, 8px);
-  box-shadow: 0 0 0 0 var(--ink) !important;
+[data-theme='brutal'] .btn.stop,
+[data-theme='brutal'] .btn.deny {
+  background-color: var(--danger) !important;
+  color: #ffffff !important;
+}
+[data-theme='brutal'] .btn.stop:hover:not(:disabled),
+[data-theme='brutal'] .btn.deny:hover:not(:disabled) {
+  background-color: #ff3b3b !important;
+}
+[data-theme='brutal'] .btn:not(.primary):not(.run):not(.allow):not(.stop):not(.deny),
+[data-theme='brutal'] .px-select-btn {
+  background-color: var(--surface-2) !important;
+  color: var(--ink) !important;
+}
+[data-theme='brutal'] .btn:not(.primary):not(.run):not(.allow):not(.stop):not(.deny):hover:not(:disabled),
+[data-theme='brutal'] .px-select-btn:hover {
+  background-color: var(--surface-3) !important;
 }
 
-/* Liên kết: gạch chân dày kiểu marker, không mảnh. */
+/* Hover/Active states của nút */
+[data-theme='brutal'] .btn:hover:not(:disabled),
+[data-theme='brutal'] .px-select-btn:hover {
+  transform: translate(-2px, -2px) !important;
+  box-shadow: 6px 6px 0 0 var(--hairline) !important;
+}
+[data-theme='brutal'] .btn:active:not(:disabled),
+[data-theme='brutal'] .px-select-btn:active {
+  transform: translate(4px, 4px) !important;
+  box-shadow: 0 0 0 0 var(--hairline) !important;
+}
+
+/* Định dạng tiêu đề Markdown trong nội dung */
+[data-theme='brutal'] .md h1,
+[data-theme='brutal'] .md h2,
+[data-theme='brutal'] .md h3,
+[data-theme='brutal'] .md h4 {
+  font-family: var(--sans) !important;
+  text-transform: uppercase;
+  font-weight: 900;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin-top: 18px;
+  margin-bottom: 8px;
+}
+[data-theme='brutal'] .md h1 {
+  font-size: 20px !important;
+  border-bottom: 3px solid var(--hairline);
+  padding-bottom: 6px;
+}
+[data-theme='brutal'] .md h2 {
+  font-size: 17px !important;
+  border-bottom: 2px solid var(--hairline);
+  padding-bottom: 4px;
+}
+[data-theme='brutal'] .md h3 {
+  font-size: 15px !important;
+}
+[data-theme='brutal'] .md h4 {
+  font-size: 13.5px !important;
+}
+[data-theme='brutal'] .md hr {
+  border-top: 2px solid var(--hairline);
+}
+[data-theme='brutal'] .md th,
+[data-theme='brutal'] .md td {
+  border: 2px solid var(--hairline);
+}
+[data-theme='brutal'] .md pre {
+  border: 2px solid var(--hairline) !important;
+  border-radius: 0 !important;
+  box-shadow: 3px 3px 0 0 var(--hairline) !important;
+  background-color: var(--surface-3) !important;
+}
+
+/* Liên kết gạch chân dày đậm kiểu poster */
 [data-theme='brutal'] a {
-  text-decoration-thickness: 2px;
-  text-underline-offset: 3px;
-  font-weight: 700;
+  text-decoration-thickness: 2.5px;
+  text-underline-offset: 4px;
+  font-weight: 800;
+  color: var(--ink) !important;
+}
+[data-theme='brutal'] a:hover {
+  background-color: var(--brass-soft);
 }

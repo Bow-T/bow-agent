@@ -255,7 +255,7 @@ function formatTokens(n: number): string {
 }
 
 /** Một thanh usage: nhãn + % + bar. severity đổi màu khi gần đầy. */
-const API_PORTS = [4000, 4001, 4002, 4003, 4004];
+const API_PORTS = [4000, 4001, 4002, 4003, 4004, 4005];
 
 function getAdminApiOrigins(): string[] {
   const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
@@ -274,6 +274,7 @@ export function App() {
     isReviewerMode?: boolean;
     isCollabMode?: boolean;
     isBaMode?: boolean;
+    isDevOpsMode?: boolean;
     isAdmin?: boolean;
     claudeProfiles?: { name: string; tokenSet: boolean }[];
     currentClaudeProfile?: string;
@@ -285,6 +286,7 @@ export function App() {
       collab: { repoName: string; defaultCwd: string };
       ba: { repoName: string; defaultCwd: string };
       review: { repoName: string; defaultCwd: string };
+      devops: { repoName: string; defaultCwd: string };
     };
   } | null>(null);
   const [otherModes, setOtherModes] = useState<{
@@ -293,6 +295,7 @@ export function App() {
     collab: { repoName: string; defaultCwd: string };
     ba: { repoName: string; defaultCwd: string };
     review: { repoName: string; defaultCwd: string };
+    devops: { repoName: string; defaultCwd: string };
   } | null>(null);
   const [task, setTask] = useState(() => localStorage.getItem('bow-task') || '');
   const [cwd, setCwd] = useState(() => localStorage.getItem('bow-cwd') || '');
@@ -361,6 +364,9 @@ export function App() {
     }
     if (otherModes?.review?.defaultCwd) {
       origins.push('http://localhost:4004');
+    }
+    if (otherModes?.devops?.defaultCwd) {
+      origins.push('http://localhost:4005');
     }
     return origins;
   }, [otherModes]);
@@ -536,7 +542,7 @@ export function App() {
   const [pickerOpen, setPickerOpen] = useState(false);
   // Đích của picker: 'cwd' = chọn thư mục làm việc thường; 'qc-cwd' = Admin đổi
   // source mà QC hỏi đáp (QC Mode). Quyết định nút "Chọn thư mục này" làm gì.
-  const [pickerTarget, setPickerTarget] = useState<'cwd' | 'dev-cwd' | 'qc-cwd' | 'collab-cwd' | 'ba-cwd' | 'reviewer-cwd'>('cwd');
+  const [pickerTarget, setPickerTarget] = useState<'cwd' | 'dev-cwd' | 'qc-cwd' | 'collab-cwd' | 'ba-cwd' | 'reviewer-cwd' | 'devops-cwd'>('cwd');
   const [pickerPath, setPickerPath] = useState('');
   const [pickerParent, setPickerParent] = useState<string | null>(null);
   const [pickerDirs, setPickerDirs] = useState<string[]>([]);
@@ -1360,6 +1366,8 @@ export function App() {
   const [baCwd, setBaCwd] = useState('');
   const [reviewerRepoLabel, setReviewerRepoLabel] = useState('');
   const [reviewerCwd, setReviewerCwd] = useState('');
+  const [devopsRepoLabel, setDevopsRepoLabel] = useState('');
+  const [devopsCwd, setDevopsCwd] = useState('');
 
   // Nạp repo của các chế độ khác khi là admin
   useEffect(() => {
@@ -1384,6 +1392,10 @@ export function App() {
               setReviewerRepoLabel(c.otherModes.review.repoName);
               setReviewerCwd(c.otherModes.review.defaultCwd);
             }
+            if (c.otherModes.devops) {
+              setDevopsRepoLabel(c.otherModes.devops.repoName);
+              setDevopsCwd(c.otherModes.devops.defaultCwd);
+            }
           }
         })
         .catch(() => {});
@@ -1394,16 +1406,16 @@ export function App() {
     return () => clearInterval(interval);
   }, [cfg?.isAdmin]);
 
-  const openPicker = (initialPath: string, target: 'cwd' | 'dev-cwd' | 'qc-cwd' | 'collab-cwd' | 'ba-cwd' | 'reviewer-cwd' = 'cwd') => {
+  const openPicker = (initialPath: string, target: 'cwd' | 'dev-cwd' | 'qc-cwd' | 'collab-cwd' | 'ba-cwd' | 'reviewer-cwd' | 'devops-cwd' = 'cwd') => {
     setPickerError('');
     setPickerTarget(target);
     setPickerOpen(true);
     fetchDirs(initialPath || cfg?.defaultCwd || '');
   };
 
-  const applyPortCwd = async (target: 'dev-cwd' | 'qc-cwd' | 'collab-cwd' | 'ba-cwd' | 'reviewer-cwd', dir: string) => {
+  const applyPortCwd = async (target: 'dev-cwd' | 'qc-cwd' | 'collab-cwd' | 'ba-cwd' | 'reviewer-cwd' | 'devops-cwd', dir: string) => {
     try {
-      const port = target === 'dev-cwd' ? 4000 : target === 'qc-cwd' ? 4001 : target === 'collab-cwd' ? 4002 : target === 'ba-cwd' ? 4003 : 4004;
+      const port = target === 'dev-cwd' ? 4000 : target === 'qc-cwd' ? 4001 : target === 'collab-cwd' ? 4002 : target === 'ba-cwd' ? 4003 : target === 'reviewer-cwd' ? 4004 : 4005;
       const res = await fetch(`http://localhost:${port}/api/qc-cwd`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1436,10 +1448,16 @@ export function App() {
         if (cfg?.isReviewerMode) {
           setCfg((c) => (c ? { ...c, defaultCwd: data.cwd, repoName: data.repoName } : c));
         }
+      } else if (target === 'devops-cwd') {
+        setDevopsRepoLabel(data.repoName);
+        setDevopsCwd(data.cwd);
+        if (cfg?.isDevOpsMode) {
+          setCfg((c) => (c ? { ...c, defaultCwd: data.cwd, repoName: data.repoName } : c));
+        }
       } else if (target === 'dev-cwd') {
         setDevRepoLabel(data.repoName);
         setDevCwd(data.cwd);
-        if (!cfg?.isQcMode && !cfg?.isReviewerMode && !cfg?.isCollabMode && !cfg?.isBaMode) {
+        if (!cfg?.isQcMode && !cfg?.isReviewerMode && !cfg?.isCollabMode && !cfg?.isBaMode && !cfg?.isDevOpsMode) {
           setCfg((c) => (c ? { ...c, defaultCwd: data.cwd, repoName: data.repoName } : c));
         }
       }
@@ -1887,8 +1905,9 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Collab Mode + admin (localhost): mở kênh SSE riêng nhận yêu cầu duyệt lệnh hủy hoại
-  // từ CTV. Kênh toàn cục /api/admin/events (trên cả các cổng đang hoạt động).
+  // Collab/DevOps Mode + admin (localhost): mở kênh SSE riêng nhận yêu cầu duyệt lệnh hủy hoại
+  // (Collab) / deploy-apply (DevOps) từ CTV. Kênh toàn cục /api/admin/events (trên MỌI cổng đang
+  // hoạt động — gồm 4002 Collab và 4005 DevOps nhờ getActiveOrigins), nên admin nhận chung một chỗ.
   useEffect(() => {
     if (!cfg?.isAdmin) return;
     const origins = getActiveOrigins();
@@ -2791,6 +2810,7 @@ export function App() {
   const reviewer = cfg ? !!cfg.isReviewerMode : false;
   const collab = cfg ? !!cfg.isCollabMode : false;
   const ba = cfg ? !!cfg.isBaMode : false;
+  const devops = cfg ? !!cfg.isDevOpsMode : false;
   const pendingAccessCount = accessUsers.filter((u) => u.status === 'pending').length;
   // Tên repo hiển thị ở badge "Source" trên header:
   // - QC Mode: repo bị khoá vào cfg (qcCwd) → dùng repoName/defaultCwd từ backend.
@@ -2875,7 +2895,7 @@ export function App() {
   }
 
   return (
-    <div className={`app${qc ? ' qc-mode' : ''}${reviewer ? ' reviewer-mode' : ''}${collab ? ' collab-mode' : ''}${ba ? ' ba-mode' : ''}`}>
+    <div className={`app${qc ? ' qc-mode' : ''}${reviewer ? ' reviewer-mode' : ''}${collab ? ' collab-mode' : ''}${ba ? ' ba-mode' : ''}${devops ? ' devops-mode' : ''}`}>
       {collab && (
         <div className="collab-banner" role="status">
           🤝 <strong>Collab Mode</strong> — bạn code như dev; lệnh hủy hoại (xoá, deploy, ghi ngoài repo)
@@ -2892,6 +2912,13 @@ export function App() {
         <div className="reviewer-banner" role="status">
           🔍 <strong>Reviewer Mode</strong> — bạn ĐỌC code, review PR (git/gh diff) và comment/approve
           qua <code>gh pr</code>. Không sửa code, không merge/push.
+        </div>
+      )}
+      {devops && (
+        <div className="devops-banner" role="status">
+          🛠️ <strong>DevOps Mode</strong> — bạn ĐỌC repo, ghi FILE HẠ TẦNG (Dockerfile, compose, workflows,
+          *.tf, k8s/Helm) và tài liệu vận hành. Không sửa source ứng dụng; lệnh deploy/apply
+          {cfg?.isAdmin ? ' bạn tự duyệt.' : ' cần admin duyệt từ xa.'}
         </div>
       )}
       <header className="topbar">
@@ -2959,10 +2986,20 @@ export function App() {
                   <span className="rv" style={{ color: 'var(--violet, #8b5cf6)' }}>{reviewerRepoLabel}</span>
                 </button>
               )}
+              {devopsRepoLabel && (
+                <button
+                  className="readout readout-btn"
+                  title={`DevOps Mode Repo: ${devopsCwd} — bấm để đổi`}
+                  onClick={() => openPicker(devopsCwd || '', 'devops-cwd')}
+                >
+                  <span className="rl">DevOps Src</span>
+                  <span className="rv" style={{ color: 'var(--devops, #10b981)' }}>{devopsRepoLabel}</span>
+                </button>
+              )}
             </>
           ) : (
-            (readonlyShare || collab) && (
-              <span className="readout" title={`Đang hỏi đáp source: ${repoLabel}`}>
+            (readonlyShare || collab || devops) && (
+              <span className="readout" title={`Đang thao tác source: ${repoLabel}`}>
                 <span className="rl">Source</span>
                 <span className="rv" style={{ color: 'var(--brass)' }}>{repoLabel}</span>
               </span>
@@ -3692,7 +3729,7 @@ export function App() {
                 👤 Từ <strong>{a.clientIp}</strong> · phiên <code>{a.sessionId.slice(0, 8)}</code>
                 {a.apiOrigin && (
                   <span style={{ marginLeft: '6px', color: 'var(--brass)', fontSize: '11px' }}>
-                    ({a.apiOrigin.includes('4002') ? 'Collab' : a.apiOrigin.includes('4001') ? 'QC' : a.apiOrigin.includes('4003') ? 'BA' : a.apiOrigin.includes('4004') ? 'Review' : 'Dev'})
+                    ({a.apiOrigin.includes('4002') ? 'Collab' : a.apiOrigin.includes('4001') ? 'QC' : a.apiOrigin.includes('4003') ? 'BA' : a.apiOrigin.includes('4004') ? 'Review' : a.apiOrigin.includes('4005') ? 'DevOps' : 'Dev'})
                   </span>
                 )}
               </div>

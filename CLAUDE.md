@@ -29,7 +29,7 @@ trỏ vào `MEMORY.md`. Thư mục này được commit theo git để đồng b
 - **Cổng an toàn duy nhất** = `canUseTool` trong `runner.ts`: tool đọc + Bash an toàn tự chạy;
   mọi thao tác GHI qua cổng duyệt. Đừng mở đường ghi vòng qua cổng này.
 
-## Mode web (4 mode, cổng riêng, chạy song song)
+## Mode web (6 mode, cổng riêng, chạy song song)
 
 | Mode | Script | API/Web | Quyền |
 | ---- | ------ | ------- | ----- |
@@ -38,10 +38,13 @@ trỏ vào `MEMORY.md`. Thư mục này được commit theo git để đồng b
 | **Collab** | `npm run ui:collab` | 4002/5175 | CTV code như dev; **mọi ghi (kể cả Git) phải admin duyệt từ xa** |
 | **BA** | `npm run ui:ba` | 4003/5176 | Ghi TÀI LIỆU (`docs/`, `*.md`) + full Jira; DENY cứng source/DB/deploy |
 | **Reviewer** | `npm run ui:review:share` | 4004/5177 | Read-only code + review PR (`git/gh diff`) + comment/approve PR (`gh pr comment`/`gh pr review`) + test + Jira đọc; DENY sửa code/merge/push |
+| **DevOps** | `npm run ui:devops:share` | 4005/5178 | Ghi FILE HẠ TẦNG (Dockerfile, compose, `.github/workflows/*`, `*.tf/*.hcl`, k8s/Helm) + docs; DENY cứng source ứng dụng; deploy/apply **treo admin duyệt** (như Collab) |
 
-Policy nằm trong các khối `isQcMode`/`isReviewerMode`/`isCollabMode`/`isBaMode` của `canUseTool`
-(`runner.ts`) + `checkReadonlyConfig`/`requireAdmin` ở `server.ts`. Admin = **socket IP thật là
-localhost** (đừng tin header `X-Forwarded-For` — xem `.agents/AGENTS.md`).
+Policy nằm trong các khối `isQcMode`/`isReviewerMode`/`isCollabMode`/`isBaMode`/`isDevOpsMode` của
+`canUseTool` (`runner.ts`) + `checkReadonlyConfig`/`requireAdmin` ở `server.ts`. Admin = **socket IP
+thật là localhost** (đừng tin header `X-Forwarded-For` — xem `.agents/AGENTS.md`). DevOps là mode
+LAI: ghi file theo target như BA (helper `isInfraPath`), nhưng deploy/apply định tuyến admin duyệt
+qua `adminBus` như Collab (`routeToAdmin = (isCollabMode || isDevOpsMode) && !isAdmin`).
 
 ## Tài liệu chi tiết
 

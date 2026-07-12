@@ -142,7 +142,30 @@
       }
     },
     {
-      "label": "web: dừng (mọi cổng dev/qc/collab/ba/review)",
+      "label": "web: chạy DevOps Mode (Triển khai & Hạ tầng)",
+      "detail": "DevOps qua LAN: ghi FILE HẠ TẦNG (Dockerfile, compose, workflows, *.tf, k8s/Helm) + docs; DENY source; deploy/apply treo admin duyệt (script ui:devops:share).",
+      "type": "npm",
+      "script": "ui:devops:share",
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "vite",
+        "pattern": {
+          "regexp": "^$"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": "Local:\\s+http://localhost:5178"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "web: dừng (mọi cổng dev/qc/collab/ba/review/devops)",
       "detail": "Kill tiến trình đang chiếm cổng api/web (script ui:stop).",
       "type": "npm",
       "script": "ui:stop",

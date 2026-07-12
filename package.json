@@ -14,11 +14,13 @@
     "ui": "concurrently -n api,web -c blue,green \"npm run ui:api\" \"npm run ui:web\"",
     "ui:qc": "BOW_QC_MODE=true concurrently -n api,web -c blue,green \"npm run ui:api\" \"vite --host\"",
     "ui:review": "BOW_REVIEWER_MODE=true concurrently -n api,web -c blue,green \"npm run ui:api\" \"vite --host\"",
-    "ui:stop": "kill -9 $(lsof -t -i:4000 -i:5173 -i:4001 -i:5174 -i:4002 -i:5175 -i:4003 -i:5176 -i:4004 -i:5177) 2>/dev/null || true",
+    "ui:devops": "BOW_DEVOPS_MODE=true concurrently -n api,web -c blue,green \"npm run ui:api\" \"vite --host\"",
+    "ui:stop": "kill -9 $(lsof -t -i:4000 -i:5173 -i:4001 -i:5174 -i:4002 -i:5175 -i:4003 -i:5176 -i:4004 -i:5177 -i:4005 -i:5178) 2>/dev/null || true",
     "ui:qc:stop": "kill -9 $(lsof -t -i:4001 -i:5174) 2>/dev/null || true",
     "ui:collab:stop": "kill -9 $(lsof -t -i:4002 -i:5175) 2>/dev/null || true",
     "ui:ba:stop": "kill -9 $(lsof -t -i:4003 -i:5176) 2>/dev/null || true",
     "ui:review:stop": "kill -9 $(lsof -t -i:4004 -i:5177) 2>/dev/null || true",
+    "ui:devops:stop": "kill -9 $(lsof -t -i:4005 -i:5178) 2>/dev/null || true",
     "ui:restart": "npm run ui:stop && npm run ui:qc",
     "ui:api": "tsx src/web/server.ts",
     "ui:web": "vite",
@@ -27,7 +29,8 @@
     "ui:qc:share": "BOW_QC_MODE=true BOW_QC_CWD=/Users/tuannguyen/GitProject/monorepo BOW_AGENT_PORT=4001 BOW_WEB_PORT=5174 concurrently -n qc-api,qc-web -c magenta,cyan \"npm run ui:api\" \"vite --host --port 5174\"",
     "ui:collab": "BOW_COLLAB_MODE=true BOW_COLLAB_CWD=/Users/tuannguyen/GitProject/monorepo BOW_AGENT_PORT=4002 BOW_WEB_PORT=5175 concurrently -n collab-api,collab-web -c yellow,red \"npm run ui:api\" \"vite --host --port 5175\"",
     "ui:ba": "BOW_BA_MODE=true BOW_BA_CWD=/Users/tuannguyen/GitProject/monorepo BOW_AGENT_PORT=4003 BOW_WEB_PORT=5176 concurrently -n ba-api,ba-web -c blue,cyan \"npm run ui:api\" \"vite --host --port 5176\"",
-    "ui:review:share": "BOW_REVIEWER_MODE=true BOW_REVIEWER_CWD=/Users/tuannguyen/GitProject/monorepo BOW_AGENT_PORT=4004 BOW_WEB_PORT=5177 concurrently -n review-api,review-web -c magenta,cyan \"npm run ui:api\" \"vite --host --port 5177\""
+    "ui:review:share": "BOW_REVIEWER_MODE=true BOW_REVIEWER_CWD=/Users/tuannguyen/GitProject/monorepo BOW_AGENT_PORT=4004 BOW_WEB_PORT=5177 concurrently -n review-api,review-web -c magenta,cyan \"npm run ui:api\" \"vite --host --port 5177\"",
+    "ui:devops:share": "BOW_DEVOPS_MODE=true BOW_DEVOPS_CWD=/Users/tuannguyen/GitProject/monorepo BOW_AGENT_PORT=4005 BOW_WEB_PORT=5178 concurrently -n devops-api,devops-web -c green,yellow \"npm run ui:api\" \"vite --host --port 5178\""
   },
   "engines": {
     "node": ">=18"

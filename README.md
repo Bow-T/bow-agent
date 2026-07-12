@@ -88,7 +88,7 @@ npm run ui
 `npm run ui` chạy cùng lúc backend (cổng 4000) + frontend Vite (cổng 5173).
 Muốn 1 cổng duy nhất (production): `npm run ui:preview` → mở http://localhost:4000.
 
-### Bốn mode chạy web (cổng riêng, chạy song song) 🔀
+### Sáu mode chạy web (cổng riêng, chạy song song) 🔀
 
 Cùng một backend, `BOW_*_MODE` bật các mode phân quyền khác nhau cho từng nhóm người dùng
 qua LAN — **mỗi mode một cặp cổng riêng nên chạy đồng thời không đụng nhau**:
@@ -100,6 +100,7 @@ qua LAN — **mỗi mode một cặp cổng riêng nên chạy đồng thời kh
 | **Collab** | `npm run ui:collab` | 4002 / 5175 | Cộng tác viên code qua LAN | Sửa code + chạy test tự do; **mọi thao tác GHI (kể cả Git, rm, deploy) phải admin duyệt từ xa** |
 | **BA** | `npm run ui:ba` | 4003 / 5176 | Business Analyst | Ghi **tài liệu** (`docs/`, `*.md`) + **full Jira**; DENY cứng source code / DB / deploy |
 | **Reviewer** | `npm run ui:review:share` | 4004 / 5177 | Tech Lead / Reviewer | **Read-only code** + review PR (`git diff`, `gh pr view/diff`) + **comment/approve PR** (`gh pr comment`/`gh pr review`) + test/analyze + **Jira đọc**; DENY sửa code / merge / push / deploy |
+| **DevOps** | `npm run ui:devops:share` | 4005 / 5178 | Kỹ sư Triển khai / Hạ tầng | Ghi **file hạ tầng** (Dockerfile, compose, workflows, *.tf, k8s/Helm) + docs vận hành; **lệnh deploy/apply được chuyển tiếp cho Admin phê duyệt**; cấm sửa source code ứng dụng |
 
 - **Admin = socket IP thật là localhost** (`127.0.0.1`) — không tin header `X-Forwarded-For`.
 - **Cổng truy cập LAN**: client non-localhost phải **gửi yêu cầu (nhập tên)** rồi chờ admin
@@ -107,7 +108,7 @@ qua LAN — **mỗi mode một cặp cổng riêng nên chạy đồng thời kh
 - **MCP riêng theo user**: user LAN đã duyệt tự quản một danh sách MCP riêng (token/DB riêng),
   **overlay chồng** lên MCP chung của admin (trùng tên → bản riêng thắng) — chạy cả trong QC/Collab.
 - Đổi source (`cwd`) lúc chạy không cần restart: admin bấm **Source** trên header (hoặc
-  `POST /api/qc-cwd`). Dừng riêng từng mode: `ui:qc:stop` / `ui:collab:stop` / `ui:ba:stop` / `ui:review:stop`;
+  `POST /api/qc-cwd`). Dừng riêng từng mode: `ui:qc:stop` / `ui:collab:stop` / `ui:ba:stop` / `ui:review:stop` / `ui:devops:stop`;
   `ui:stop` tắt sạch mọi cổng.
 
 ---
