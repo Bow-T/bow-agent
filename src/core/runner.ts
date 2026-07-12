@@ -186,6 +186,15 @@ export interface RunOptions {
    */
   collabMode?: boolean;
   /**
+   * BA Mode (Business Analyst qua LAN). Chạy 'auto' nhưng phân quyền theo ĐÍCH ghi:
+   *  - ĐỌC repo (Read/Grep/Glob), WebSearch/WebFetch, Jira (cả read lẫn write) → cho phép.
+   *  - GHI FILE: chỉ tài liệu (docs/, *.md/*.mdx/*.txt) → cho phép; source code / file khác
+   *    (.ts/.dart/.sql/.js…) → DENY CỨNG (không phải hỏi duyệt).
+   *  - MCP write ngoài Jira (execute_sql, apply_migration…), deploy, lệnh huỷ hoại → DENY.
+   * Khác Safe (read-only tuyệt đối) và Collab (ghi code, gác dangerous chờ admin duyệt).
+   */
+  baMode?: boolean;
+  /**
    * SIẾT DUYỆT GHI (M1–M5). Khi TRUE, MỌI thao tác ghi/side-effect đều phải qua onApproval
    * kể cả ở mode 'auto': ghi/sửa file (cả trong repo), lệnh Bash không-safe, MCP write.
    * Chỉ lệnh SAFE_COMMANDS đơn thuần (đọc/kiểm chứng) mới auto-allow. Dùng cho client
@@ -286,7 +295,18 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   // Multi-agent (opt-in): bộ subagent chuẩn + subagent riêng profile. Chỉ dựng khi bật.
   const subagents = opts.useSubagents ? buildSubagents(opts.profileSubagents) : undefined;
 
-  const isSafeMode = process.env.BOW_SAFE_MODE === 'true';
+  // QC Mode (trước đây tên "Safe Mode"): read-only cho QC hỏi đáp, NHƯNG mở tool Skill
+  // (chạy qc-triage…) + Jira read/write (comment kết luận, transition ticket). Bật qua env
+  // BOW_QC_MODE (server đặt khi chạy `npm run ui:qc`). Không còn nhận tên env cũ BOW_SAFE_MODE.
+  const isQcMode = process.env.BOW_QC_MODE === 'true';
+  // Reviewer Mode: cho Tech Lead/Reviewer review PR GitHub + diff local. Read-only source NHƯNG
+  // mở tool Skill (pr-review), chạy git/gh đọc + `gh pr comment`/`gh pr review` (comment/approve
+  // PR), test/analyze để kiểm, và Jira READ (đối chiếu ticket). DENY sửa code/merge/push/deploy.
+  // Bật qua env BOW_REVIEWER_MODE (server đặt khi chạy `npm run ui:review`).
+  const isReviewerMode = process.env.BOW_REVIEWER_MODE === 'true';
+  // BA Mode: bật khi caller (web) truyền opts.baMode. Đọc từ opts (KHÔNG từ env) để phân
+  // quyền theo target trong canUseTool. Xem opts.baMode ở RunOptions.
+  const isBaMode = opts.baMode === true;
 
   // Các tool ĐỌC được auto-duyệt. KHÔNG đưa chúng (và AskUserQuestion) vào
   // allowedTools: entry "trần" trong allowedTools auto-approve TRƯỚC khi tới
@@ -294,10 +314,10 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   // che). Thay vào đó auto-duyệt qua PreToolUse hook (buildReadAutoApproveHook)
   // để mọi tool khác vẫn rơi vào canUseTool. Xem hooks.ts.
   //
-  // Safe Mode: KHÔNG auto-duyệt Read/Grep — để chúng rơi vào canUseTool kiểm
+  // QC/Reviewer Mode: KHÔNG auto-duyệt Read/Grep — để chúng rơi vào canUseTool kiểm
   // tra file nhạy cảm / chặn Grep. Glob vẫn auto-duyệt như trước.
   const readAutoTools = [
-    ...(isSafeMode ? [] : ['Read', 'Grep']),
+    ...(isQcMode || isReviewerMode ? [] : ['Read', 'Grep']),
     'Glob',
     // Cho agent chính spawn subagent không kẹt cổng duyệt — subagent đều read-only /
     // chỉ chạy lệnh kiểm chứng nên an toàn. Chỉ mở khi bật multi-agent.
@@ -307,18 +327,36 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   // allowedTools để rỗng: toàn bộ auto-duyệt read đã chuyển sang PreToolUse hook.
   const allowedTools: string[] = [];
 
-  // R1: WHITELIST tool cho Safe Mode (read-only tuyệt đối). Chỉ các tool ĐỌC mới được
-  // chạy; canUseTool DENY mọi tool khác (kể cả MCP write execute_sql/jira_create…, Bash,
-  // Web*). Gồm: đọc file/liệt kê (Read/Glob/NotebookRead), tra cứu (WebSearch bị chặn —
-  // KHÔNG có ở đây), spawn subagent read-only (nếu bật), và các MCP READ pattern đã lọc.
-  // AskUserQuestion xử lý riêng (cần onQuestion). Grep bị tắt riêng (lộ nội dung file).
-  const SAFE_MODE_ALLOWED_TOOLS = new Set<string>([
+  // R1: WHITELIST tool cho QC Mode (read-only + Skill + Jira). Chỉ các tool ĐỌC (và Skill,
+  // Jira write — xử lý riêng trong canUseTool) mới được chạy; canUseTool DENY mọi tool khác
+  // (kể cả MCP write execute_sql, ghi file source, Bash, Web*). Gồm: đọc file/liệt kê
+  // (Read/Glob/NotebookRead), spawn subagent read-only (nếu bật), MCP READ pattern đã lọc, và
+  // 'Skill' để agent kích hoạt qc-triage (Skill chỉ NẠP hướng dẫn vào ngữ cảnh — mọi tool mà
+  // skill gọi bên trong vẫn phải qua chính whitelist này, nên không mở thêm kênh ghi nào).
+  // AskUserQuestion + Jira write xử lý riêng dưới. Grep bị tắt riêng (lộ nội dung file).
+  const QC_MODE_ALLOWED_TOOLS = new Set<string>([
     'Read',
     'Glob',
     'NotebookRead',
     'TodoWrite',
+    'Skill',
     ...(subagents ? ['Agent'] : []),
     ...mcpReadToolPatterns(mcpNames), // read tools của MCP (chung + riêng user)
+  ]);
+
+  // R1: WHITELIST tool cho Reviewer Mode (review PR/diff — read-only source). Giống QC NHƯNG
+  // thêm 'Bash' để chạy git/gh (đọc PR + `gh pr comment`/`gh pr review`) + test/analyze — nội
+  // dung LỆNH Bash lọc riêng trong canUseTool (isReviewGhCommand + SAFE_COMMANDS, chặn risky/
+  // chaining). Jira chỉ READ (mcpReadToolPatterns), KHÔNG mở Jira write. DENY ghi file source.
+  const REVIEWER_MODE_ALLOWED_TOOLS = new Set<string>([
+    'Read',
+    'Glob',
+    'NotebookRead',
+    'TodoWrite',
+    'Skill',
+    'Bash',
+    ...(subagents ? ['Agent'] : []),
+    ...mcpReadToolPatterns(mcpNames),
   ]);
 
   // ── TẢI SKILL từ GitHub (bow-agent là KHUNG RỖNG, không còn skills/ nội bộ) ─────────────
@@ -331,10 +369,15 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   } else if (core.skills.length > 0) {
     opts.onEvent({ type: 'tool', name: 'skills', describe: `📦 skill sẵn dùng: ${core.skills.join(', ')}` });
   }
-  // STACK: chỉ khi user chọn. Trải skill + trả monorepoDir/hooksDir (để nạp ngữ cảnh monorepo).
-  const ext: ExternalDeployResult | null = opts.stack ? deployExternalSkills(opts.stack, opts.cwd) : null;
+  // STACK: user chọn ở dropdown. Các mode vai trò TỰ nạp stack tương ứng nếu user chưa chọn:
+  // BA→'ba' (nghiệp vụ BA), QC→'qc' (qc-triage), Reviewer→'review' (pr-review) — để vào
+  // ui:ba/ui:qc/ui:review là có skill ngay, khỏi phải chọn tay. Cả ba đều không khai monorepoDir
+  // nên không ảnh hưởng ngữ cảnh monorepo/hooks bên dưới.
+  const effectiveStack =
+    opts.stack || (isBaMode ? 'ba' : isQcMode ? 'qc' : isReviewerMode ? 'review' : '');
+  const ext: ExternalDeployResult | null = effectiveStack ? deployExternalSkills(effectiveStack, opts.cwd) : null;
   if (ext?.error) {
-    opts.onEvent({ type: 'tool', name: 'skills', describe: `⚠️ skill stack "${ext.stack.label || opts.stack}": ${ext.error}` });
+    opts.onEvent({ type: 'tool', name: 'skills', describe: `⚠️ skill stack "${ext.stack.label || effectiveStack}": ${ext.error}` });
   } else if (ext && ext.skills.length > 0) {
     opts.onEvent({ type: 'tool', name: 'skills', describe: `📦 skill stack ${ext.stack.label} (${ext.stack.ref}): ${ext.skills.join(', ')}` });
   }
@@ -457,10 +500,28 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   const isRiskyCommand = (cmd: string): boolean =>
     activeRisky.some((re) => re.test(cmd));
 
+  // Lệnh AN TOÀN cho Reviewer Mode: git/gh ĐỌC (diff/status/log/show, gh pr view/diff/list/
+  // checks/status, gh repo view) + gh GHI REVIEW đúng vai (gh pr comment / gh pr review). Neo
+  // `^` đầu; caller đã chặn command-chaining + risky TRƯỚC khi gọi hàm này (xem khối
+  // isReviewerMode). CỐ Ý không cho `gh pr merge/close/edit/create`, `git push/commit` — đó là
+  // sửa/đóng PR, ngoài vai reviewer. Các flag/đối số vô hại (--body, -R, số PR, URL) cho qua.
+  const REVIEW_GH_COMMANDS = [
+    /^git\s+(diff|status|log|show|blame)\b/,
+    /^gh\s+pr\s+(view|diff|list|checks|status)\b/,
+    /^gh\s+pr\s+comment\b/,
+    /^gh\s+pr\s+review\b/,
+    /^gh\s+repo\s+view\b/,
+    /^gh\s+api\s+repos\/[^\s;|&]+\s*$/, // gh api repos/... (chỉ GET đọc — không có -X/-f/--method)
+  ];
+  /** True nếu lệnh hợp lệ cho Reviewer (git/gh đọc + gh pr comment/review). Chỉ gọi SAU khi đã
+   *  loại risky + command-chaining. */
+  const isReviewGhCommand = (cmd: string): boolean =>
+    REVIEW_GH_COMMANDS.some((re) => re.test(cmd));
+
   /** Tool sửa/ghi file (trong repo). Ở 'edit-auto'/'auto' được auto-allow nếu đường dẫn nằm trong cwd. */
   const FILE_WRITE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
-  /** True nếu đường dẫn trỏ tới file BÍ MẬT/nhạy cảm — chặn đọc/ghi trong Safe Mode (M9).
+  /** True nếu đường dẫn trỏ tới file BÍ MẬT/nhạy cảm — chặn đọc/ghi trong QC Mode (M9).
    *  Danh sách được mở rộng để bịt các file từng lọt: .git-credentials, .ssh/*, .netrc,
    *  credentials.json (GCP), .docker/config.json (registry token), secrets.yaml… */
   const isSensitivePath = (p: string): boolean => {
@@ -506,6 +567,21 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
       /(^|[\/\\])secrets?\.(ya?ml|json|txt|env)$/.test(t)
     );
   };
+
+  /** True nếu đường dẫn là FILE TÀI LIỆU (đầu ra hợp lệ của BA Mode). Nhận diện theo đuôi
+   *  (.md/.mdx/.markdown/.txt/.rst/.adoc) HOẶC nằm trong thư mục tài liệu (docs/, doc/,
+   *  documentation/). Mọi path khác (source code .ts/.dart/.sql, config…) → không phải doc,
+   *  BA Mode chặn ghi. So sánh chữ thường; chấp cả '/' lẫn '\\'. */
+  const isDocPath = (p: unknown): boolean => {
+    if (typeof p !== 'string' || !p) return false;
+    const t = p.toLowerCase();
+    if (/\.(md|mdx|markdown|txt|rst|adoc)$/.test(t)) return true;
+    return /(^|[\/\\])(docs?|documentation)[\/\\]/.test(t);
+  };
+
+  /** True nếu tool là MCP của Jira (jira read + write đều cho phép trong BA Mode). SDK đặt
+   *  tên MCP tool dạng `mcp__<server>__<tool>` → khớp phần server chứa 'jira'. */
+  const isJiraTool = (name: string): boolean => /^mcp__[^_]*jira[^_]*__/i.test(name);
 
   const workdir = resolve(opts.cwd || process.cwd());
   // realpath của repo (theo symlink) — mốc so sánh THẬT để chống lách bằng symlink (M4).
@@ -588,22 +664,20 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     settingSources: ['project'],
     // Gắn canUseTool khi cần xử lý câu hỏi (mọi mode) hoặc có cổng duyệt (mọi mode thực thi).
     // AskUserQuestion xử lý riêng ở MỌI mode; tool ghi/bash qua cổng theo policy của từng mode.
-    ...(opts.onQuestion || (isExecuting && opts.onApproval) || isSafeMode
+    ...(opts.onQuestion || (isExecuting && opts.onApproval) || isQcMode || isReviewerMode || isBaMode
       ? {
           canUseTool: async (toolName, input, sdkOpts) => {
-            // ── Safe Mode: read-only TUYỆT ĐỐI (WHITELIST) ─────────────────────
-            // R1: dùng WHITELIST thay vì blacklist. Trước đây chỉ chặn một số tool
-            // (Bash/WebFetch…) rồi cho mọi tool khác rơi xuống `return allow` ở nhánh
-            // isExecuting=false → MCP write (execute_sql, jira_create/update…) LỌT, phá
-            // "read-only tuyệt đối" + mở kênh exfil. Giờ: trong Safe Mode chỉ cho phép tool
-            // ĐỌC (Read/Glob/AskUserQuestion + MCP read patterns đã whitelist), DENY mọi
-            // thứ khác — kể cả MCP write, Bash, Web*, tool ghi file.
-            if (isSafeMode) {
+            // ── QC Mode: read-only + Skill + Jira (WHITELIST) ─────────────────────
+            // R1: dùng WHITELIST thay vì blacklist. Trong QC Mode chỉ cho phép tool ĐỌC
+            // (Read/Glob/NotebookRead + MCP read patterns đã whitelist), tool Skill (kích hoạt
+            // qc-triage), và Jira write (comment kết luận / transition ticket — đầu ra của QC).
+            // DENY mọi thứ khác — MCP write ngoài Jira (execute_sql…), Bash, Web*, ghi file source.
+            if (isQcMode) {
               // Grep bị tắt riêng (có thể lộ dữ liệu nhạy cảm qua nội dung khớp).
               if (toolName === 'Grep') {
                 return {
                   behavior: 'deny' as const,
-                  message: 'Grep bị vô hiệu hóa trong Safe Mode để bảo mật dữ liệu nhạy cảm. Vui lòng sử dụng Glob + Read.',
+                  message: 'Grep bị vô hiệu hóa trong QC Mode để bảo mật dữ liệu nhạy cảm. Vui lòng sử dụng Glob + Read.',
                 };
               }
               // Read (và các tool file nếu lọt): chặn file nhạy cảm (M9/R4).
@@ -615,19 +689,143 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
                 if (typeof target === 'string' && isSensitivePath(target)) {
                   return {
                     behavior: 'deny' as const,
-                    message: 'Truy cập bị chặn: Không được phép đọc/ghi file cấu hình nhạy cảm trong Safe Mode.',
+                    message: 'Truy cập bị chặn: Không được phép đọc/ghi file cấu hình nhạy cảm trong QC Mode.',
                   };
                 }
               }
+              // Jira (read + write) cho phép — QC comment kết luận triệu chứng / transition
+              // ticket. Đây là đầu ra hợp lệ của QC. (isJiraTool khớp mọi mcp__…jira…__).
+              if (isJiraTool(toolName)) {
+                return { behavior: 'allow' as const, updatedInput: input };
+              }
               // AskUserQuestion xử lý riêng ở khối bên dưới (cần onQuestion) — cho đi tiếp.
-              // Mọi tool KHÔNG thuộc allowlist đọc → DENY (chốt whitelist).
-              if (toolName !== 'AskUserQuestion' && !SAFE_MODE_ALLOWED_TOOLS.has(toolName)) {
+              // Mọi tool KHÔNG thuộc allowlist đọc/Skill → DENY (chốt whitelist).
+              if (toolName !== 'AskUserQuestion' && !QC_MODE_ALLOWED_TOOLS.has(toolName)) {
                 return {
                   behavior: 'deny' as const,
-                  message: `Safe Mode chỉ cho phép ĐỌC/LẬP KẾ HOẠCH — tool "${toolName}" bị chặn.`,
+                  message: `QC Mode chỉ cho phép ĐỌC + Skill + Jira — tool "${toolName}" bị chặn.`,
                 };
               }
             }
+
+            // ── Reviewer Mode: review PR/diff — read-only source + git/gh review (WHITELIST) ──
+            // Đọc code + Skill (pr-review) + Jira READ; chạy git/gh ĐỌC, `gh pr comment`/`gh pr
+            // review` (comment/approve PR), và test/analyze. DENY sửa code, merge/push, MCP write.
+            if (isReviewerMode) {
+              // Grep tắt riêng (lộ nội dung nhạy cảm). File nhạy cảm chặn (M9/R4).
+              if (toolName === 'Grep') {
+                return {
+                  behavior: 'deny' as const,
+                  message: 'Grep bị vô hiệu hóa trong Reviewer Mode. Dùng Glob + Read.',
+                };
+              }
+              if (toolName === 'Read' || toolName === 'Edit' || toolName === 'Write' || toolName === 'MultiEdit' || toolName === 'NotebookEdit') {
+                const target =
+                  (input as Record<string, unknown>).file_path ??
+                  (input as Record<string, unknown>).path ??
+                  (input as Record<string, unknown>).notebook_path;
+                if (typeof target === 'string' && isSensitivePath(target)) {
+                  return {
+                    behavior: 'deny' as const,
+                    message: 'Truy cập bị chặn: file cấu hình nhạy cảm không đọc/ghi được trong Reviewer Mode.',
+                  };
+                }
+              }
+              // Ghi/sửa file source → DENY CỨNG (reviewer không sửa code).
+              if (FILE_WRITE_TOOLS.has(toolName)) {
+                return {
+                  behavior: 'deny' as const,
+                  message: 'Reviewer Mode chỉ ĐỌC + review PR — không sửa code. Hãy comment/approve qua `gh pr`.',
+                };
+              }
+              // Bash: chỉ git/gh review (đọc + gh pr comment/review) + test/analyze. Risky &
+              // command-chaining bị chặn TRƯỚC để không lách qua `gh pr comment; rm -rf`.
+              if (toolName === 'Bash' && typeof input.command === 'string') {
+                const cmd = input.command.trim();
+                if (isRiskyCommand(cmd) || hasCommandChaining(cmd)) {
+                  return {
+                    behavior: 'deny' as const,
+                    message: 'Reviewer Mode: lệnh rủi ro / lệnh ghép bị chặn (không xoá/đẩy/nối lệnh).',
+                  };
+                }
+                if (isReviewGhCommand(cmd) || SAFE_COMMANDS.some((re) => re.test(cmd))) {
+                  return { behavior: 'allow' as const, updatedInput: input };
+                }
+                return {
+                  behavior: 'deny' as const,
+                  message: 'Reviewer Mode chỉ chạy git/gh đọc, `gh pr comment`/`gh pr review`, và test/analyze.',
+                };
+              }
+              // AskUserQuestion xử lý riêng dưới. Còn lại: tool ngoài whitelist → DENY.
+              // (Jira read qua mcpReadToolPatterns đã ở whitelist; Jira write không có → DENY.)
+              if (toolName !== 'AskUserQuestion' && !REVIEWER_MODE_ALLOWED_TOOLS.has(toolName)) {
+                return {
+                  behavior: 'deny' as const,
+                  message: `Reviewer Mode chỉ cho phép ĐỌC + Skill + git/gh review + Jira đọc — tool "${toolName}" bị chặn.`,
+                };
+              }
+            }
+
+            // ── BA Mode: ghi TÀI LIỆU + Jira; DENY source/DB/deploy ────────────────
+            // Phân quyền theo ĐÍCH ghi (không phải read-vs-write thuần). Đây là DENY CỨNG:
+            // các thao tác ngoài vai trò BA bị chặn hẳn (không định tuyến hỏi admin) — muốn
+            // sửa code thì chuyển sang Collab/Admin. Đọc + Jira + ghi tài liệu chạy tự do.
+            if (isBaMode) {
+              // Ghi/sửa file: chỉ cho file TÀI LIỆU; file nhạy cảm luôn chặn; còn lại DENY.
+              if (FILE_WRITE_TOOLS.has(toolName)) {
+                const target =
+                  (input as Record<string, unknown>).file_path ??
+                  (input as Record<string, unknown>).path ??
+                  (input as Record<string, unknown>).notebook_path;
+                if (typeof target === 'string' && isSensitivePath(target)) {
+                  return {
+                    behavior: 'deny' as const,
+                    message: 'BA Mode: không được ghi file cấu hình nhạy cảm.',
+                  };
+                }
+                if (isDocPath(target)) {
+                  return { behavior: 'allow' as const, updatedInput: input };
+                }
+                return {
+                  behavior: 'deny' as const,
+                  message:
+                    'BA Mode chỉ được ghi TÀI LIỆU (docs/, *.md/*.mdx/*.txt). Không sửa source code/config. Hãy ghi phân tích/đặc tả ra file tài liệu, hoặc cập nhật Jira.',
+                };
+              }
+              // MCP: Jira (read + write) cho phép; MCP write khác (execute_sql, migration…) DENY.
+              // MCP read chung (mcpReadToolPatterns) được auto-duyệt qua hook, nhưng đề phòng
+              // tool nào lọt tới đây: chặn mọi mcp__* không phải Jira mang tính ghi/side-effect.
+              if (toolName.startsWith('mcp__') && !isJiraTool(toolName)) {
+                // Cho các tool ĐỌC (list/get/search/describe…) đi tiếp; chặn phần còn lại.
+                if (!/(?:^|__)(?:list|get|search|describe|read|show|fetch)/i.test(toolName)) {
+                  return {
+                    behavior: 'deny' as const,
+                    message: `BA Mode: chặn thao tác MCP có side-effect "${toolName}" (chỉ Jira được ghi; DB/hạ tầng không đổi được).`,
+                  };
+                }
+              }
+              // Bash: chặn hẳn lệnh RỦI RO/huỷ hoại (deploy, rm -rf, git push…). Lệnh SAFE đơn
+              // thuần (đọc/kiểm chứng) đi tiếp; lệnh ghép/không rõ cũng chặn cho an toàn.
+              if (toolName === 'Bash' && typeof input.command === 'string') {
+                const cmd = input.command.trim();
+                if (isRiskyCommand(cmd)) {
+                  return {
+                    behavior: 'deny' as const,
+                    message: 'BA Mode: lệnh có thể gây hại/không thể hoàn tác bị chặn (không deploy/không xoá/không git push).',
+                  };
+                }
+                if (hasCommandChaining(cmd) || !SAFE_COMMANDS.some((re) => re.test(cmd))) {
+                  return {
+                    behavior: 'deny' as const,
+                    message: 'BA Mode chỉ cho chạy lệnh đọc/kiểm chứng an toàn. Lệnh này bị chặn.',
+                  };
+                }
+                return { behavior: 'allow' as const, updatedInput: input };
+              }
+              // Các tool còn lại (Read/Grep/Glob/WebSearch/WebFetch/Jira/AskUserQuestion/
+              // TodoWrite/Agent…) đi tiếp — AskUserQuestion vẫn được xử lý ở khối dưới.
+            }
+
             // AskUserQuestion: render UI câu hỏi, gắn câu trả lời vào input trả cho agent.
             if (toolName === 'AskUserQuestion' && opts.onQuestion) {
               const questions = Array.isArray((input as { questions?: unknown }).questions)
@@ -773,6 +971,37 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   let lastFiveHourResetsAt: string | null = null;
 
   const q = query({ prompt, options });
+  // Đếm số lượt 'result' trong phiên — để cảnh báo cache đúng lúc: lượt đầu read=0 là
+  // BÌNH THƯỜNG (đang tạo cache); từ lượt 2 trở đi read=0 mới là silent invalidator.
+  let resultCount = 0;
+
+  // Cập nhật context window THEO THỜI GIAN THỰC trong lúc agent chạy (sau mỗi assistant
+  // turn / tool-result), thay vì chỉ một lần khi kết thúc lượt ở 'result'. Chỉ đọc
+  // getContextUsage() (nhẹ, 1 control request) — KHÔNG đọc rate limits ở đây (đắt hơn,
+  // đổi chậm; snapshot đầy đủ vẫn phát ở 'result'). Throttle ≥800ms để tránh spam control
+  // request khi tool chạy dồn dập. Giữ lại rateLimits/subscription gần nhất để event giữa
+  // chừng không xóa mất phần hạn mức đang hiển thị ở UI.
+  let lastEmittedContextAt = 0;
+  let lastRateLimits: UsageWindow[] = [];
+  let lastSubscriptionType: string | null = null;
+  const CONTEXT_THROTTLE_MS = 800;
+  const emitContextUsage = async () => {
+    const nowMs = Date.now();
+    if (nowMs - lastEmittedContextAt < CONTEXT_THROTTLE_MS) return;
+    lastEmittedContextAt = nowMs;
+    const ctx = await q.getContextUsage().catch(() => null);
+    if (!ctx) return;
+    opts.onEvent({
+      type: 'usage',
+      usage: {
+        rateLimits: lastRateLimits,
+        subscriptionType: lastSubscriptionType,
+        contextTokens: ctx.totalTokens ?? null,
+        contextMaxTokens: ctx.maxTokens ?? null,
+        contextPercentage: ctx.percentage ?? null,
+      },
+    });
+  };
   try {
   for await (const message of q) {
     switch (message.type) {
@@ -813,6 +1042,8 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
             });
           }
         }
+        // Cập nhật context ngay sau khi agent vừa nói/gọi tool (throttled).
+        await emitContextUsage();
         break;
       }
       case 'user': {
@@ -834,6 +1065,8 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
             }
           }
         }
+        // Cập nhật context ngay sau khi có kết quả tool (throttled).
+        await emitContextUsage();
         break;
       }
       case 'result': {
@@ -848,11 +1081,37 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
             costUsd: message.total_cost_usd,
             durationMs: message.duration_ms,
           });
+          // Cảnh báo prompt caching CHỈ KHI BẤT THƯỜNG (im khi ổn). Bình thường cache tự
+          // chạy: lượt 2+ đọc lại system prompt + profile từ cache (~0.1× giá). Nếu từ
+          // lượt 2 trở đi mà read=0 dù đầu vào lớn → có silent invalidator phá cache ở
+          // đầu prefix (timestamp/ID/nội dung đổi) — lúc đó token bị tính giá đầy đủ.
+          resultCount++;
+          const u = message.usage as {
+            cache_read_input_tokens?: number;
+            input_tokens?: number;
+          };
+          const read = u.cache_read_input_tokens ?? 0;
+          const fresh = u.input_tokens ?? 0;
+          // Ngưỡng 3000: chỉ báo khi phần đầu vào đủ lớn để đáng lẽ phải cache được
+          // (dưới ngưỡng cacheable tối thiểu thì read=0 là đương nhiên, không phải lỗi).
+          if (resultCount >= 2 && read === 0 && fresh > 3000) {
+            opts.onEvent({
+              type: 'tool',
+              name: 'cache',
+              describe: `⚠️ Cache không hoạt động: ${fresh.toLocaleString()} token đầu vào bị tính giá đầy đủ (read=0) dù đây là lượt ${resultCount}. Có thể prompt đầu prefix đang đổi mỗi lượt (timestamp/ID) — kiểm tra system prompt.`,
+            });
+          }
         }
         // Đọc snapshot hạn mức + context ngay khi query CÒN SỐNG (control request cần
         // transport chưa đóng). Lỗi/không hỗ trợ → bỏ qua, không chặn kết thúc lượt.
         const usage = await readUsageSnapshot(q);
-        if (usage) opts.onEvent({ type: 'usage', usage });
+        if (usage) {
+          // Ghi nhớ rate limits/subscription mới nhất để event context realtime (giữa
+          // chừng) tái dùng, không xóa mất phần hạn mức đang hiển thị ở UI.
+          lastRateLimits = usage.rateLimits;
+          lastSubscriptionType = usage.subscriptionType;
+          opts.onEvent({ type: 'usage', usage });
+        }
         if (!success) {
           // Phân loại lỗi: có phải hết hạn mức phiên (5h) không? SDKResultError có mảng
           // `errors` — dò chuỗi trong đó. Giờ reset ưu tiên: rate_limit_event 5h > cửa sổ

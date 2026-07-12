@@ -5,12 +5,13 @@ GitHub, cache ở `~/.bow/skills-cache/<id>@<ref>`. (`src/skills/*.ts` là code 
 VẪN CÒN — đừng nhầm với thư mục data đã xóa.)
 
 **Hai nguồn skill:**
-- **CORE** — repo `Bow-T/bow-skill-core`, LUÔN tự tải mỗi lần chạy (không cần chọn).
-  Gồm skill kèm code (watch, qc-triage) trải vào `.claude/skills/` STAMP `.bow-core`,
-  và prompt-only (coding-convention) gộp vào system prompt. Hàm `deployCoreSkills(cwd)`.
-- **STACK** — repo `Bow-T/bow-skill-<flutter|react-native|nextjs>`, tải khi user chọn
-  stack trong UI. Trải STAMP `.bow-external`. Repo flutter kèm `monorepo/` (CLAUDE.md +
-  git hooks), khai `monorepoDir` trong `bow-skill.json`. Hàm `deployExternalSkills(id,cwd)`.
+- **CORE** — repo `Bow-T/bow-skill-core` (v1.1.0), LUÔN tự tải mỗi lần chạy (không cần chọn).
+  Gồm skill kèm code (chỉ `watch` — qc-triage ĐÃ dời sang stack qc) trải vào `.claude/skills/`
+  STAMP `.bow-core`, và prompt-only (coding-convention) gộp vào system prompt. `deployCoreSkills(cwd)`.
+- **STACK** — repo `Bow-T/bow-skill-<flutter|react-native|nextjs|qc>`, tải khi user chọn stack
+  (hoặc TỰ nạp: BA→`ba`, QC→`qc`). Trải STAMP `.bow-external`. Repo flutter kèm `monorepo/`
+  (CLAUDE.md + git hooks), khai `monorepoDir`. Stack `qc` (bow-skill-qc) gồm qc-triage +
+  qc-triage-apply, không khai monorepoDir. Hàm `deployExternalSkills(id,cwd)`. Xem [[bow-qc-mode]].
 
 **Registry** (allowlist stack + repo core): NGOÀI repo, ở `~/.bow-agent/registry.json`,
 seed lần đầu từ hằng `DEFAULT_REGISTRY` trong `src/config/env.ts` (theo pattern

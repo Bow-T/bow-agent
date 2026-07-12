@@ -19,7 +19,7 @@ và tự chạy tiếp** case dở.
   - Khi dừng vì session limit + đang thực thi + còn lượt: `setTimeout` tới
     `resetsAt + AUTO_RESUME_BUFFER_MS (30s)` → tạo **phiên mới** resume `conversationId` cũ
     + gửi `AUTO_RESUME_PROMPT` ("tiếp tục việc dở"). Phát `auto-resume-scheduled` cho client.
-  - **Chỉ phiên đang thực thi** (`isExecuting`, tức mode ≠ plan) — plan/Safe không auto-resume.
+  - **Chỉ phiên đang thực thi** (`isExecuting`, tức mode ≠ plan) — plan/QC không auto-resume.
   - **Tối đa 3 lần** (`AUTO_RESUME_MAX_ATTEMPTS`); hết thì phát `auto-resume-cancelled` reason
     `exhausted`.
   - Nhánh `.catch()` KHÔNG đẩy `fatal` khi `hitSessionLimit` (tránh thẻ đỏ gây hiểu lầm) —
@@ -42,4 +42,4 @@ lần chạy đầu mỗi phiên đang thực thi tự "hết hạn mức" sau `
 error(isSessionLimit) → auto-resume-scheduled → AUTO-RESUME lần 2/3 → HOÀN THÀNH.
 
 Liên quan: [[bow-resume-real-session-id]] (resume bằng session_id thật của SDK — nền tảng
-để auto-resume nối đúng phiên), [[bow-collab-mode]], [[bow-safe-mode-qc]].
+để auto-resume nối đúng phiên), [[bow-collab-mode]], [[bow-qc-mode]].

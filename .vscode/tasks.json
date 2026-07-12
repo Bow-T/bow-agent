@@ -27,10 +27,10 @@
       }
     },
     {
-      "label": "web: chạy Safe/QC Mode",
-      "detail": "BOW_SAFE_MODE=true — chỉ hỏi đáp/lập kế hoạch, để chia sẻ LAN cho QC.",
+      "label": "web: chạy QC Mode",
+      "detail": "BOW_QC_MODE=true — QC hỏi đáp read-only + Skill (qc-triage) + Jira, chia sẻ LAN cho QC.",
       "type": "npm",
-      "script": "ui:safe",
+      "script": "ui:qc",
       "isBackground": true,
       "problemMatcher": {
         "owner": "vite",
@@ -50,10 +50,10 @@
       }
     },
     {
-      "label": "web: chạy Safe Mode chia sẻ (khoá monorepo)",
-      "detail": "Safe Mode chia sẻ hỏi đáp cho QC/BA/PM + khoá source vào /monorepo (script ui:share).",
+      "label": "web: chạy QC Mode chia sẻ (khoá monorepo)",
+      "detail": "QC Mode chia sẻ hỏi đáp cho QC + khoá source vào /monorepo (script ui:qc:share).",
       "type": "npm",
-      "script": "ui:share",
+      "script": "ui:qc:share",
       "isBackground": true,
       "problemMatcher": {
         "owner": "vite",
@@ -96,7 +96,53 @@
       }
     },
     {
-      "label": "web: dừng (mọi cổng dev/share/collab)",
+      "label": "web: chạy BA Mode (Business Analyst)",
+      "detail": "BA qua LAN: ghi TÀI LIỆU (docs/, *.md) + Jira write, DENY source/DB/deploy (script ui:ba).",
+      "type": "npm",
+      "script": "ui:ba",
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "vite",
+        "pattern": {
+          "regexp": "^$"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": "Local:\\s+http://localhost:5176"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "web: chạy Reviewer Mode (Tech Lead review PR)",
+      "detail": "Reviewer qua LAN: ĐỌC code, review PR (git/gh), comment/approve qua gh pr; DENY sửa code/merge/push (script ui:review:share).",
+      "type": "npm",
+      "script": "ui:review:share",
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "vite",
+        "pattern": {
+          "regexp": "^$"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": "Local:\\s+http://localhost:5177"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "web: dừng (mọi cổng dev/qc/collab/ba/review)",
       "detail": "Kill tiến trình đang chiếm cổng api/web (script ui:stop).",
       "type": "npm",
       "script": "ui:stop",

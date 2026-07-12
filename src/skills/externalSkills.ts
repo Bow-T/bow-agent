@@ -34,7 +34,7 @@ const CORE_STAMP = '.bow-core';
  * Hằng FALLBACK cho core — dùng khi registry local thiếu field `core` (vd registry cũ/hỏng).
  * Core PHẢI luôn tải được, không phụ thuộc registry có mặt field `core` hay không.
  */
-const CORE_FALLBACK: RegistryStack = { id: 'core', label: 'Bow Core', repo: 'github.com/Bow-T/bow-skill-core', ref: 'v1.0.0' };
+const CORE_FALLBACK: RegistryStack = { id: 'core', label: 'Bow Core', repo: 'github.com/Bow-T/bow-skill-core', ref: 'v1.1.0' };
 
 /** Đường dẫn registry skill (allowlist) — tách khỏi repo, ở ~/.bow-agent/registry.json. */
 function registryPath(): string {

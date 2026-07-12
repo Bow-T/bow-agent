@@ -142,13 +142,20 @@ nguyên để vẫn dùng được Claude Code trực tiếp. (Script `sync-mono
 
 ## 7. MCP — dùng lại kết nối của Claude Code
 
-`src/tools/mcp.ts` nạp MCP server (stdio) từ `~/.claude.json` — Supabase, Jira, Codemagic,
-Figma. Không hardcode token; chỉ tham chiếu lúc chạy.
+`src/tools/mcp.ts` nạp MCP server (stdio) — Supabase, Jira, Codemagic, Figma. Không hardcode
+token; chỉ tham chiếu lúc chạy.
 
+- **File cấu hình TÁCH khỏi profile**: MCP chung lưu ở `~/.bow-agent/mcp.json` (getter
+  `config.mcpConfigPath` trong `env.ts`, override qua `BOW_MCP_CONFIG`), **seed lần đầu** từ
+  `~/.claude.json` để không mất cấu hình sẵn. Vì sao tách: MCP trước nằm trong `.claude.json`
+  của profile đang login → đổi tài khoản là mất MCP, phải khai lại. Tách file cố định = đổi
+  acc bao nhiêu lần vẫn thấy MCP. (Login/token vẫn theo profile như cũ.)
 - **CLI**: mặc định BẬT tất cả (để đọc được Jira ticket ngay). `--mcp a,b` giới hạn,
   `--no-mcp` tắt.
-- **Web**: người dùng tick chọn server ở panel MCP; còn quản lý được add/remove (ghi
-  `~/.claude.json` an toàn có backup+validate, che token trong args/env khi trả về UI).
+- **Web**: admin tick chọn server ở panel MCP + add/remove (ghi file MCP chung an toàn có
+  backup+validate, che token khi trả UI). **MCP riêng theo user** (`src/web/userMcp.ts`):
+  user LAN đã duyệt tự quản danh sách MCP riêng ở `conversations/user-mcp.json`, **overlay
+  chồng** lên MCP chung (trùng tên → bản riêng thắng), tự áp mọi lần chạy — kể cả QC/Collab.
 - **Gate tool**: tool đọc (`list_*`, `get_*`, `jira_get_*`, `search_docs`…) auto-allow qua
   `mcpReadToolPatterns`; tool ghi (`execute_sql`, `apply_migration`, `jira_add_comment`…)
   phải duyệt.
@@ -237,6 +244,45 @@ Mọi con đường tới một thao tác GHI đều qua đúng một cổng —
 4. **Hook monorepo** chặn thêm ở tầng `PreToolUse` (push/commit) — độc lập với cổng trên.
 5. **Subagent** (nếu bật) bị `permissionMode:'plan'` + `disallowedTools` khóa cứng, không
    chạm được cổng ghi.
+
+Ngoài ra, lệnh Bash **rủi ro** (`RISKY_COMMANDS`: `rm/mv/cp`, redirect ghi, `git push/reset
+--hard/rebase/--force`, `chmod/chown/sudo`, `curl … | sh`, chạy script inline…) luôn qua cổng
+duyệt **kể cả ở mode `auto`**. Không còn miễn trừ Git — kể cả `git push` cũng phải duyệt.
+
+### 8.1. Web — năm mode phân quyền (cùng một backend)
+
+`src/web/server.ts` bật một trong năm mode qua env `BOW_*_MODE`; mỗi mode một **cặp cổng
+riêng** (`BOW_AGENT_PORT`/`BOW_WEB_PORT`) nên chạy song song không đụng nhau. Chính sách nằm
+trong `canUseTool` (`runner.ts`) + middleware `checkReadonlyConfig`/`requireAdmin` (`server.ts`):
+
+| Mode | Cổng | Ép mode | Chính sách |
+|---|---|---|---|
+| **Dev** (`ui`) | 4000/5173 | client chọn | Admin (localhost) full. **Client LAN non-admin bị ép `plan`** (read-only) — muốn ghi phải qua Collab |
+| **QC** (`ui:qc:share`, `BOW_QC_MODE`) | 4001/5174 | `plan` | **WHITELIST** tool đọc (Read/Glob/MCP-read) **+ Skill** (kích hoạt qc-triage) **+ Jira read/write** (comment/transition); Grep DENY riêng; file nhạy cảm chặn; source code DENY; ép model `claude-sonnet-5`; ẩn UI kỹ thuật |
+| **Collab** (`ui:collab`, `BOW_COLLAB_MODE`) | 4002/5175 | `auto` | CTV sửa code + chạy test tự do; **mọi thao tác GHI (Edit/Write, Bash rủi ro kể cả Git, MCP write) của CTV non-admin bị định tuyến lên ADMIN duyệt từ xa** (`requireApprovalForWrites` + `adminBus`) |
+| **BA** (`ui:ba`, `BOW_BA_MODE`) | 4003/5176 | `auto` | Ghi **tài liệu** (`isDocPath`: `docs/`, `*.md/.mdx/.txt`) + **full Jira** tự do; source code / config / DB / deploy **DENY CỨNG** (không hỏi admin — muốn sửa code thì đổi mode) |
+| **Reviewer** (`ui:review:share`, `BOW_REVIEWER_MODE`) | 4004/5177 | `plan` | **WHITELIST** tool đọc + Skill (pr-review) + **Bash** lọc riêng (`isReviewGhCommand`: `git diff/status/log/show`, `gh pr view/diff/list/checks/comment/review`) + `SAFE_COMMANDS` (test/analyze); Jira **đọc**; ghi file source / merge / push / risky / command-chaining **DENY**; ép `claude-sonnet-5`; ẩn UI kỹ thuật |
+
+- **Admin = socket IP thật `127.0.0.1`** (`getSocketIp`, **bỏ qua** `X-Forwarded-For` để LAN
+  không spoof header giành quyền admin). Đổi cấu hình (MCP chung/workspace/skill-sync) bị
+  `checkReadonlyConfig` chặn 403 ở cả bốn mode chia sẻ QC/Reviewer/Collab/BA.
+- **Duyệt từ xa (Collab)**: `session.ts` có `adminBus` (tách khỏi Session vì mỗi phiên CTV chỉ
+  có một consumer SSE). CTV bị treo chờ; admin mở SSE `GET /api/admin/events`, bấm duyệt qua
+  `POST /api/admin/approve` → giải Promise treo bên CTV.
+- Source (`cwd`) mỗi mode cố định theo `BOW_{QC,COLLAB,BA,REVIEWER}_CWD`; admin đổi lúc chạy qua
+  `POST /api/qc-cwd` (RAM override, không restart).
+
+### 8.2. Truy cập LAN + tự chạy tiếp khi hết hạn mức
+
+- **Cổng truy cập LAN** (`src/web/access.ts`): client non-localhost bị chặn mọi `/api/*` cho
+  tới khi **gửi yêu cầu (nhập TÊN)** và được admin **duyệt** trong LAN Dashboard (không phải
+  "mã số"). Token cấp lưu server ở `conversations/access.json`, client giữ ở `localStorage`
+  (`bow-access-token`) và đính header `x-bow-token`. Realtime qua SSE `/api/access/events`.
+- **Auto-resume hết hạn mức** (`server.ts`): phiên **đang thực thi** bị dừng vì hết hạn mức 5h
+  (`isSessionLimit`) → server tính giờ reset (`resetsAt + buffer`), `setTimeout` tạo phiên mới
+  **resume đúng `conversationId`** với prompt "tiếp tục", **tối đa 3 lần** (`AUTO_RESUME_MAX_ATTEMPTS`).
+  Bền qua đóng tab (server-side); client có fallback đếm ngược + nút huỷ. Giả lập test bằng
+  `BOW_SIMULATE_SESSION_LIMIT=true`.
 
 ## 9. Workspace — nhóm nhiều repo + trí nhớ tích lũy
 
