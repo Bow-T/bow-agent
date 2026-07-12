@@ -406,8 +406,8 @@
   </section>
 
   <section class="modes wrap">
-    <p class="eyebrow">Five modes, one agent</p>
-    <h2 style="font-size:var(--step-2);max-width:22ch">Same core. Same gate. Five different amounts of rope.</h2>
+    <p class="eyebrow">Six modes, one agent</p>
+    <h2 style="font-size:var(--step-2);max-width:22ch">Same core. Same gate. Six different amounts of rope.</h2>
     <div class="table-scroll">
       <table>
         <thead>
@@ -438,6 +438,11 @@
             <td>Reviewer</td><td><code>npm run ui:review:share</code></td>
             <td class="can">Review PRs, comment and approve on GitHub, run tests</td>
             <td class="cant">Edit code, merge, push</td>
+          </tr>
+          <tr>
+            <td>DevOps</td><td><code>npm run ui:devops:share</code></td>
+            <td class="can">Write infra — Dockerfile, compose, workflows, Terraform, k8s/Helm</td>
+            <td class="cant">Touch app source; deploy needs your approval</td>
           </tr>
         </tbody>
       </table>

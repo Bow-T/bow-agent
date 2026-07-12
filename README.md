@@ -12,7 +12,7 @@
 <p align="center">
   <a href="#quick-start">Quick start</a> ·
   <a href="#why-not-just-use-claude-code">Why not just use Claude Code?</a> ·
-  <a href="#five-modes-one-agent">Five modes</a> ·
+  <a href="#six-modes-one-agent">Six modes</a> ·
   <a href="#contributing">Contributing</a> ·
   <a href="README.vi.md">Tiếng Việt</a>
 </p>
@@ -22,6 +22,17 @@
   <img alt="Node >= 18" src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg">
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-3178c6.svg?logo=typescript&logoColor=white">
   <a href="https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk"><img alt="Claude Agent SDK" src="https://img.shields.io/badge/built%20on-Claude%20Agent%20SDK-d97757.svg"></a>
+</p>
+
+---
+
+<p align="center">
+  <img src="docs/media/demo-approval.gif" alt="The agent finds the bug, writes the fix — and stops. An approval card shows the exact diff with Allow and Deny buttons. Nothing lands on disk until a human clicks." width="820">
+</p>
+
+<p align="center">
+  <b>The agent found the bug and wrote the patch — then stopped.</b><br/>
+  <sub>It cannot touch the file until you click. Every write works this way. There is no path around it.</sub>
 </p>
 
 ---
