@@ -1,0 +1,54 @@
+name: 🐛 Bug report
+description: Something is broken
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: How do I reproduce it?
+      placeholder: |
+        1. Run `npm run ui:qc:share`
+        2. Open http://localhost:5174 from another machine
+        3. …
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Which mode?
+      options:
+        - CLI
+        - Dev (npm run ui)
+        - QC
+        - Collab
+        - BA
+        - Reviewer
+        - Not sure / not applicable
+    validations:
+      required: false
+
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      placeholder: "Node version, OS, and anything unusual about your setup"
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or error output
+      render: shell
+    validations:
+      required: false
