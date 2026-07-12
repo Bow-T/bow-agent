@@ -1,8 +1,33 @@
 {
   "name": "bow-agent",
   "version": "0.1.0",
-  "description": "AI agent nhận đề tài / WBS / Jira ticket rồi tự lập kế hoạch và thực thi (plan-then-approve). Tái sử dụng cho nhiều dự án.",
+  "description": "Self-hosted AI coding agent with a human approval gate. Turn a Jira ticket, WBS doc, or plain task into a reviewed plan, then let it execute — every write approved by you. Role-based modes for QC, BA, Reviewer and remote collaborators.",
   "type": "module",
+  "license": "MIT",
+  "author": "Bow-T",
+  "homepage": "https://bow-t.github.io/bow-agent",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Bow-T/bow-agent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Bow-T/bow-agent/issues"
+  },
+  "keywords": [
+    "ai-agent",
+    "coding-agent",
+    "claude",
+    "claude-code",
+    "claude-agent-sdk",
+    "anthropic",
+    "human-in-the-loop",
+    "approval-workflow",
+    "jira",
+    "mcp",
+    "code-review",
+    "self-hosted",
+    "developer-tools"
+  ],
   "bin": {
     "bow-agent": "./dist/cli/index.js"
   },
@@ -24,10 +49,10 @@
     "ui:web": "vite",
     "ui:build": "vite build",
     "ui:preview": "npm run ui:build && node --loader tsx src/web/server.ts",
-    "ui:qc:share": "BOW_QC_MODE=true BOW_QC_CWD=/Users/tuannguyen/GitProject/monorepo BOW_AGENT_PORT=4001 BOW_WEB_PORT=5174 concurrently -n qc-api,qc-web -c magenta,cyan \"npm run ui:api\" \"vite --host --port 5174\"",
-    "ui:collab": "BOW_COLLAB_MODE=true BOW_COLLAB_CWD=/Users/tuannguyen/GitProject/monorepo BOW_AGENT_PORT=4002 BOW_WEB_PORT=5175 concurrently -n collab-api,collab-web -c yellow,red \"npm run ui:api\" \"vite --host --port 5175\"",
-    "ui:ba": "BOW_BA_MODE=true BOW_BA_CWD=/Users/tuannguyen/GitProject/monorepo BOW_AGENT_PORT=4003 BOW_WEB_PORT=5176 concurrently -n ba-api,ba-web -c blue,cyan \"npm run ui:api\" \"vite --host --port 5176\"",
-    "ui:review:share": "BOW_REVIEWER_MODE=true BOW_REVIEWER_CWD=/Users/tuannguyen/GitProject/monorepo BOW_AGENT_PORT=4004 BOW_WEB_PORT=5177 concurrently -n review-api,review-web -c magenta,cyan \"npm run ui:api\" \"vite --host --port 5177\""
+    "ui:qc:share": "BOW_QC_MODE=true BOW_AGENT_PORT=4001 BOW_WEB_PORT=5174 concurrently -n qc-api,qc-web -c magenta,cyan \"npm run ui:api\" \"vite --host --port 5174\"",
+    "ui:collab": "BOW_COLLAB_MODE=true BOW_AGENT_PORT=4002 BOW_WEB_PORT=5175 concurrently -n collab-api,collab-web -c yellow,red \"npm run ui:api\" \"vite --host --port 5175\"",
+    "ui:ba": "BOW_BA_MODE=true BOW_AGENT_PORT=4003 BOW_WEB_PORT=5176 concurrently -n ba-api,ba-web -c blue,cyan \"npm run ui:api\" \"vite --host --port 5176\"",
+    "ui:review:share": "BOW_REVIEWER_MODE=true BOW_AGENT_PORT=4004 BOW_WEB_PORT=5177 concurrently -n review-api,review-web -c magenta,cyan \"npm run ui:api\" \"vite --host --port 5177\""
   },
   "engines": {
     "node": ">=18"

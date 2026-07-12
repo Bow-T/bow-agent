@@ -329,9 +329,9 @@ bow-agent/
 {
   "app-giao-hang": {
     "repos": {
-      "/Users/tuannguyen/work/delivery-backend": "BE",
-      "/Users/tuannguyen/work/delivery-flutter":  "FE",
-      "/Users/tuannguyen/work/delivery-monorepo": "infra"
+      "/path/to/delivery-backend": "BE",
+      "/path/to/delivery-flutter":  "FE",
+      "/path/to/delivery-monorepo": "infra"
     }
   }
 }
