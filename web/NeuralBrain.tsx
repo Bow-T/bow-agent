@@ -28,13 +28,19 @@ interface Particle {
   armOffset: number;
   spinSpeed: number;
   size: number;
+  /** Màu cố định "r, g, b" — CHỈ dùng khi tint === 'none' (sao trắng điểm xuyết). */
   color: string;
   sparkleSpeed: number;
   phase: number;
   brightness: number;
   isSun?: boolean;
-  /** Hạt cánh nền có thể nhuốm theo màu accent người dùng chọn (thay cho cyan/xanh cứng). */
-  accentTint?: boolean;
+  /**
+   * Hạt bám token màu nào lúc vẽ (theme-aware, thay cho hex cứng):
+   *   'accent'  → --brass (màu người dùng chọn)   'accent2' → --teal (accent phụ)
+   *   'none'    → giữ nguyên `color`.
+   * Trên theme sáng mọi hạt đều vẽ bằng mực nên tint chỉ có tác dụng ở viewport tối.
+   */
+  tint?: 'accent' | 'accent2' | 'none';
 }
 
 /** Sao băng nền lướt qua khung nhìn theo chu kỳ — thuần trang trí, không tương tác. */
@@ -107,13 +113,12 @@ function makeGalaxyParticles(n: number): Particle[] {
       const phase = rnd() * Math.PI * 2;
       const sparkleSpeed = 0.8 + rnd() * 1.8;
       
-      // Tông màu vàng lùn, đỏ khổng lồ ấm áp của vùng nhân (Bulge/Bar)
-      let color = '';
+      // Vùng nhân (Bulge/Bar): sao già, sáng. Phần lớn nhuốm accent để nhân galaxy ăn theo màu
+      // người dùng chọn; số ít để trắng làm sao sáng điểm xuyết. KHÔNG hardcode tông vàng/đỏ
+      // như trước — đó chính là thứ khiến vũ trụ lệch khỏi theme.
       const roll = rnd();
-      if (roll < 0.5) color = '254, 240, 138'; // Vàng nhạt
-      else if (roll < 0.85) color = '251, 191, 36'; // Vàng cam/vàng kim
-      else color = '248, 113, 113'; // Đỏ cam
-      
+      const tint: Particle['tint'] = roll < 0.8 ? 'accent' : 'none';
+
       particles.push({
         r,
         theta,
@@ -121,7 +126,8 @@ function makeGalaxyParticles(n: number): Particle[] {
         armOffset: 0,
         spinSpeed: 0.35, // Thanh ngang quay đồng bộ như vật thể rắn!
         size,
-        color,
+        color: '255, 255, 255',
+        tint,
         sparkleSpeed,
         phase,
         brightness: 0.4 + rnd() * 0.6,
@@ -145,15 +151,12 @@ function makeGalaxyParticles(n: number): Particle[] {
       const phase = rnd() * Math.PI * 2;
       const sparkleSpeed = 0.8 + rnd() * 1.8;
       
-      // Cánh thiên hà trẻ trung. ~75% hạt (cyan/xanh nhạt) được đánh dấu accentTint để nhuốm
-      // theo màu người dùng chọn lúc vẽ; hồng tinh vân + sao trắng giữ nguyên làm điểm nhấn.
-      let color = '';
-      let accentTint = false;
+      // Cánh thiên hà: 75% bám accent chính, 15% bám accent phụ (--teal) tạo chiều sâu 2 tông,
+      // 10% sao trắng điểm xuyết. Trước đây là cyan/xanh/hồng cứng → lệch theme; giờ mọi tông
+      // đều dẫn xuất từ token nên đổi accent/theme là cánh galaxy đổi theo.
       const roll = rnd();
-      if (roll < 0.45) { color = '56, 189, 248'; accentTint = true; } // Cyan → nhuốm accent
-      else if (roll < 0.75) { color = '147, 197, 253'; accentTint = true; } // Xanh nhạt → nhuốm accent
-      else if (roll < 0.9) color = '236, 72, 153'; // Hồng/Đỏ tía tinh vân (giữ)
-      else color = '255, 255, 255'; // Sao trắng (giữ)
+      const tint: Particle['tint'] =
+        roll < 0.75 ? 'accent' : roll < 0.9 ? 'accent2' : 'none';
 
       particles.push({
         r,
@@ -162,11 +165,11 @@ function makeGalaxyParticles(n: number): Particle[] {
         armOffset,
         spinSpeed: speed,
         size,
-        color,
+        color: '255, 255, 255', // chỉ dùng khi tint === 'none'
         sparkleSpeed,
         phase,
         brightness: 0.3 + rnd() * 0.7,
-        accentTint,
+        tint,
       });
     }
   }
@@ -215,14 +218,12 @@ function cameraToCoords(yaw: number, pitch: number): { ra: string; dec: string }
 }
 
 /**
- * Đọc màu accent thực (var(--brass)) từ CSS đã áp trên <html> và trả về "r, g, b".
- * --brass tự đổi theo theme (sáng/tối) + data-accent (blue/teal/…) nên galaxy chỉ cần
- * bám vào token này là đồng bộ với màu người dùng chọn. Fallback = brass dark nếu parse lỗi.
+ * Đọc một CSS custom property đã tính trên <html> rồi trả về [r, g, b].
+ * Chấp nhận #rgb / #rrggbb / rgb() / rgba(); trả `fallback` nếu thiếu var hoặc parse lỗi.
  */
-function readAccentRGB(): string {
-  const fallback = '214, 164, 65'; // brass dark
+function readVarRGB(name: string, fallback: [number, number, number]): [number, number, number] {
   if (typeof window === 'undefined') return fallback;
-  const raw = getComputedStyle(document.documentElement).getPropertyValue('--brass').trim();
+  const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   if (!raw) return fallback;
   // #rgb / #rrggbb
   if (raw.startsWith('#')) {
@@ -231,25 +232,52 @@ function readAccentRGB(): string {
     if (hex.length !== 6) return fallback;
     const n = parseInt(hex, 16);
     if (Number.isNaN(n)) return fallback;
-    return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
   }
   // rgb(...) / rgba(...)
   const m = raw.match(/(\d+)[,\s]+(\d+)[,\s]+(\d+)/);
-  if (m) return `${m[1]}, ${m[2]}, ${m[3]}`;
+  if (m) return [Number(m[1]), Number(m[2]), Number(m[3])];
   return fallback;
 }
 
-/** Màu RGB theo loại bước */
-function stepColor(type: string): [number, number, number] {
-  switch (type) {
-    case 'start': return [56, 189, 248]; // Cyan
-    case 'tool': return [74, 222, 128]; // Green
-    case 'result': return [251, 191, 36]; // Gold
-    case 'error': return [248, 113, 113]; // Red
-    case 'approval': return [245, 158, 11]; // Orange/Yellow
-    case 'thinking': return [167, 139, 250]; // Purple
-    default: return [125, 211, 252];
-  }
+/**
+ * Đọc màu accent thực (var(--brass)) và trả về chuỗi "r, g, b" để nội suy vào rgba().
+ * --brass đổi theo theme + data-accent nên galaxy bám token này là đồng bộ với màu người dùng chọn.
+ */
+function readAccentRGB(): string {
+  const [r, g, b] = readVarRGB('--brass', [214, 164, 65]); // fallback: brass dark
+  return `${r}, ${g}, ${b}`;
+}
+
+/** Accent PHỤ (var(--teal)) — dùng cho lớp tinh vân thứ hai để nền có chiều sâu 2 màu. */
+function readAccent2RGB(): string {
+  const [r, g, b] = readVarRGB('--teal', [196, 181, 253]); // fallback: soft violet
+  return `${r}, ${g}, ${b}`;
+}
+
+/** Màu 6 loại thiên thể, đọc từ §Step colors trong styles.css (nguồn sự thật duy nhất). */
+export type StepPalette = Record<string, [number, number, number]>;
+
+/**
+ * Resolve các token --step-* thành RGB. KHÔNG hardcode màu ở đây — mọi giá trị đến từ CSS,
+ * nên đổi theme (brutal/newsprint) hay đổi accent là galaxy đổi theo mà không phải sửa TS.
+ * Fallback chỉ dùng khi CSS chưa gắn (SSR/first paint) và cố ý trung tính, không phải palette cũ.
+ */
+function readStepColors(): StepPalette {
+  return {
+    start: readVarRGB('--step-start', [17, 17, 17]),
+    tool: readVarRGB('--step-tool', [255, 217, 61]),
+    result: readVarRGB('--step-result', [255, 225, 102]),
+    error: readVarRGB('--step-error', [255, 107, 107]),
+    approval: readVarRGB('--step-approval', [255, 217, 61]),
+    thinking: readVarRGB('--step-thinking', [196, 181, 253]),
+    default: readVarRGB('--step-default', [122, 122, 122]),
+  };
+}
+
+/** Màu RGB theo loại bước — tra trong palette đã resolve từ CSS. */
+function stepColor(palette: StepPalette, type: string): [number, number, number] {
+  return palette[type] ?? palette.default;
 }
 
 /**
@@ -281,19 +309,59 @@ function roundRectPath(
   ctx.closePath();
 }
 
-/** Vẽ thiên thể phối cảnh 3D đặc thù cho từng loại nút */
+/** Trộn màu về phía `to` theo tỉ lệ k (0..1) — dùng tạo sắc sáng/tối từ chính màu của bước. */
+function mix(
+  c: [number, number, number],
+  to: [number, number, number],
+  k: number
+): [number, number, number] {
+  return [
+    Math.round(c[0] + (to[0] - c[0]) * k),
+    Math.round(c[1] + (to[1] - c[1]) * k),
+    Math.round(c[2] + (to[2] - c[2]) * k),
+  ];
+}
+
+const WHITE: [number, number, number] = [255, 255, 255];
+const BLACK: [number, number, number] = [0, 0, 0];
+
+/**
+ * Vẽ thiên thể phối cảnh 3D đặc thù cho từng loại nút.
+ *
+ * MÀU: 100% dẫn xuất từ `color` (màu của loại bước, đến từ §Step colors trong CSS) — không có
+ * hằng màu nào ở đây. Điểm nhấn/lõi sáng lấy bằng cách trộn về phía "giấy" hay "mực" tuỳ theme,
+ * nên trên nền kem (brutal) thiên thể tự đậm lại, trên nền mực (newsprint) thì tự sáng lên.
+ *
+ * HÌNH DẠNG là kênh phân biệt chính, không phải màu: theme newsprint gần như đơn sắc (đỏ + mực)
+ * nên nếu chỉ dựa vào màu thì 6 loại bước sẽ trùng nhau. Xoáy / hành tinh có vành / sao 4 cánh /
+ * hố đen / mặt trời loé / pulsar phải giữ nguyên silhouette.
+ */
 function drawSpaceObject(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
   size: number,
   type: string,
-  time: number
+  time: number,
+  color: [number, number, number],
+  isLight: boolean
 ) {
+  const [r, g, b] = color;
+  const base = `${r}, ${g}, ${b}`;
+  // "Sáng" = tách khỏi nền: nền kem → trộn về mực; nền mực → trộn về giấy.
+  const glow = mix(color, isLight ? BLACK : WHITE, 0.45);
+  const glowRGB = `${glow[0]}, ${glow[1]}, ${glow[2]}`;
+  // Lõi chói (tâm sao/pulsar) — cực trị của cùng trục sáng đó.
+  const hot = isLight ? mix(color, BLACK, 0.75) : WHITE;
+  const hotCSS = `rgb(${hot[0]}, ${hot[1]}, ${hot[2]})`;
+  // "Hư vô" (chân trời sự kiện hố đen, đuôi gradient) = màu nền của theme.
+  const voidCSS = isLight ? '#ffffff' : '#050505';
+  const fadeRGBA = isLight ? 'rgba(255,255,255,0)' : 'rgba(0,0,0,0)';
+
   switch (type) {
     case 'start': {
-      // Swirling Wormhole / Blue Giant
-      ctx.strokeStyle = 'rgba(56, 189, 248, 0.5)';
+      // Xoáy (wormhole) — 3 vòng xoắn + lõi chói
+      ctx.strokeStyle = `rgba(${base}, 0.5)`;
       ctx.lineWidth = 1.2;
       for (let j = 0; j < 3; j++) {
         ctx.beginPath();
@@ -306,42 +374,41 @@ function drawSpaceObject(
         }
         ctx.stroke();
       }
-      // Bright core
       ctx.beginPath();
       ctx.arc(x, y, size * 0.4, 0, Math.PI * 2);
-      ctx.fillStyle = '#ffffff';
+      ctx.fillStyle = hotCSS;
       ctx.fill();
       break;
     }
-    
+
     case 'tool': {
-      // Green planet with ring
+      // Hành tinh có vành
       ctx.beginPath();
       ctx.arc(x, y, size * 0.55, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgb(74, 222, 128)';
+      ctx.fillStyle = `rgb(${base})`;
       ctx.fill();
-      
+
       ctx.save();
       ctx.translate(x, y);
       ctx.rotate(-Math.PI / 6);
       ctx.scale(1.8, 0.4);
       ctx.beginPath();
       ctx.arc(0, 0, size * 0.6, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(187, 247, 208, 0.85)';
+      ctx.strokeStyle = `rgba(${glowRGB}, 0.85)`;
       ctx.lineWidth = 1.8;
       ctx.stroke();
       ctx.restore();
       break;
     }
-    
+
     case 'result': {
-      // Golden star with 4-point lens flare
+      // Sao + loé 4 cánh
       ctx.beginPath();
       ctx.arc(x, y, size * 0.5, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgb(251, 191, 36)';
+      ctx.fillStyle = `rgb(${base})`;
       ctx.fill();
-      
-      ctx.strokeStyle = 'rgba(253, 224, 71, 0.9)';
+
+      ctx.strokeStyle = `rgba(${glowRGB}, 0.9)`;
       ctx.lineWidth = 1.8;
       ctx.beginPath();
       ctx.moveTo(x - size * 1.5, y);
@@ -351,36 +418,36 @@ function drawSpaceObject(
       ctx.stroke();
       break;
     }
-    
+
     case 'error': {
-      // Black hole with red accretion disk swirl
+      // Hố đen + đĩa bồi tụ
       ctx.beginPath();
       ctx.arc(x, y, size * 1.3, 0, Math.PI * 2);
       const grad = ctx.createRadialGradient(x, y, size * 0.4, x, y, size * 1.3);
-      grad.addColorStop(0, 'rgba(239, 68, 68, 0.9)');
-      grad.addColorStop(0.5, 'rgba(249, 115, 22, 0.45)');
-      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      grad.addColorStop(0, `rgba(${base}, 0.9)`);
+      grad.addColorStop(0.5, `rgba(${base}, 0.45)`);
+      grad.addColorStop(1, fadeRGBA);
       ctx.fillStyle = grad;
       ctx.fill();
-      
-      // Event horizon (black)
+
+      // Chân trời sự kiện — "lỗ" mang màu nền
       ctx.beginPath();
       ctx.arc(x, y, size * 0.45, 0, Math.PI * 2);
-      ctx.fillStyle = '#050505';
+      ctx.fillStyle = voidCSS;
       ctx.fill();
-      ctx.strokeStyle = 'rgb(239, 68, 68)';
+      ctx.strokeStyle = `rgb(${base})`;
       ctx.lineWidth = 1.2;
       ctx.stroke();
       break;
     }
-    
+
     case 'approval': {
-      // Yellow sun with waving solar flares
+      // Mặt trời + tai lửa gợn sóng
       ctx.beginPath();
       ctx.arc(x, y, size * 0.65, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgb(245, 158, 11)';
+      ctx.fillStyle = `rgb(${base})`;
       ctx.fill();
-      
+
       ctx.beginPath();
       for (let a = 0; a < Math.PI * 2; a += 0.3) {
         const wave = Math.sin(a * 8 + time * 12) * size * 0.15;
@@ -391,44 +458,44 @@ function drawSpaceObject(
         else ctx.lineTo(xx, yy);
       }
       ctx.closePath();
-      ctx.fillStyle = 'rgba(253, 224, 71, 0.55)';
+      ctx.fillStyle = `rgba(${glowRGB}, 0.55)`;
       ctx.fill();
       break;
     }
-    
+
     case 'thinking': {
-      // Pulsar emitting two rotating high-energy beams
+      // Pulsar — hai chùm tia quay
       ctx.save();
       ctx.translate(x, y);
       ctx.rotate(time * 2.2);
-      
+
       const beamGrad = ctx.createLinearGradient(0, -size * 3.5, 0, size * 3.5);
-      beamGrad.addColorStop(0, 'rgba(167, 139, 250, 0)');
-      beamGrad.addColorStop(0.3, 'rgba(167, 139, 250, 0.6)');
-      beamGrad.addColorStop(0.5, 'rgba(255, 255, 255, 0.95)');
-      beamGrad.addColorStop(0.7, 'rgba(167, 139, 250, 0.6)');
-      beamGrad.addColorStop(1, 'rgba(167, 139, 250, 0)');
-      
+      beamGrad.addColorStop(0, `rgba(${base}, 0)`);
+      beamGrad.addColorStop(0.3, `rgba(${base}, 0.6)`);
+      beamGrad.addColorStop(0.5, `rgba(${hot[0]}, ${hot[1]}, ${hot[2]}, 0.95)`);
+      beamGrad.addColorStop(0.7, `rgba(${base}, 0.6)`);
+      beamGrad.addColorStop(1, `rgba(${base}, 0)`);
+
       ctx.fillStyle = beamGrad;
       ctx.fillRect(-1.5, -size * 3.5, 3, size * 7);
       ctx.restore();
-      
-      // Core
+
+      // Lõi
       ctx.beginPath();
       ctx.arc(x, y, size * 0.55, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgb(139, 92, 246)';
+      ctx.fillStyle = `rgb(${base})`;
       ctx.fill();
       ctx.beginPath();
       ctx.arc(x, y, size * 0.25, 0, Math.PI * 2);
-      ctx.fillStyle = '#ffffff';
+      ctx.fillStyle = hotCSS;
       ctx.fill();
       break;
     }
-    
+
     default: {
       ctx.beginPath();
       ctx.arc(x, y, size * 0.5, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgb(125, 211, 252)';
+      ctx.fillStyle = `rgb(${base})`;
       ctx.fill();
     }
   }
@@ -463,6 +530,9 @@ export const NeuralBrain = forwardRef<NeuralBrainHandle, {
   // rồi kẹt lại. Thay vào đó một MutationObserver bám data-accent/data-theme trên <html>: khi
   // attribute THỰC SỰ đổi trên DOM (effect cha đã chạy) mới đọc lại → luôn đúng, không nhấp nháy.
   const accentRGBRef = useRef(readAccentRGB());
+  const accent2RGBRef = useRef(readAccent2RGB());
+  // Bảng màu 6 loại thiên thể (--step-*) — cùng cơ chế cache/observer với accent ở trên.
+  const stepColorsRef = useRef(readStepColors());
   activeRef.current = active;
   stepsRef.current = steps;
   selRef.current = selectedId;
@@ -502,7 +572,13 @@ export const NeuralBrain = forwardRef<NeuralBrainHandle, {
   // này (App có thể render lại mà không đụng attribute — vẫn an toàn vì đọc lại là idempotent).
   useEffect(() => {
     const html = document.documentElement;
-    const sync = () => { accentRGBRef.current = readAccentRGB(); };
+    // Cùng một nhịp: accent (--brass) và bảng màu thiên thể (--step-*) đều đọc lại ở đây, nên
+    // galaxy không bao giờ ở trạng thái nửa cũ nửa mới khi đổi theme/accent.
+    const sync = () => {
+      accentRGBRef.current = readAccentRGB();
+      accent2RGBRef.current = readAccent2RGB();
+      stepColorsRef.current = readStepColors();
+    };
     sync();
     const mo = new MutationObserver(sync);
     mo.observe(html, { attributes: true, attributeFilter: ['data-accent', 'data-theme'] });
@@ -631,6 +707,8 @@ export const NeuralBrain = forwardRef<NeuralBrainHandle, {
       // sáng, dùng khắp draw để rẽ màu/blend mode. accentRGB đọc từ ref (đồng bộ qua observer).
       const isLight = theme === 'brutal';
       const accentRGB = accentRGBRef.current; // "r, g, b" — màu nhấn người dùng chọn
+      const accent2RGB = accent2RGBRef.current; // accent phụ (--teal) — lớp tinh vân thứ hai
+      const palette = stepColorsRef.current;  // màu 6 loại thiên thể (§Step colors trong CSS)
 
       ctx.clearRect(0, 0, W, H);
 
@@ -674,9 +752,11 @@ export const NeuralBrain = forwardRef<NeuralBrainHandle, {
             { color: 'rgba(68, 64, 60, 0.04)', x: Math.sin(t * 0.11) * 0.08, y: -Math.cos(t * 0.08) * 0.08, size: 0.7 }
           ]
         : [
+            // Tinh vân trên nền mực: accent chính + accent phụ (--teal) + ánh giấy mờ. Trước đây
+            // là magenta/cyan cứng — lạc hẳn khỏi theme; giờ bám token nên đổi accent là đổi theo.
             { color: `rgba(${accentRGB}, 0.1)`, x: Math.sin(t * 0.08) * 0.12, y: Math.cos(t * 0.1) * 0.12, size: 0.8 },
-            { color: 'rgba(217, 70, 239, 0.07)', x: Math.cos(t * 0.07) * 0.15, y: Math.sin(t * 0.09) * 0.15, size: 0.95 },
-            { color: 'rgba(6, 182, 212, 0.08)', x: Math.sin(t * 0.11) * 0.08, y: -Math.cos(t * 0.08) * 0.08, size: 0.7 }
+            { color: `rgba(${accent2RGB}, 0.07)`, x: Math.cos(t * 0.07) * 0.15, y: Math.sin(t * 0.09) * 0.15, size: 0.95 },
+            { color: 'rgba(235, 235, 228, 0.05)', x: Math.sin(t * 0.11) * 0.08, y: -Math.cos(t * 0.08) * 0.08, size: 0.7 }
           ];
 
       for (const n of nebulae) {
@@ -726,9 +806,15 @@ export const NeuralBrain = forwardRef<NeuralBrainHandle, {
           y: sy,
           size,
           alpha,
-          // Light: galaxy vẽ bằng mực nâu-đen. Dark: hạt cánh nền (accentTint) nhuốm màu người
-          // dùng chọn; hồng tinh vân / sao trắng / vùng nhân giữ màu gốc.
-          color: isLight ? '28, 25, 23' : (p.accentTint ? accentRGB : p.color),
+          // Light: galaxy vẽ bằng mực (nền kem → sao phải là mực mới thấy). Dark: hạt nhuốm theo
+          // token nó bám (accent chính / accent phụ), 'none' giữ trắng làm sao điểm xuyết.
+          color: isLight
+            ? '28, 25, 23'
+            : p.tint === 'accent'
+              ? accentRGB
+              : p.tint === 'accent2'
+                ? accent2RGB
+                : p.color,
           large: p.size > 1.25,
           z3, // store depth for classification
           isSun: p.isSun,
@@ -876,7 +962,7 @@ export const NeuralBrain = forwardRef<NeuralBrainHandle, {
 
         const a = ptsProjected[i];
         const b = ptsProjected[(i + 1) % ptsProjected.length];
-        const [r, g, bl] = stepColor(b.s.type);
+        const [r, g, bl] = stepColor(palette, b.s.type);
         const avgPersp = (a.perspective + b.perspective) / 2;
 
         // Glowing 3D constellation line
@@ -915,7 +1001,7 @@ export const NeuralBrain = forwardRef<NeuralBrainHandle, {
       ctx.globalCompositeOperation = 'source-over';
       const hits: { id: string; x: number; y: number; r: number }[] = [];
       ptsProjected.forEach((p) => {
-        const [r, g, bl] = stepColor(p.s.type);
+        const [r, g, bl] = stepColor(palette, p.s.type);
         const isSel = sel === p.s.id;
         const isLast = p.index === ptsProjected.length - 1;
         
@@ -954,8 +1040,8 @@ export const NeuralBrain = forwardRef<NeuralBrainHandle, {
           ctx.stroke();
         }
 
-        // Draw the 3D space object
-        drawSpaceObject(ctx, p.x, p.y, size, p.s.type, t);
+        // Draw the 3D space object — màu lấy từ palette theme (r/g/bl đã resolve ở trên)
+        drawSpaceObject(ctx, p.x, p.y, size, p.s.type, t, [r, g, bl], isLight);
 
         // Hover or selected aura
         if (isSel || hoverId === p.s.id) {
