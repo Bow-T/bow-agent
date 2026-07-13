@@ -74,7 +74,7 @@ npm run ui
 → Mở **http://localhost:5173**. Trong đó:
 - Ô nhập **task / đề tài** (Ctrl+Enter để chạy) + ô **Jira** + ô **cwd** (thư mục repo).
 - **Tự nhận diện source**: gõ `cwd` → agent tự đoán loại dự án (Flutter/Supabase/Node…) và gợi ý. Dòng 🔎 hiện kết quả nhận diện.
-- **Jira URL hoặc key**: dán `PROJ-123` hoặc cả URL `/projects/PROJ/boards/123` — agent tự bóc ticket / board / project rồi đọc đúng. Ảnh/video đính kèm ticket cũng được tải để agent nhìn / xem (xem [ARCHITECTURE.md](ARCHITECTURE.md)).
+- **Jira URL hoặc key**: dán `PROJ-123` hoặc cả URL `/projects/PROJ/boards/123` — agent tự bóc ticket / board / project rồi đọc đúng. Ảnh/video đính kèm ticket cũng được tải để agent nhìn / xem (xem [ARCHITECTURE.vi.md](ARCHITECTURE.vi.md)).
 - **Kéo-thả tài liệu, PDF & ảnh**: thả file WBS/spec (text/markdown), **PDF** (tự trích text) và ảnh (wireframe/screenshot) vào ô nhập, hoặc bấm 📎, hoặc dán clipboard. Agent đọc tài liệu và nhìn ảnh (vision).
 - **7 nút gợi ý nhanh**: Sửa bug từ Jira · Làm theo đề xuất · Giải thích codebase · Viết test · Review & rà lỗi · Sinh commit/PR · Refactor/dọn code — bấm để chèn prompt mẫu.
 - **Chọn stack skill**: dropdown chọn stack (Flutter / React Native / Next.js) → tải bộ skill tương ứng từ GitHub. Badge trạng thái + nút 🔄 **Đồng bộ** kéo bản mới nhất (chỉ admin).
@@ -242,7 +242,7 @@ bow-agent run PROJ-123 --execute --subagents --cwd ~/GitProject/monorepo/apps/mo
 - Subagent đều **read-only / chỉ chạy lệnh kiểm chứng** (chặn cứng Edit/Write/commit/push). Mọi thay đổi thật vẫn do **agent chính** làm và **vẫn qua cổng duyệt** — bật multi-agent không nới lỏng an toàn.
 - Profile có thể bổ sung subagent riêng (ghi đè bộ chuẩn nếu trùng tên); chỉ có tác dụng khi `--subagents` bật.
 
-> Thiết kế đầy đủ: xem **[ARCHITECTURE.md](ARCHITECTURE.md)**.
+> Thiết kế đầy đủ: xem **[ARCHITECTURE.vi.md](ARCHITECTURE.vi.md)**.
 
 ---
 
@@ -329,7 +329,7 @@ dự án nếu không muốn agent tự đoán từ git branch.
 
 > Ngoài text, ảnh & video đính kèm ticket được tải riêng (REST có auth, lấy token từ block
 > `jira` trong file MCP) để agent **nhìn ảnh** (vision) và **xem video** (skill `/watch`) —
-> xem [ARCHITECTURE.md §7.1–7.2](ARCHITECTURE.md).
+> xem [ARCHITECTURE.vi.md §7.1–7.2](ARCHITECTURE.vi.md).
 
 ---
 

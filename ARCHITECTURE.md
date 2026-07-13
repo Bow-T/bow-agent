@@ -1,333 +1,367 @@
-# Thiết kế: Bow-Agent
+# Design: Bow-Agent
 
-Tài liệu này mô tả kiến trúc của bow-agent sau khi **gỡ over-engineering**: một agent
-*single-agent gọn* dựng trên Claude Agent SDK, mở rộng bằng ba cơ chế tri thức tĩnh
-(profile, skill, ngữ cảnh monorepo) và một tầng multi-agent **opt-in**.
+> Vietnamese version: [ARCHITECTURE.vi.md](ARCHITECTURE.vi.md)
 
-> **Lịch sử:** bản đầu có thêm "Genome" (bộ nhớ tiến hóa per-repo qua fitness/mutation) và
-> vài skill kèm code + Jira REST client riêng. A/B cho thấy với model mạnh (Opus 4.8) các
-> thứ đó chỉ lặp lại điều model đã tự suy ra → **chi phí token thừa, phức tạp thừa**. Chúng
-> đã bị gỡ. Nếu bạn tìm `genome.ts` / `reflect.ts` / `tools/jira.ts` — chúng không còn nữa.
+This document describes the architecture of bow-agent after **the over-engineering was stripped
+out**: a *lean single agent* built on the Claude Agent SDK, extended by three static knowledge
+mechanisms (profiles, skills, monorepo context) and one **opt-in** multi-agent layer.
 
-## 1. Nguyên tắc thiết kế
+> **History:** the first version also had a "Genome" (per-repo evolutionary memory via
+> fitness/mutation) plus a few code-bearing skills and a hand-rolled Jira REST client. A/B testing
+> showed that with a strong model (Opus 4.8) those things only restated what the model had already
+> worked out on its own → **wasted tokens, wasted complexity**. They are gone. If you go looking for
+> `genome.ts` / `reflect.ts` / `tools/jira.ts` — they no longer exist.
 
-- **Não 20W: rẻ = tốt.** Viết ít code nhất mà vẫn đúng. Không abstraction đầu cơ. Mọi
-  tính năng phải trả lại giá trị vượt chi phí token/độ phức tạp — nếu không, cắt.
-- **Một lõi, hai mặt.** CLI và Web dùng chung `core/runner.ts`; chỉ khác cách hiển thị
-  (terminal vs SSE) và cách duyệt (gõ y/N vs bấm nút). Không nhân đôi logic.
-- **Plan-then-approve.** Mọi thao tác GHI (sửa file, lệnh side-effect, commit, migration,
-  ghi Jira) đi qua cổng duyệt `canUseTool`. Tool đọc tự chạy.
-- **Opt-in cho thứ tốn kém.** Multi-agent và MCP-giới-hạn là lựa chọn, không mặc định bật
-  cái đắt khi task không cần.
+## 1. Design principles
 
-## 2. Kiến trúc tổng thể
+- **A 20W brain: cheap is good.** Write the least code that is still correct. No speculative
+  abstraction. Every feature must return more value than it costs in tokens and complexity — if it
+  doesn't, cut it.
+- **One core, two faces.** CLI and Web share `core/runner.ts`; the only differences are how output is
+  displayed (terminal vs SSE) and how you approve (typing y/N vs clicking a button). No duplicated
+  logic.
+- **Plan-then-approve.** Every WRITE operation (editing a file, side-effecting command, commit,
+  migration, Jira write) goes through the approval gate `canUseTool`. Read tools run on their own.
+- **Opt-in for the expensive stuff.** Multi-agent and MCP-scoping are choices; we don't turn on the
+  costly thing by default when the task doesn't need it.
+
+## 2. Overall architecture
 
 ```
-      đề tài / WBS / Jira ticket / ảnh / PDF
+      topic / WBS / Jira ticket / image / PDF
                        │
               ┌────────▼─────────┐
-              │  input/task.ts   │  chuẩn hóa thành "task brief"
+              │  input/task.ts   │  normalize into a "task brief"
               │  + jira-ref, pdf │
               └────────┬─────────┘
                        │
       ┌────────────────▼────────────────────────────────┐
       │            core/runner.ts (SDK query)            │
-      │  systemPrompt = preset Claude Code (append):     │
-      │    • BOW_AGENT_APPEND (quy trình plan-approve)   │
-      │    • skill prompt-only (repo core clone)         │
-      │    • ngữ cảnh monorepo (nếu cwd ∈ monorepo)      │
-      │    • project profile (nếu --profile)             │
-      │  + CLAUDE.md repo đích (settingSources:'project')│
+      │  systemPrompt = Claude Code preset (append):     │
+      │    • BOW_AGENT_APPEND (plan-approve workflow)    │
+      │    • prompt-only skills (core repo clone)        │
+      │    • monorepo context (if cwd ∈ monorepo)        │
+      │    • project profile (if --profile)              │
+      │  + target repo's CLAUDE.md (settingSources:'project')│
       │  + MCP servers (Supabase/Jira/…)                 │
-      │  + hooks monorepo (nếu cwd ∈ monorepo)           │
-      │  + subagents (nếu --subagents)                   │
+      │  + monorepo hooks (if cwd ∈ monorepo)            │
+      │  + subagents (if --subagents)                    │
       └───┬──────────────────────────────────────────────┘
-          │  canUseTool: đọc tự chạy · ghi → onApproval
+          │  canUseTool: reads run free · writes → onApproval
     ┌─────▼──────┐
-    │ Edit/Write │  CLI: y/N trên terminal
-    │ Bash / MCP │  Web: treo Promise chờ nút bấm
+    │ Edit/Write │  CLI: y/N in the terminal
+    │ Bash / MCP │  Web: a Promise parked until a button is clicked
     └────────────┘
 ```
 
-## 3. Ba nguồn tri thức (tĩnh, từ chung tới riêng)
+## 3. Three sources of knowledge (static, general → specific)
 
-Agent LLM "quên" giữa các phiên. Thay vì một cơ chế học động phức tạp, bow-agent nạp tri
-thức **tĩnh, khai báo sẵn** vào system prompt — đơn giản, đọc được, kiểm soát được.
+An LLM agent "forgets" between sessions. Instead of a complex dynamic learning mechanism, bow-agent
+loads **static, pre-declared** knowledge into the system prompt — simple, readable, controllable.
 
-| Nguồn | Cơ chế | Phạm vi | Vị trí |
+| Source | Mechanism | Scope | Location |
 |---|---|---|---|
-| **Base profile** (chuẩn team) | viết tay, committed → `--profile` nạp vào prompt | mọi dự án cùng khuôn | `src/profiles/base/*.md` |
-| **Profile tự sinh** | agent quét repo lạ (chỉ đọc) → ghi ra file | riêng từng repo lạ | `generated-profiles/` (gitignore) |
-| **Ngữ cảnh monorepo** | CLAUDE.md + danh mục skill, tự kích hoạt | chỉ khi cwd ∈ monorepo | repo `Bow-T/bow-skill-flutter` (thư mục `monorepo/`, clone về cache) |
+| **Base profile** (team standard) | hand-written, committed → `--profile` loads it into the prompt | every project built to the same mold | `src/profiles/base/*.md` |
+| **Generated profile** | agent scans an unfamiliar repo (read-only) → writes out a file | one unfamiliar repo at a time | `generated-profiles/` (gitignored) |
+| **Monorepo context** | CLAUDE.md + skill catalog, self-activating | only when cwd ∈ monorepo | repo `Bow-T/bow-skill-flutter` (directory `monorepo/`, cloned into the cache) |
 
-Prompt luôn dặn: *nếu thực tế repo mâu thuẫn với profile → tin repo*. Tri thức là gợi ý
-mạnh, không phải luật cứng.
+The prompt always says: *if the repo's reality contradicts the profile → trust the repo*. The
+knowledge is a strong hint, not a hard rule.
 
-## 4. Skill — năng lực tái sử dụng
+## 4. Skills — reusable capabilities
 
-bow-agent là **khung rỗng**: không còn thư mục `skills/` (data) trong repo. Skill tải từ
-repo GitHub, cache ở `~/.bow/skills-cache/<id>@<ref>`. Agent tự chọn theo mô tả (không cần
-người dùng bật qua UI):
+bow-agent is an **empty frame**: there is no `skills/` (data) directory in the repo anymore. Skills
+are fetched from a GitHub repo and cached in `~/.bow/skills-cache/<id>@<ref>`. The agent picks them
+by description on its own (the user does not have to enable them in the UI):
 
-| Nguồn | Cơ chế | Phạm vi |
+| Source | Mechanism | Scope |
 |---|---|---|
-| **Repo đích** `.claude/skills/*/SKILL.md` | SDK auto-discover nhờ `settingSources:['project']` + `skills:'all'` | riêng từng dự án |
-| **CORE** `Bow-T/bow-skill-core` (luôn tải) | `deployCoreSkills(cwd)`: skill kèm code (watch, qc-triage) trải vào `.claude/skills/` (STAMP `.bow-core`); prompt-only (coding-convention) gộp vào system prompt qua `loadPromptSkills()` | mọi repo |
-| **STACK** `Bow-T/bow-skill-flutter`/`-react-native`/`-nextjs` (tải khi chọn stack) | `deployExternalSkills(stackId, cwd)` trải vào `.claude/skills/` (STAMP `.bow-external`); repo Flutter còn kèm `monorepo/` cho ngữ cảnh monorepo | theo stack đã chọn |
+| **Target repo** `.claude/skills/*/SKILL.md` | SDK auto-discovers them thanks to `settingSources:['project']` + `skills:'all'` | one project at a time |
+| **CORE** `Bow-T/bow-skill-core` (always fetched) | `deployCoreSkills(cwd)`: code-bearing skills (watch, qc-triage) are unpacked into `.claude/skills/` (STAMP `.bow-core`); prompt-only ones (coding-convention) are folded into the system prompt via `loadPromptSkills()` | every repo |
+| **STACK** `Bow-T/bow-skill-flutter`/`-react-native`/`-nextjs` (fetched when a stack is selected) | `deployExternalSkills(stackId, cwd)` unpacks them into `.claude/skills/` (STAMP `.bow-external`); the Flutter repo also ships a `monorepo/` directory for monorepo context | whichever stack was selected |
 
-**Registry** (allowlist stack + repo core) nằm **ngoài repo**, ở `~/.bow-agent/registry.json`
-— seed lần đầu từ hằng `DEFAULT_REGISTRY` trong `src/config/env.ts`, override qua env
-`BOW_REGISTRY`.
+The **registry** (allowlist of stacks + the core repo) lives **outside the repo**, at
+`~/.bow-agent/registry.json` — seeded on first run from the `DEFAULT_REGISTRY` constant in
+`src/config/env.ts`, overridable via the `BOW_REGISTRY` env var.
 
-> **Không còn skill kèm code chạy qua MCP.** Bản đầu có server `bow-skills` (`src/skills/code.ts`)
-> chạy logic thật qua `tool()`. Đã gỡ — với model mạnh, Bash + các tool sẵn của Claude Code đã
-> đủ; một server MCP nội bộ chỉ để "chạy test" là phức tạp thừa. (Skill kèm code hiện là skill
-> Claude Code chuẩn — SKILL.md + script — tải từ repo core, không phải MCP server.)
+> **No more code-bearing skills running over MCP.** The first version had a `bow-skills` server
+> (`src/skills/code.ts`) that ran real logic through `tool()`. It's gone — with a strong model, Bash
+> plus Claude Code's built-in tools are already enough; an in-house MCP server whose only job is to
+> "run tests" is needless complexity. (Code-bearing skills today are standard Claude Code skills —
+> SKILL.md + a script — fetched from the core repo, not an MCP server.)
 
 ## 5. Multi-agent (opt-in) — `core/subagents.ts`
 
-Mặc định single-agent. Bật `--subagents` để agent chính giao việc cho subagent chuyên biệt
-qua tool `Agent` — mượn ý *role specialization*, hiện thực bằng `Options.agents` của SDK
-(không bê framework ngoài như CrewAI).
+Single-agent by default. Pass `--subagents` and the main agent can delegate to specialized subagents
+through the `Agent` tool — borrowing the idea of *role specialization*, implemented with the SDK's
+`Options.agents` (no external framework like CrewAI).
 
-| Subagent | Vai trò | `permissionMode` | maxTurns |
+| Subagent | Role | `permissionMode` | maxTurns |
 |---|---|---|---|
-| **reviewer** | phản biện kế hoạch/diff: call-site sót, rủi ro cross-cutting, over-engineering | `plan` | 12 |
-| **verifier** | chạy test/analyze + trace runtime end-to-end (không chỉ "compile pass") | `plan` | 15 |
-| **impact-scout** | quét blast radius: liệt kê MỌI call-site + allow-list/switch liệt-kê-tay | `plan` | 10 |
+| **reviewer** | argues against the plan/diff: missed call sites, cross-cutting risk, over-engineering | `plan` | 12 |
+| **verifier** | runs tests/analysis + traces the runtime end-to-end (not just "it compiles") | `plan` | 15 |
+| **impact-scout** | scans the blast radius: lists EVERY call site + hand-enumerated allow-lists/switches | `plan` | 10 |
 
-**An toàn nằm ở tầng tool, không chỉ ở prompt.** `permissionMode: 'plan'` chặn Edit/Write
-nhưng KHÔNG chặn Bash — nên mỗi subagent còn khai báo `disallowedTools` (`READONLY_DENY`)
-deny cứng `git commit/push/reset/checkout`, `rm`, `mv`, Edit/Write/NotebookEdit. Subagent
-chỉ đọc / chạy lệnh kiểm chứng; **mọi thay đổi thật vẫn do agent chính làm và vẫn qua
-`onApproval`** — bật multi-agent không nới lỏng cổng duyệt.
+**Safety lives at the tool layer, not just in the prompt.** `permissionMode: 'plan'` blocks
+Edit/Write but does NOT block Bash — so each subagent also declares `disallowedTools`
+(`READONLY_DENY`) that hard-denies `git commit/push/reset/checkout`, `rm`, `mv`, and
+Edit/Write/NotebookEdit. Subagents only read and run verification commands; **every real change is
+still made by the main agent and still goes through `onApproval`** — turning on multi-agent does not
+loosen the approval gate.
 
-Profile có thể bổ sung subagent riêng (`buildSubagents` gộp, profile ghi đè chuẩn nếu trùng
-tên); chỉ có tác dụng khi `--subagents` bật.
+A profile can add its own subagents (`buildSubagents` merges them; a profile overrides a standard one
+on a name collision); they only take effect when `--subagents` is on.
 
-## 6. Ngữ cảnh monorepo — gói sẵn, kích hoạt có điều kiện
+## 6. Monorepo context — shipped in the box, activated conditionally
 
-Toàn bộ `.claude` của monorepo đến từ repo skill stack `Bow-T/bow-skill-flutter` (thư mục
-`monorepo/`, khai qua `monorepoDir` trong manifest `bow-skill.json`) — clone về
-`~/.bow/skills-cache/` để agent KHÔNG cần `.claude` trong monorepo nữa. Chỉ áp khi cwd là
-monorepo, và chỉ khi stack Flutter đã được tải về.
+The monorepo's entire `.claude` comes from the stack skill repo `Bow-T/bow-skill-flutter` (the
+`monorepo/` directory, declared via `monorepoDir` in the `bow-skill.json` manifest) — cloned into
+`~/.bow/skills-cache/` so the agent no longer needs a `.claude` inside the monorepo itself. It only
+applies when cwd is the monorepo, and only when the Flutter stack has already been fetched.
 
-- **Nhận diện** (`src/skills/monorepo.ts` → `isMonorepo`): cwd có segment `monorepo`. Tách
-  riêng một hàm để sau này đổi sang marker file chỉ cần sửa một chỗ.
-- **Mã dự án Jira** (`detectJiraProjectKey`): ưu tiên `.env` (`BOW_PROJECT_KEY`), rồi branch,
-  commit gần nhất, cuối cùng đoán từ tên thư mục. Skill/CLAUDE.md dùng placeholder
-  `<PROJECT_KEY>` được map sang mã thật khi nạp.
-- **CLAUDE.md + danh mục skill** (`loadMonorepoContext(cwd, monorepoDir)`): nhận thư mục
-  nguồn từ bản clone stack; CLAUDE.md đưa nguyên vào prompt; skill chỉ đưa
-  name+description+đường-dẫn (agent tự `Read` full khi task khớp) — tránh nhồi cả nghìn dòng
-  vào mọi lượt. Danh mục quét động nên số lượng tự cập nhật theo repo stack.
-- **Hooks** (`src/skills/hooks.ts` → `buildMonorepoHooks(cwd, hooksDir)`): nhận thư mục hook
-  từ bản clone stack, bọc 4 script shell thành SDK hook callback, chỉ gắn khi cwd là monorepo:
-  - `PreToolUse(Bash)`: guard-push (chặn push khi quest gate fail), guard-commit-branch
-    (chặn commit trên branch protected) → `exit 2` map thành `{ decision: 'block' }`.
-  - `SessionStart`: ensure-githooks (wire core.hooksPath, không chặn).
-  - `Stop`: self-verify-rubric (nhắc rubric khi có commit chưa push, không chặn).
-  - Script tìm `scripts/*.sh` của monorepo qua `CLAUDE_PROJECT_DIR` = monorepo root.
-  - **Fail-open**: hook lỗi hạ tầng không kéo sập agent.
+- **Detection** (`src/skills/monorepo.ts` → `isMonorepo`): cwd contains a `monorepo` path segment.
+  Kept as a separate function so that switching to a marker file later touches exactly one place.
+- **Jira project key** (`detectJiraProjectKey`): prefers `.env` (`BOW_PROJECT_KEY`), then the branch,
+  then the most recent commit, and finally guesses from the directory name. Skills and CLAUDE.md use
+  the `<PROJECT_KEY>` placeholder, which is mapped to the real key at load time.
+- **CLAUDE.md + skill catalog** (`loadMonorepoContext(cwd, monorepoDir)`): takes the source directory
+  from the stack clone; CLAUDE.md goes into the prompt verbatim; skills contribute only
+  name + description + path (the agent `Read`s the full file itself when a task matches) — this avoids
+  stuffing a thousand lines into every turn. The catalog is scanned dynamically, so the count tracks
+  the stack repo automatically.
+- **Hooks** (`src/skills/hooks.ts` → `buildMonorepoHooks(cwd, hooksDir)`): takes the hooks directory
+  from the stack clone and wraps 4 shell scripts as SDK hook callbacks, attached only when cwd is the
+  monorepo:
+  - `PreToolUse(Bash)`: guard-push (blocks a push when the quest gate fails), guard-commit-branch
+    (blocks commits on a protected branch) → `exit 2` maps to `{ decision: 'block' }`.
+  - `SessionStart`: ensure-githooks (wires up core.hooksPath; non-blocking).
+  - `Stop`: self-verify-rubric (reminds you of the rubric when there is an unpushed commit;
+    non-blocking).
+  - The scripts find the monorepo's `scripts/*.sh` via `CLAUDE_PROJECT_DIR` = monorepo root.
+  - **Fail-open**: an infrastructure error in a hook must not take the agent down.
 
-Nguồn nằm trong repo `Bow-T/bow-skill-flutter` (thư mục `monorepo/`), không đụng `.claude`
-của monorepo. Khi monorepo đổi skill/hook, cập nhật trong repo stack đó rồi commit; bow-agent
-tự clone bản mới nhất về cache mỗi lần chạy khi chọn stack Flutter. `.claude` monorepo giữ
-nguyên để vẫn dùng được Claude Code trực tiếp. (Script `sync-monorepo` cũ đã gỡ — đích cũ
-`skills/monorepo/` không còn.)
+The source lives in the `Bow-T/bow-skill-flutter` repo (the `monorepo/` directory) and never touches
+the monorepo's own `.claude`. When the monorepo changes a skill or a hook, update it in that stack
+repo and commit; bow-agent clones the latest version into its cache on every run once the Flutter
+stack is selected. The monorepo's `.claude` is left intact so Claude Code still works directly against
+it. (The old `sync-monorepo` script is gone — its old target `skills/monorepo/` no longer exists.)
 
-> **Lưu ý prefix skill:** monorepo context dùng prefix skill `bow-*`. Nếu `.claude/skills`
-> của monorepo còn `octopus-*`, đồng bộ prefix ở nguồn (repo `bow-skill-flutter`, thư mục
-> `monorepo/`) trước khi commit để bow-agent kéo về đúng tên.
+> **Note on the skill prefix:** the monorepo context uses the `bow-*` skill prefix. If the monorepo's
+> `.claude/skills` still has `octopus-*` names, align the prefix at the source (the `bow-skill-flutter`
+> repo, `monorepo/` directory) before committing, so bow-agent pulls down the right names.
 
-## 7. MCP — dùng lại kết nối của Claude Code
+## 7. MCP — reusing Claude Code's connections
 
-`src/tools/mcp.ts` nạp MCP server (stdio) — Supabase, Jira, Codemagic, Figma. Không hardcode
-token; chỉ tham chiếu lúc chạy.
+`src/tools/mcp.ts` loads MCP servers (stdio) — Supabase, Jira, Codemagic, Figma. No hardcoded tokens;
+they are only referenced at run time.
 
-- **File cấu hình TÁCH khỏi profile**: MCP chung lưu ở `~/.bow-agent/mcp.json` (getter
-  `config.mcpConfigPath` trong `env.ts`, override qua `BOW_MCP_CONFIG`), **seed lần đầu** từ
-  `~/.claude.json` để không mất cấu hình sẵn. Vì sao tách: MCP trước nằm trong `.claude.json`
-  của profile đang login → đổi tài khoản là mất MCP, phải khai lại. Tách file cố định = đổi
-  acc bao nhiêu lần vẫn thấy MCP. (Login/token vẫn theo profile như cũ.)
-- **CLI**: mặc định BẬT tất cả (để đọc được Jira ticket ngay). `--mcp a,b` giới hạn,
-  `--no-mcp` tắt.
-- **Web**: admin tick chọn server ở panel MCP + add/remove (ghi file MCP chung an toàn có
-  backup+validate, che token khi trả UI). **MCP riêng theo user** (`src/web/userMcp.ts`):
-  user LAN đã duyệt tự quản danh sách MCP riêng ở `conversations/user-mcp.json`, **overlay
-  chồng** lên MCP chung (trùng tên → bản riêng thắng), tự áp mọi lần chạy — kể cả QC/Collab.
-- **Gate tool**: tool đọc (`list_*`, `get_*`, `jira_get_*`, `search_docs`…) auto-allow qua
-  `mcpReadToolPatterns`; tool ghi (`execute_sql`, `apply_migration`, `jira_add_comment`…)
-  phải duyệt.
+- **The config file is SPLIT OFF from the profile**: the shared MCP config lives at
+  `~/.bow-agent/mcp.json` (getter `config.mcpConfigPath` in `env.ts`, overridable via `BOW_MCP_CONFIG`),
+  **seeded on first run** from `~/.claude.json` so existing config isn't lost. Why split it: MCP used
+  to live in the `.claude.json` of whichever profile was logged in → switching accounts lost your MCP
+  servers and you had to declare them again. A fixed, separate file means your MCP servers survive any
+  number of account switches. (Login/tokens still follow the profile, as before.)
+- **CLI**: all servers are ON by default (so a Jira ticket can be read right away). `--mcp a,b`
+  restricts the set; `--no-mcp` turns them off.
+- **Web**: the admin ticks servers in the MCP panel and can add/remove them (writes to the shared MCP
+  file safely, with backup + validation, and masks tokens on the way back to the UI). **Per-user MCP**
+  (`src/web/userMcp.ts`): an approved LAN user manages their own MCP list in
+  `conversations/user-mcp.json`, which is **overlaid on top of** the shared config (on a name collision,
+  the user's version wins) and applied on every run — including QC/Collab.
+- **Tool gating**: read tools (`list_*`, `get_*`, `jira_get_*`, `search_docs`, …) are auto-allowed via
+  `mcpReadToolPatterns`; write tools (`execute_sql`, `apply_migration`, `jira_add_comment`, …) must be
+  approved.
 
-> ⚠️ SDK truyền cấu hình MCP (kèm token) qua tham số command-line → khi MCP bật, `ps aux`
-> đọc được token lúc agent chạy. Dùng `--no-mcp` cho task không cần kết nối thật.
+> ⚠️ The SDK passes MCP config (tokens included) as command-line arguments → while MCP is on, `ps aux`
+> can read those tokens for as long as the agent runs. Use `--no-mcp` for tasks that don't need a real
+> connection.
 
-### 7.1. Ảnh trong ticket Jira → cho agent nhìn — `src/input/jira-attachments.ts`
+### 7.1. Images in a Jira ticket → letting the agent see them — `src/input/jira-attachments.ts`
 
-**Vấn đề**: MCP `jira_get_issue` chỉ trả về TEXT (summary/description/comment). Ảnh đính
-kèm ticket → agent mù. Người dùng thường bỏ mockup/wireframe/ảnh chụp lỗi vào ticket, và
-đó là phần quan trọng nhất để hiểu yêu cầu.
+**The problem**: the MCP `jira_get_issue` call returns TEXT only (summary/description/comments). Images
+attached to the ticket → the agent is blind to them. People routinely drop mockups, wireframes, and bug
+screenshots into a ticket, and that is the most important part for understanding the request.
 
-**Nút thắt**: MCP `jira_get_attachments` chỉ đưa **metadata + URL** (`content` field), KHÔNG
-đưa bytes. Tải URL `/secure/attachment/...` bằng curl trần → trả về trang login, không phải
-ảnh. Muốn có bytes phải tự gọi REST có auth. (Cùng kết luận với `netresearch/jira-skill` và
-`rui-branco/jira-mcp` — hai skill/MCP cộng đồng đã giải đúng phần tải ảnh này.)
+**The bottleneck**: the MCP `jira_get_attachments` call hands back **metadata + a URL** (the `content`
+field), NOT the bytes. Fetching the `/secure/attachment/...` URL with a bare curl returns a login page,
+not an image. Getting the bytes means calling the REST API yourself, with auth. (Same conclusion as
+`netresearch/jira-skill` and `rui-branco/jira-mcp` — two community skill/MCP projects that solved this
+image-fetching part correctly.)
 
-**Luồng** (chạy ở `buildTaskBrief` khi ref là ticket):
+**The flow** (runs inside `buildTaskBrief` when the ref is a ticket):
 
-1. MCP `jira_get_attachments(key)` → danh sách ảnh (id, filename, mimeType, content-url).
-   Lọc `mimeType` bắt đầu `image/`.
-2. Tải bytes có auth: `GET {JIRA_BASE_URL}/rest/api/3/attachment/content/{id}` với
-   `Authorization: Basic base64(EMAIL:TOKEN)`. Ba biến lấy từ block `mcpServers.jira.env`
-   trong `~/.claude.json` (KHÔNG từ `process.env` — xem `env.ts:39`), theo redirect sang CDN.
-3. Xác thực **magic bytes** (PNG `89 50 4E 47`, JPEG `FF D8 FF`, GIF, WEBP) — nếu là HTML thì
-   đó là trang login → bỏ, không đưa vào context. Giới hạn `MAX_IMAGE_BYTES = 5MB`/ảnh.
-4. Cache bytes vào `.jira-cache/{issueKey}/{attachmentId}.{ext}` (gitignore) — tải một lần,
-   lượt sau đọc lại từ đĩa.
+1. MCP `jira_get_attachments(key)` → the list of attachments (id, filename, mimeType, content-url).
+   Filter for a `mimeType` starting with `image/`.
+2. Fetch the bytes with auth: `GET {JIRA_BASE_URL}/rest/api/3/attachment/content/{id}` with
+   `Authorization: Basic base64(EMAIL:TOKEN)`. All three variables come from the `mcpServers.jira.env`
+   block in `~/.claude.json` (NOT from `process.env` — see `env.ts:39`), following the redirect to the
+   CDN.
+3. Verify the **magic bytes** (PNG `89 50 4E 47`, JPEG `FF D8 FF`, GIF, WEBP) — if it's HTML, it's a
+   login page → drop it, keep it out of the context. Limit: `MAX_IMAGE_BYTES = 5MB` per image.
+4. Cache the bytes in `.jira-cache/{issueKey}/{attachmentId}.{ext}` (gitignored) — fetched once, read
+   back from disk on later turns.
 
-**Đưa vào context**: KHÔNG gọi vision riêng để sinh mô tả. Ảnh gốc được đẩy thẳng vào
-`images[]` (tái dùng đường vision sẵn có ở `runner.ts:483`) — **agent chính tự nhìn và tự
-mô tả** khi làm việc, tự ghi vào journal/`shared.md` nếu đáng nhớ (§9). Brief chỉ thêm một
-dòng liệt kê "ticket có N ảnh: … (đã đính kèm ở trên)".
+**Getting them into the context**: we do NOT make a separate vision call to generate a description. The
+original images are pushed straight into `images[]` (reusing the existing vision path at
+`runner.ts:483`) — **the main agent looks at them and describes them itself** as it works, writing them
+into the journal / `shared.md` if they're worth remembering (§9). The brief only adds one line:
+"this ticket has N images: … (attached above)".
 
-> Bảo mật: `JIRA_API_TOKEN` là secret cá nhân — không log token, chỉ tải từ đúng host
-> `JIRA_BASE_URL` (chống SSRF), ràng cache trong repo (chống path-traversal từ filename Jira).
-> Fail-open: lỗi tải một ảnh không kéo sập việc đọc ticket — chèn placeholder "[ảnh chưa
-> đọc được]" để agent biết ticket *có* ảnh.
+> Security: `JIRA_API_TOKEN` is a personal secret — never log the token, only fetch from the exact
+> `JIRA_BASE_URL` host (SSRF protection), and confine the cache to the repo (path-traversal protection
+> against a Jira-supplied filename). Fail-open: a failure to fetch one image must not take down reading
+> the ticket — insert a "[image could not be read]" placeholder so the agent knows the ticket *has* an
+> image.
 
-### 7.2. Video trong ticket Jira + skill `/watch` — xem video
+### 7.2. Video in a Jira ticket + the `/watch` skill — watching video
 
-**Vấn đề**: Video ticket (thường là screen recording quay lại bug) — Claude KHÔNG "xem"
-video trực tiếp (không có content block video như ảnh). Phải quy về (frames JPEG +
-transcript) rồi Claude `Read` từng frame.
+**The problem**: ticket videos (usually a screen recording of the bug) — Claude cannot "watch" video
+directly (there is no video content block the way there is for images). It has to be reduced to
+(JPEG frames + a transcript), which Claude then `Read`s frame by frame.
 
-**Giải pháp**: skill `/watch` (gốc `bradautomates/claude-video`, MIT) nay là skill **CORE**
-trong repo `Bow-T/bow-skill-core` (luôn tải mỗi lần chạy) + tải video Jira về đĩa cho skill xử lý.
+**The solution**: the `/watch` skill (originally `bradautomates/claude-video`, MIT) is now a **CORE**
+skill in the `Bow-T/bow-skill-core` repo (fetched on every run), plus code that downloads the Jira video
+to disk for the skill to process.
 
-**Trải skill** — repo core clone → `src/skills/externalSkills.ts` → `deployCoreSkills(cwd)`:
-- Trước mỗi lần chạy, core được clone về `~/.bow/skills-cache/<id>@<ref>` rồi skill kèm code
-  (watch, qc-triage) copy vào `<cwd>/.claude/skills/watch/` để SDK auto-discover (đã bật
-  `settingSources: ['project']` + `skills: 'all'`). Nhờ đó agent LUÔN thấy `/watch` ở mọi repo,
-  không cần cài thủ công.
-- Idempotent (dấu chữ ký `.bow-core`, chỉ copy lại khi bản clone đổi). AN TOÀN: nếu repo đích
-  đã có `.claude/skills/watch/` KHÔNG do ta trải (không có stamp) → coi là của người dùng,
-  không ghi đè. Không đụng skill khác của người dùng.
-- Yêu cầu runtime: `ffmpeg` + `yt-dlp` (skill tự cài qua brew/apt lần đầu; Whisper key tùy chọn).
+**Unpacking the skill** — core repo clone → `src/skills/externalSkills.ts` → `deployCoreSkills(cwd)`:
+- Before each run, core is cloned into `~/.bow/skills-cache/<id>@<ref>` and the code-bearing skills
+  (watch, qc-triage) are copied into `<cwd>/.claude/skills/watch/` for the SDK to auto-discover
+  (`settingSources: ['project']` + `skills: 'all'` are already on). That way the agent ALWAYS sees
+  `/watch` in every repo, with no manual install.
+- Idempotent (a `.bow-core` signature stamp; it only re-copies when the clone changes). SAFE: if the
+  target repo already has a `.claude/skills/watch/` that we did NOT unpack (no stamp) → treat it as the
+  user's own and don't overwrite it. Never touches the user's other skills.
+- Runtime requirements: `ffmpeg` + `yt-dlp` (the skill installs them via brew/apt on first use; a
+  Whisper key is optional).
 
-**Video Jira attachment** — `fetchJiraTicketVideos()` trong `jira-attachments.ts`:
-- Lọc `mimeType` bắt đầu `video/`, tải về `.jira-cache/{key}/{id}.mp4` (cùng REST + auth như ảnh).
-- **Giới hạn `MAX_VIDEO_BYTES = 50MB`**: video lớn hơn KHÔNG tự tải (chặn sớm qua metadata size
-  để không treo bước chuẩn bị brief) — chỉ báo "video X quá lớn, xem thủ công".
-- Brief hướng dẫn agent: "video đã tải ở `<path>` → dùng `/watch <path>` để xem".
+**Jira video attachments** — `fetchJiraTicketVideos()` in `jira-attachments.ts`:
+- Filters for a `mimeType` starting with `video/` and downloads to `.jira-cache/{key}/{id}.mp4` (same
+  REST + auth path as images).
+- **Limit `MAX_VIDEO_BYTES = 50MB`**: anything larger is NOT downloaded automatically (rejected early
+  from the metadata size, so building the brief doesn't hang) — it just reports "video X is too large,
+  view it manually".
+- The brief tells the agent: "the video is downloaded at `<path>` → use `/watch <path>` to watch it".
 
-**Video URL người dùng dán** (YouTube/Loom/...): không cần code — agent thấy URL trong text
-tự dùng `/watch <url>` (yt-dlp của skill tự tải).
+**Video URLs the user pastes** (YouTube/Loom/…): no code needed — the agent sees the URL in the text and
+uses `/watch <url>` on its own (the skill's yt-dlp does the download).
 
-**Điều kiện vận hành**: `/watch` chạy nhiều lệnh Bash (tải, ffmpeg, Whisper) → hợp mode `auto`;
-ở `manual`/`edit-auto` agent sẽ xin duyệt từng lệnh.
+**Operating conditions**: `/watch` runs a number of Bash commands (download, ffmpeg, Whisper) → it suits
+`auto` mode; in `manual`/`edit-auto` the agent will ask for approval on each command.
 
-> Đã kiểm chứng end-to-end: tải video Jira thật (REST+auth) → ffmpeg tách frame → Claude đọc
-> được nội dung frame; agent bow-agent tự thấy & gọi được `/watch` (kẹt ở cổng duyệt Bash mode
-> manual — đúng thiết kế). Khác `bradautomates/claude-video` (chỉ nhận URL/file local), bow-agent
-> thêm nguồn Jira attachment và tự-trải skill.
+> Verified end-to-end: downloaded a real Jira video (REST + auth) → ffmpeg extracted frames → Claude
+> could read the frame content; the bow-agent agent found and invoked `/watch` on its own (and stopped at
+> the Bash approval gate in manual mode — exactly as designed). Unlike `bradautomates/claude-video` (which
+> only takes a URL or a local file), bow-agent adds the Jira attachment source and unpacks the skill
+> itself.
 
-## 8. Cổng an toàn (tổng hợp)
+## 8. The approval gate (summary)
 
-Mọi con đường tới một thao tác GHI đều qua đúng một cổng — `canUseTool` ở `runner.ts`:
+Every road to a WRITE operation passes through exactly one gate — `canUseTool` in `runner.ts`:
 
-1. **Tool đọc** (`Read/Grep/Glob` + MCP read patterns) nằm trong `allowedTools` → chạy thẳng.
-2. **Bash an toàn** (`SAFE_COMMANDS`: `flutter test/analyze`, `npm test`, `tsc --noEmit`,
-   `git status/diff`…) auto-allow — để chạy test/kiểm chứng không phiền người dùng.
-3. **Mọi thứ còn lại** (Edit/Write, Bash side-effect, MCP write) → `onApproval`. Từ chối →
-   `behavior: 'deny'` kèm message bảo agent dừng và hỏi hướng khác.
-4. **Hook monorepo** chặn thêm ở tầng `PreToolUse` (push/commit) — độc lập với cổng trên.
-5. **Subagent** (nếu bật) bị `permissionMode:'plan'` + `disallowedTools` khóa cứng, không
-   chạm được cổng ghi.
+1. **Read tools** (`Read/Grep/Glob` + the MCP read patterns) are in `allowedTools` → they run straight
+   through.
+2. **Safe Bash** (`SAFE_COMMANDS`: `flutter test/analyze`, `npm test`, `tsc --noEmit`, `git status/diff`,
+   …) is auto-allowed — so running tests and verification doesn't pester the user.
+3. **Everything else** (Edit/Write, side-effecting Bash, MCP writes) → `onApproval`. A rejection returns
+   `behavior: 'deny'` with a message telling the agent to stop and ask for a different approach.
+4. **Monorepo hooks** block further at the `PreToolUse` layer (push/commit) — independent of the gate
+   above.
+5. **Subagents** (when enabled) are locked down by `permissionMode:'plan'` + `disallowedTools` and cannot
+   reach the write gate at all.
 
-Ngoài ra, lệnh Bash **rủi ro** (`RISKY_COMMANDS`: `rm/mv/cp`, redirect ghi, `git push/reset
---hard/rebase/--force`, `chmod/chown/sudo`, `curl … | sh`, chạy script inline…) luôn qua cổng
-duyệt **kể cả ở mode `auto`**. Không còn miễn trừ Git — kể cả `git push` cũng phải duyệt.
+On top of that, **risky** Bash commands (`RISKY_COMMANDS`: `rm/mv/cp`, output redirection,
+`git push/reset --hard/rebase/--force`, `chmod/chown/sudo`, `curl … | sh`, running inline scripts, …)
+always go through the approval gate **even in `auto` mode**. There is no Git exemption anymore — even
+`git push` has to be approved.
 
-### 8.1. Web — năm mode phân quyền (cùng một backend)
+### 8.1. Web — six permission modes (one and the same backend)
 
-`src/web/server.ts` bật một trong năm mode qua env `BOW_*_MODE`; mỗi mode một **cặp cổng
-riêng** (`BOW_AGENT_PORT`/`BOW_WEB_PORT`) nên chạy song song không đụng nhau. Chính sách nằm
-trong `canUseTool` (`runner.ts`) + middleware `checkReadonlyConfig`/`requireAdmin` (`server.ts`):
+`src/web/server.ts` turns on one of six modes via a `BOW_*_MODE` env var; each mode gets **its own port**
+(`BOW_AGENT_PORT`) so they can run side by side without colliding. The shared modes set
+`BOW_SERVE_STATIC=true`, so the backend serves the built frontend from that same port (Dev keeps a
+separate Vite dev server on 5173). The policy lives in `canUseTool` (`runner.ts`) plus the
+`checkReadonlyConfig`/`requireAdmin` middleware (`server.ts`):
 
-| Mode | Cổng | Ép mode | Chính sách |
+| Mode | Port | Forced mode | Policy |
 |---|---|---|---|
-| **Dev** (`ui`) | 4000/5173 | client chọn | Admin (localhost) full. **Client LAN non-admin bị ép `plan`** (read-only) — muốn ghi phải qua Collab |
-| **QC** (`ui:qc:share`, `BOW_QC_MODE`) | 4001/5174 | `plan` | **WHITELIST** tool đọc (Read/Glob/MCP-read) **+ Skill** (kích hoạt qc-triage) **+ Jira read/write** (comment/transition); Grep DENY riêng; file nhạy cảm chặn; source code DENY; ép model `claude-sonnet-5`; ẩn UI kỹ thuật |
-| **Collab** (`ui:collab`, `BOW_COLLAB_MODE`) | 4002/5175 | `auto` | CTV sửa code + chạy test tự do; **mọi thao tác GHI (Edit/Write, Bash rủi ro kể cả Git, MCP write) của CTV non-admin bị định tuyến lên ADMIN duyệt từ xa** (`requireApprovalForWrites` + `adminBus`) |
-| **BA** (`ui:ba`, `BOW_BA_MODE`) | 4003/5176 | `auto` | Ghi **tài liệu** (`isDocPath`: `docs/`, `*.md/.mdx/.txt`) + **full Jira** tự do; source code / config / DB / deploy **DENY CỨNG** (không hỏi admin — muốn sửa code thì đổi mode) |
-| **Reviewer** (`ui:review:share`, `BOW_REVIEWER_MODE`) | 4004/5177 | `plan` | **WHITELIST** tool đọc + Skill (pr-review) + **Bash** lọc riêng (`isReviewGhCommand`: `git diff/status/log/show`, `gh pr view/diff/list/checks/comment/review`) + `SAFE_COMMANDS` (test/analyze); Jira **đọc**; ghi file source / merge / push / risky / command-chaining **DENY**; ép `claude-sonnet-5`; ẩn UI kỹ thuật |
+| **Dev** (`ui`) | 4000 (+ Vite 5173) | client chooses | Admin (localhost) gets everything. **Non-admin LAN clients are forced to `plan`** (read-only) — to write, go through Collab |
+| **QC** (`ui:qc:share`, `BOW_QC_MODE`) | 4001 | `plan` | **WHITELIST** of read tools (Read/Glob/MCP-read) **+ Skill** (to trigger qc-triage) **+ Jira read/write** (comment/transition); Grep is DENIED specifically; sensitive files blocked; source code DENIED; model forced to `claude-sonnet-5`; technical UI hidden |
+| **Collab** (`ui:collab`, `BOW_COLLAB_MODE`) | 4002 | `auto` | Contributors edit code and run tests freely; **every WRITE operation (Edit/Write, risky Bash including Git, MCP writes) by a non-admin contributor is routed to an ADMIN for remote approval** (`requireApprovalForWrites` + `adminBus`) |
+| **BA** (`ui:ba`, `BOW_BA_MODE`) | 4003 | `auto` | Free to write **documentation** (`isDocPath`: `docs/`, `*.md/.mdx/.txt`) and use **full Jira**; source code / config / DB / deploy are **HARD-DENIED** (the admin is not even asked — if you want to change code, switch modes) |
+| **Reviewer** (`ui:review:share`, `BOW_REVIEWER_MODE`) | 4004 | `plan` | **WHITELIST** of read tools + Skill (pr-review) + a **Bash** filter of its own (`isReviewGhCommand`: `git diff/status/log/show`, `gh pr view/diff/list/checks/comment/review`) + `SAFE_COMMANDS` (test/analyze); Jira **read**; writing source files / merging / pushing / risky commands / command chaining are DENIED; model forced to `claude-sonnet-5`; technical UI hidden |
+| **DevOps** (`ui:devops:share`, `BOW_DEVOPS_MODE`) | 4005 | `auto` | A **hybrid**: writes **infrastructure files** by target path (`isInfraPath`: Dockerfile, `docker-compose*`, `.github/workflows/*`, `*.tf/*.hcl`, k8s/Helm) and ops docs, like BA; but **application source is HARD-DENIED**, and **deploy/apply commands are routed to an admin for approval** like Collab (`routeToAdmin = (isCollabMode \|\| isDevOpsMode) && !isAdmin`). In-place file edits via Bash (`sed -i`, `patch`, `git apply`) always require approval — Bash must not be a way around a hard-denied `Edit` |
 
-- **Admin = socket IP thật `127.0.0.1`** (`getSocketIp`, **bỏ qua** `X-Forwarded-For` để LAN
-  không spoof header giành quyền admin). Đổi cấu hình (MCP chung/workspace/skill-sync) bị
-  `checkReadonlyConfig` chặn 403 ở cả bốn mode chia sẻ QC/Reviewer/Collab/BA.
-- **Duyệt từ xa (Collab)**: `session.ts` có `adminBus` (tách khỏi Session vì mỗi phiên CTV chỉ
-  có một consumer SSE). CTV bị treo chờ; admin mở SSE `GET /api/admin/events`, bấm duyệt qua
-  `POST /api/admin/approve` → giải Promise treo bên CTV.
-- Source (`cwd`) mỗi mode cố định theo `BOW_{QC,COLLAB,BA,REVIEWER}_CWD`; admin đổi lúc chạy qua
-  `POST /api/qc-cwd` (RAM override, không restart).
+- **Admin = the real socket IP is `127.0.0.1`** (`getSocketIp`, which **ignores** `X-Forwarded-For` so a
+  LAN client can't spoof a header into admin rights). Config changes (shared MCP / workspace /
+  skill-sync) are blocked with a 403 by `checkReadonlyConfig` in all five shared modes
+  (QC/Reviewer/Collab/BA/DevOps).
+- **Remote approval (Collab)**: `session.ts` has an `adminBus` (kept separate from Session because each
+  contributor's session has exactly one SSE consumer). The contributor is parked waiting; the admin opens
+  the SSE stream `GET /api/admin/events` and approves via `POST /api/admin/approve` → which resolves the
+  parked Promise on the contributor's side.
+- Each mode's source directory (`cwd`) is fixed by `BOW_{QC,COLLAB,BA,REVIEWER}_CWD`; the admin can change
+  it at run time via `POST /api/qc-cwd` (an in-memory override, no restart).
 
-### 8.2. Truy cập LAN + tự chạy tiếp khi hết hạn mức
+### 8.2. LAN access + auto-resuming when the usage limit runs out
 
-- **Cổng truy cập LAN** (`src/web/access.ts`): client non-localhost bị chặn mọi `/api/*` cho
-  tới khi **gửi yêu cầu (nhập TÊN)** và được admin **duyệt** trong LAN Dashboard (không phải
-  "mã số"). Token cấp lưu server ở `conversations/access.json`, client giữ ở `localStorage`
-  (`bow-access-token`) và đính header `x-bow-token`. Realtime qua SSE `/api/access/events`.
-- **Auto-resume hết hạn mức** (`server.ts`): phiên **đang thực thi** bị dừng vì hết hạn mức 5h
-  (`isSessionLimit`) → server tính giờ reset (`resetsAt + buffer`), `setTimeout` tạo phiên mới
-  **resume đúng `conversationId`** với prompt "tiếp tục", **tối đa 3 lần** (`AUTO_RESUME_MAX_ATTEMPTS`).
-  Bền qua đóng tab (server-side); client có fallback đếm ngược + nút huỷ. Giả lập test bằng
+- **LAN access gate** (`src/web/access.ts`): a non-localhost client is blocked from every `/api/*` route
+  until it **sends a request (entering a NAME)** and an admin **approves** it in the LAN Dashboard (there
+  is no "access code"). The issued token is stored server-side in `conversations/access.json`; the client
+  keeps it in `localStorage` (`bow-access-token`) and attaches it as the `x-bow-token` header. Realtime
+  updates go over SSE at `/api/access/events`.
+- **Auto-resume on usage limit** (`server.ts`): when a **running** session is stopped because the 5-hour
+  usage limit was hit (`isSessionLimit`), the server computes the reset time (`resetsAt + buffer`) and
+  uses `setTimeout` to start a new session that **resumes the same `conversationId`** with a "continue"
+  prompt, **up to 3 times** (`AUTO_RESUME_MAX_ATTEMPTS`). This survives closing the tab (it's
+  server-side); the client has a countdown fallback plus a cancel button. Simulate it in tests with
   `BOW_SIMULATE_SESSION_LIMIT=true`.
 
-## 9. Workspace — nhóm nhiều repo + trí nhớ tích lũy
+## 9. Workspaces — grouping repos + accumulated memory
 
-> **Trạng thái:** ĐÃ IMPLEMENT (`src/profiles/workspace.ts`, ghép vào `runner.ts`; UI quản lý
-> ở panel workspace của web + API `/api/workspace/*`). Kích hoạt bằng cách đăng ký repo vào
-> `workspaces/workspaces.json` — chưa đăng ký thì hành vi y như cũ.
-> Quyết định người dùng: (a) ưu tiên **liên kết nhiều repo**, (b) trí nhớ ghi **tự động**,
-> (c) lưu **trong bow-agent, gitignore** (giống `generated-profiles/`), (d) agent được
-> **đọc chéo read-only** repo anh em.
+> **Status:** IMPLEMENTED (`src/profiles/workspace.ts`, wired into `runner.ts`; managed from the web UI's
+> workspace panel + the `/api/workspace/*` API). Activate it by registering a repo in
+> `workspaces/workspaces.json` — with nothing registered, behavior is exactly as before.
+> User decisions: (a) prioritize **linking multiple repos**, (b) memory is written **automatically**,
+> (c) stored **inside bow-agent, gitignored** (like `generated-profiles/`), (d) the agent gets
+> **read-only cross-repo access** to sibling repos.
 
-### 9.1. Vấn đề
+### 9.1. The problem
 
-Ba nguồn tri thức ở §3 đều **tĩnh và gắn với một `cwd` đơn lẻ**. Thực tế của người dùng
-không vừa khuôn đó:
+All three knowledge sources in §3 are **static and bound to a single `cwd`**. Real usage doesn't fit that
+mold:
 
-- **Một "sản phẩm" trải trên nhiều repo ở nhiều thư mục**: BE một nơi, FE một nơi, có khi
-  thêm infra/monorepo. Profile đặt tên theo `basename(cwd)` (`generate.ts:29`) nên mỗi thư
-  mục là một hòn đảo — trỏ agent vào FE thì nó **không biết gì về contract API của BE**.
-- **Không có trí nhớ giữa các phiên**: `generateProfile` chỉ chụp *cấu trúc tĩnh* một lần.
-  Test agent với một repo, quay lại phiên sau → mọi quyết định/điều-học-được của phiên trước
-  bốc hơi. (`resumeSessionId` chỉ khôi phục *một* luồng hội thoại, không phải tri thức tích
-  lũy xuyên phiên/xuyên repo.)
+- **One "product" spread across several repos in several directories**: the BE in one place, the FE in
+  another, sometimes an infra/monorepo too. Profiles are named after `basename(cwd)` (`generate.ts:29`),
+  so each directory is an island — point the agent at the FE and it **knows nothing about the BE's API
+  contract**.
+- **No memory between sessions**: `generateProfile` only snapshots the *static structure*, once. Test the
+  agent on a repo, come back for the next session → every decision and everything learned in the previous
+  session has evaporated. (`resumeSessionId` restores *one* conversation thread, not knowledge
+  accumulated across sessions and across repos.)
 
-Kết quả: người dùng phải "dạy lại" ngữ cảnh mỗi lần, và không có cách nào nói với agent
-"FE này ăn với BE kia".
+The result: the user has to "re-teach" the context every time, and there is no way to tell the agent
+"this FE talks to that BE".
 
-### 9.2. Khái niệm: Workspace = 1 sản phẩm gồm nhiều repo
+### 9.2. The concept: a workspace = 1 product made of several repos
 
-Thêm **một lớp trên profile** (không thay thế). Workspace gom nhiều `cwd` (mỗi cái vẫn có
-profile riêng như cũ) vào một sản phẩm, kèm hai file tri thức dùng chung:
+This adds **a layer on top of profiles** (it does not replace them). A workspace gathers several `cwd`s
+(each of which still has its own profile, as before) into one product, along with two shared knowledge
+files:
 
 ```
 bow-agent/
-└── workspaces/                      ← gitignore, per-máy (như generated-profiles/)
-    ├── workspaces.json              ← đăng ký: workspace ⇄ các repo (cwd) + vai trò
-    └── app-giao-hang/
-        ├── shared.md                ← tri thức CHUNG sản phẩm (contract BE↔FE, quyết định KT)
-        └── journal.md               ← nhật ký TỰ ĐỘNG: mỗi phiên append 1 mục
+└── workspaces/                      ← gitignored, per-machine (like generated-profiles/)
+    ├── workspaces.json              ← the registry: workspace ⇄ repos (cwd) + roles
+    └── delivery-app/
+        ├── shared.md                ← SHARED product knowledge (BE↔FE contract, technical decisions)
+        └── journal.md               ← AUTOMATIC log: each session appends one entry
 ```
 
 `workspaces.json`:
 
 ```jsonc
 {
-  "app-giao-hang": {
+  "delivery-app": {
     "repos": {
       "/path/to/delivery-backend": "BE",
       "/path/to/delivery-flutter":  "FE",
@@ -337,90 +371,95 @@ bow-agent/
 }
 ```
 
-Vì sao lưu ở đây: **mirror y hệt `generated-profiles/`** — cùng chỗ, cùng chính sách
-gitignore, cùng "runtime per-máy". Không thêm khái niệm lưu trữ mới, tái dùng nguyên tắc
-§3 đã có.
+Why store it here: it **mirrors `generated-profiles/` exactly** — same place, same gitignore policy, same
+"per-machine runtime" nature. No new storage concept; it reuses the §3 principle that already exists.
 
-### 9.3. Cơ chế 1 — Liên kết repo (ưu tiên làm trước)
+### 9.3. Mechanism 1 — linking repos (the priority)
 
-**Khi trỏ agent vào một `cwd`** (`runner.ts`, ngay chỗ ghép profile `runner.ts:281–283`):
+**When the agent is pointed at a `cwd`** (`runner.ts`, right where the profile is merged in,
+`runner.ts:281–283`):
 
-1. `resolveWorkspace(cwd)`: quét `workspaces.json`, khớp `cwd` theo **tiền tố đường dẫn**
-   (repo là con của một `cwd` đã đăng ký cũng tính) → trả workspace chứa nó, hoặc `null`.
-2. Nếu thuộc một workspace → append vào system prompt **một khối mới**, đặt *trước* project
-   profile (chung → riêng), gồm:
-   - **`shared.md`** — tri thức chung sản phẩm.
-   - **Bản đồ repo anh em** — liệt kê từng repo + vai trò + đường dẫn tuyệt đối, để agent
-     biết "BE nằm ở đâu, FE dùng contract nào".
-   - **`journal.md`** — trí nhớ tích lũy (xem §9.4).
-3. Repo **không** thuộc workspace nào → không có khối này → hành vi y hệt hiện tại. Đây là
-   lớp **opt-in**, không đổi đường chạy cũ (đúng nguyên tắc §1).
+1. `resolveWorkspace(cwd)`: scan `workspaces.json` and match `cwd` by **path prefix** (a repo that is a
+   child of a registered `cwd` counts too) → return the workspace containing it, or `null`.
+2. If it belongs to a workspace → append **a new block** to the system prompt, placed *before* the project
+   profile (general → specific), containing:
+   - **`shared.md`** — shared product knowledge.
+   - **A map of sibling repos** — each repo, its role, and its absolute path, so the agent knows "where
+     the BE is, which contract the FE uses".
+   - **`journal.md`** — accumulated memory (see §9.4).
+3. A repo that belongs to **no** workspace → no such block → behavior is identical to today. This is an
+   **opt-in** layer; it doesn't change the existing code path (per the principle in §1).
 
-**Đọc chéo read-only** (quyết định của người dùng). Hiện `allowedTools` mở `Read/Grep/Glob`
-nhưng SDK giới hạn theo `cwd`, nên agent làm FE không đọc được file BE. Cần **mở phạm vi đọc
-sang các repo anh em, chỉ đọc**:
+**Read-only cross-repo access** (the user's decision). Today `allowedTools` opens up `Read/Grep/Glob`, but
+the SDK scopes them to `cwd`, so an agent working on the FE cannot read BE files. We need to **widen the
+read scope to the sibling repos, read-only**:
 
-- SDK cho phép truyền thêm gốc đọc qua `additionalDirectories` (đường dẫn các repo anh em).
-  Agent `Read/Grep/Glob` được sang BE để hiểu contract thật, **không đoán**.
-- **Ghi vẫn khóa trong repo hiện tại.** Cổng `isPathInRepo` (`runner.ts:340–344`) chỉ tính
-  `workdir` (cwd). Repo anh em nằm ngoài `workdir` → mọi Edit/Write vào đó **rơi vào nhánh
-  "ghi ngoài repo" → luôn hỏi duyệt** (kể cả mode `auto`). Tức là *đọc chéo tự do, ghi chéo
-  vẫn phải xin phép* — không cần thêm luật mới, tận dụng đúng cổng §8 đã có.
-- Prompt phải nói rõ: *repo anh em là để THAM CHIẾU (đọc); đừng sửa chúng trừ khi người dùng
-  yêu cầu và duyệt.*
+- The SDK lets you pass extra read roots via `additionalDirectories` (the paths of the sibling repos). The
+  agent can `Read/Grep/Glob` its way into the BE to learn the real contract instead of **guessing**.
+- **Writes stay locked to the current repo.** The `isPathInRepo` gate (`runner.ts:340–344`) only counts
+  `workdir` (cwd). A sibling repo lies outside `workdir` → any Edit/Write into it **falls into the "write
+  outside the repo" branch → always asks for approval** (even in `auto` mode). In other words: *reading
+  across repos is free; writing across repos still needs permission* — no new rule is required, it just
+  reuses the §8 gate that already exists.
+- The prompt has to spell it out: *sibling repos are for REFERENCE (reading); don't modify them unless the
+  user asks and approves.*
 
-### 9.4. Cơ chế 2 — Trí nhớ tích lũy tự động (ăn theo, gần như miễn phí)
+### 9.4. Mechanism 2 — automatic accumulated memory (a freebie, riding on the above)
 
-Vì §9.3 đã load `journal.md`, phần còn lại chỉ là **ghi** nó cuối phiên.
+Since §9.3 already loads `journal.md`, all that's left is **writing** to it at the end of a session.
 
-**Ghi (tự động):** sau khi `query()` kết thúc thành công (`runner.ts` sau nhánh
-`case 'result'`), chạy một bước cô đọng ngắn: tóm tắt phiên vừa rồi thành 3–6 gạch đầu dòng
-— *đã làm gì / quyết định gì / học được gì về sản phẩm* — rồi **append** một mục có mốc thời
-gian vào `journal.md` của workspace. (Chỉ khi cwd thuộc một workspace; ngược lại bỏ qua.)
+**Writing (automatic):** once `query()` finishes successfully (`runner.ts`, after the `case 'result'`
+branch), run a short condensation step: summarize the session into 3–6 bullets — *what was done / what was
+decided / what was learned about the product* — then **append** a timestamped entry to the workspace's
+`journal.md`. (Only when cwd belongs to a workspace; otherwise skip it.)
 
-Hai cách hiện thực bước cô đọng — bản **rẻ** đã được chọn và implement
-(`condenseForJournal` trong `runner.ts`):
-- **Rẻ (đang dùng):** tận dụng chính `finalText` (báo cáo-khi-xong ở §BOW_AGENT_APPEND đã có
-  cấu trúc "đã đổi gì / verify gì / còn gì") → cắt gọn & append. **Không tốn thêm lượt model.**
-- **Kỹ hơn:** một lời gọi `query()` phụ, ngắn, nhồi transcript → bản tóm tắt cô đọng. Tốn
-  thêm token; chỉ dùng nếu bản rẻ ra nhiễu.
+There are two ways to implement the condensation step — the **cheap** one was chosen and implemented
+(`condenseForJournal` in `runner.ts`):
+- **Cheap (what we use):** reuse `finalText` itself (the done-report from §BOW_AGENT_APPEND already has the
+  structure "what changed / what was verified / what's left") → trim it and append. **Costs no extra model
+  turn.**
+- **More thorough:** a short secondary `query()` call, fed the transcript → a condensed summary. Costs extra
+  tokens; only worth it if the cheap version turns out noisy.
 
-**Chống phình:** journal là append-only sẽ lớn dần → chỉ nạp **N mục gần nhất** (hoặc tới
-ngưỡng ký tự) vào prompt; mục cũ giữ trên đĩa để tra tay. Không có cơ chế "học" phức tạp —
-đúng tinh thần §3 "tĩnh, đọc được, kiểm soát được": journal chỉ là markdown người đọc và sửa
-tay được. Đây **không** phải "Genome" đã gỡ (không fitness/mutation, không vòng tiến hóa) —
-chỉ là một cuốn nhật ký phẳng.
+**Keeping it from bloating:** the journal is append-only, so it grows without bound → only load the **N most
+recent entries** (or up to a character budget) into the prompt; older entries stay on disk for manual
+lookup. There is no complicated "learning" machinery — which is exactly the §3 spirit of "static, readable,
+controllable": the journal is just markdown that a human can read and edit by hand. This is **not** the
+Genome that was removed (no fitness, no mutation, no evolutionary loop) — it's a flat logbook.
 
-### 9.5. Điểm ghép code (tối thiểu, không phá đường chạy cũ — đã ghép đủ)
+### 9.5. Code integration points (minimal, no disruption to the existing path — all wired up)
 
-| Việc | File | Ghép thế nào |
+| Task | File | How it wires in |
 |---|---|---|
-| Module workspace (đọc/ghi md + json, resolve theo tiền tố cwd) | `src/profiles/workspace.ts` (mới) | Mirror `index.ts`/`generate.ts`; dùng lại pattern `GENERATED_DIR`. |
-| Nhồi khối workspace vào prompt | `src/core/runner.ts` (§281–283) | `resolveWorkspace(cwd)` → append shared+map+journal trước project profile. |
-| Mở đọc chéo read-only | `src/core/runner.ts` (`options`) | Thêm `additionalDirectories` = đường dẫn repo anh em. |
-| Ghi journal cuối phiên | `src/core/runner.ts` (sau `case 'result'`) | Cô đọng `finalText` → append vào `journal.md`. |
-| Đăng ký/gán repo vào workspace | `src/web/server.ts` + `web/App.tsx` | Ô chọn/tạo workspace cạnh ô `cwd` (giống panel MCP). |
-| gitignore | `.gitignore` | Thêm `workspaces/`. |
+| Workspace module (read/write md + json, resolve by cwd prefix) | `src/profiles/workspace.ts` (new) | Mirrors `index.ts`/`generate.ts`; reuses the `GENERATED_DIR` pattern. |
+| Push the workspace block into the prompt | `src/core/runner.ts` (§281–283) | `resolveWorkspace(cwd)` → append shared + map + journal before the project profile. |
+| Open up read-only cross-repo access | `src/core/runner.ts` (`options`) | Add `additionalDirectories` = the sibling repo paths. |
+| Write the journal at end of session | `src/core/runner.ts` (after `case 'result'`) | Condense `finalText` → append to `journal.md`. |
+| Register/assign a repo to a workspace | `src/web/server.ts` + `web/App.tsx` | A workspace picker/creator next to the `cwd` field (like the MCP panel). |
+| gitignore | `.gitignore` | Add `workspaces/`. |
 
-**Vì sao an toàn:** toàn bộ tính năng *song song* với `generated-profiles/`, kích hoạt chỉ
-khi `cwd` khớp một workspace đã đăng ký. Không đăng ký gì → không đổi hành vi. Ghi chéo vẫn
-qua cổng duyệt §8. Trí nhớ là markdown phẳng, sửa/xóa tay được — không có trạng thái ẩn.
+**Why this is safe:** the whole feature runs *parallel* to `generated-profiles/` and only activates when
+`cwd` matches a registered workspace. Register nothing → nothing changes. Cross-repo writes still go
+through the §8 approval gate. The memory is flat markdown you can edit or delete by hand — no hidden state.
 
-### 9.6. Ngoài phạm vi (cố ý chưa làm)
+### 9.6. Out of scope (deliberately not done)
 
-- **Chia sẻ trí nhớ giữa các máy** (commit / server chung): người dùng chọn gitignore per-máy.
-  Nếu sau cần share → chỉ đổi nơi lưu, cơ chế giữ nguyên.
-- **Duyệt trước khi ghi journal**: chọn "tự động". Nếu journal ra nhiễu → thêm nút duyệt sau.
-- **Suy luận quan hệ repo tự động** (đoán FE↔BE): làm thủ công qua `workspaces.json` trước;
-  không đoán để tránh sai.
+- **Sharing memory between machines** (committing it / a shared server): the user chose per-machine and
+  gitignored. If it needs to be shared later → only the storage location changes, the mechanism stays.
+- **Approving journal writes**: "automatic" was chosen. If the journal turns out noisy → add an approve
+  button later.
+- **Inferring repo relationships automatically** (guessing FE↔BE): do it by hand in `workspaces.json`
+  first; don't guess, to avoid getting it wrong.
 
-## 10. Hướng mở rộng (chưa làm)
+## 10. Possible extensions (not done)
 
-- **UI chọn skill / subagent**: hiện agent tự chọn skill; subagent bật cả-cụm qua cờ. Có
-  thể thêm ô chọn trên web như panel MCP.
-- **Profile có subagent riêng**: khung `profileSubagents` đã có (`buildSubagents` gộp) nhưng
-  các profile `.md` hiện chưa khai báo subagent nào.
-- **Marker file cho monorepo**: `isMonorepo` đang nhận theo segment path; đổi sang marker
-  file (vd `scripts/check-quest.sh`) sẽ chính xác hơn cho repo trùng tên.
-- **Journal cho phiên thất bại**: hiện journal chỉ ghi khi phiên chạy thành công — bài học
-  từ phiên lỗi / bị từ chối duyệt chưa được lưu.
+- **A UI for picking skills / subagents**: today the agent picks skills itself, and subagents are enabled as
+  a whole group by a flag. We could add a picker on the web UI, like the MCP panel.
+- **Profiles with their own subagents**: the `profileSubagents` scaffolding exists (`buildSubagents` merges
+  them), but none of the current `.md` profiles declare any subagents.
+- **A marker file for monorepos**: `isMonorepo` currently detects by path segment; switching to a marker file
+  (e.g. `scripts/check-quest.sh`) would be more accurate for repos that happen to share a name.
+- **A journal for failed sessions**: today the journal is only written when a session succeeds — the lessons
+  from a failed session, or one whose approval was rejected, are not recorded.
+</content>
+</invoke>

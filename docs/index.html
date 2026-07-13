@@ -314,6 +314,19 @@
   .problem p + p { margin-top: 1rem; }
   .problem b { background: var(--yellow); border: 2px solid var(--ink); padding: 0 .2em; color: #0a0a0a; }
 
+  /* ── demo GIF (sản phẩm thật, không phải minh hoạ) ─────────────────── */
+  .demo { padding-top: 0; }
+  .demo-frame { margin: 0; }
+  .demo-frame img {
+    display: block; width: 100%; max-width: 900px; height: auto;
+    border: var(--bd-fat); box-shadow: var(--shadow-l);
+  }
+  .demo-frame figcaption {
+    max-width: 62ch; margin-top: 1.6rem;
+    font-family: var(--mono); font-size: var(--s--1); line-height: 1.7;
+    border-left: var(--bd-fat); padding-left: 1rem;
+  }
+
   /* ── modes table ──────────────────────────────────────────────────── */
   .scroll { overflow-x: auto; min-width: 0; max-width: 100%; margin-top: 1.8rem; border: var(--bd); box-shadow: var(--shadow); }
   table { border-collapse: collapse; width: 100%; min-width: 760px; font-size: var(--s--1); background: var(--card); }
@@ -440,6 +453,21 @@
       anything that writes. Your QC engineer, your BA, your tech lead, and your contractor all work
       through it — each with only the reach their job needs.
     </p>
+  </section>
+
+  <section class="wrap demo">
+    <span class="tag">Not a mockup — the real thing</span>
+    <h2 style="font-size:var(--s-2);max-width:26ch;margin-bottom:1.6rem">
+      The agent found the bug and wrote the patch. Then it stopped.
+    </h2>
+    <figure class="demo-frame">
+      <img src="media/demo-approval.gif" width="900"
+           alt="Screen recording of the bow-agent web UI: the agent reads the code, finds the empty-cart crash, and writes a patch. An approval card appears showing the exact diff with Allow and Deny buttons. Nothing is written to disk until a human clicks Allow.">
+      <figcaption>
+        Real recording. The agent has the fix ready — and it cannot touch the file until a human
+        clicks. Every write works this way. There is no path around it.
+      </figcaption>
+    </figure>
   </section>
 
   <section class="modes wrap" id="modes">
