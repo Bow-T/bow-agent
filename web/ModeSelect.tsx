@@ -49,20 +49,39 @@ export const MODES: ModeDef[] = [
   },
 ];
 
-export function modeDef(value: Mode): ModeDef {
-  return MODES.find((m) => m.value === value) ?? MODES[0];
+export function modeDef(value: Mode, language: 'vi' | 'en' = 'vi'): ModeDef {
+  const m = MODES.find((m) => m.value === value) ?? MODES[0];
+  let label = m.label;
+  let desc = m.desc;
+  if (language === 'en') {
+    if (m.value === 'plan') {
+      label = 'Plan';
+      desc = 'Read-only & planning. No file changes, no commands — safest.';
+    } else if (m.value === 'auto') {
+      label = 'Auto';
+      desc = 'Autonomously execute safe operations; ask before risky ones (git push, data deletion).';
+    } else if (m.value === 'edit-auto') {
+      label = 'Edit Auto';
+      desc = 'Modify files autonomously; ask before executing bash commands or external writes.';
+    } else if (m.value === 'manual') {
+      label = 'Manual';
+      desc = 'Ask for approval before every single change (file edit, command execution). Full control.';
+    }
+  }
+  return { ...m, label, desc };
 }
 
 interface Props {
   value: Mode;
   onChange: (mode: Mode) => void;
   disabled?: boolean;
+  language?: 'vi' | 'en';
 }
 
-export function ModeSelect({ value, onChange, disabled }: Props) {
+export function ModeSelect({ value, onChange, disabled, language = 'vi' }: Props) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const current = modeDef(value);
+  const current = modeDef(value, language);
 
   // Đóng khi click ra ngoài hoặc nhấn Esc.
   useEffect(() => {
@@ -96,29 +115,30 @@ export function ModeSelect({ value, onChange, disabled }: Props) {
       </button>
 
       {open && !disabled && (
-        <div className="mode-menu" role="listbox" aria-label="Chế độ chạy">
-          <div className="mode-menu-title">Chế độ chạy</div>
+        <div className="mode-menu" role="listbox" aria-label={language === 'vi' ? 'Chế độ chạy' : 'Execution mode'}>
+          <div className="mode-menu-title">{language === 'vi' ? 'Chế độ chạy' : 'Execution Mode'}</div>
           {MODES.map((m) => {
-            const active = m.value === value;
+            const loc = modeDef(m.value, language);
+            const active = loc.value === value;
             return (
               <button
                 type="button"
-                key={m.value}
+                key={loc.value}
                 role="option"
                 aria-selected={active}
-                className={`mode-menu-item mode-${m.value}${active ? ' active' : ''}`}
+                className={`mode-menu-item mode-${loc.value}${active ? ' active' : ''}`}
                 onClick={() => {
-                  onChange(m.value);
+                  onChange(loc.value);
                   setOpen(false);
                 }}
               >
-                <span className="mode-menu-icon"><Icon name={m.icon} size={17} /></span>
+                <span className="mode-menu-icon"><Icon name={loc.icon} size={17} /></span>
                 <span className="mode-menu-text">
                   <span className="mode-menu-name">
-                    {m.label}
+                    {loc.label}
                     {active && <span className="mode-menu-check"><Icon name="success" size={13} /></span>}
                   </span>
-                  <span className="mode-menu-desc">{m.desc}</span>
+                  <span className="mode-menu-desc">{loc.desc}</span>
                 </span>
               </button>
             );

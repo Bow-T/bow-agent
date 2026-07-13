@@ -77,7 +77,7 @@
   --hairline-2: rgba(0, 0, 0, 0.6);
   --graticule: rgba(0, 0, 0, 0.08);
 
-  --bd-thin: 3px;         /* viền DÀY cho ra chất poster */
+  --bd-thin: 2px;         /* viền DÀY cho ra chất poster */
   --glass: 100%;          /* không kính mờ — đục hoàn toàn */
   --glow-a: transparent;  /* không glow môi trường — phẳng */
   --glow-b: transparent;
@@ -584,8 +584,8 @@ a { color: var(--brass); text-underline-offset: 2px; }
   display: flex;
   flex: 1;
   min-height: 0;
-  gap: 14px;
-  padding: 14px;
+  gap: 0;
+  padding: 0;
 }
 
 .sidebar-pipeline {
@@ -597,9 +597,7 @@ a { color: var(--brass); text-underline-offset: 2px; }
   background: color-mix(in srgb, var(--surface) var(--glass), transparent);
   background-image: var(--grain);
   backdrop-filter: blur(18px) saturate(1.2);
-  border: 1px solid var(--hairline);
-  border-radius: var(--r-lg);
-  box-shadow: var(--depth), inset 0 1px 0 var(--highlight);
+  border-right: 1px solid var(--hairline);
   overflow: hidden;
   position: relative;
 }
@@ -1097,9 +1095,6 @@ a { color: var(--brass); text-underline-offset: 2px; }
   background: color-mix(in srgb, var(--surface) var(--glass), transparent);
   background-image: var(--grain);
   backdrop-filter: blur(18px) saturate(1.2);
-  border: 1px solid var(--hairline);
-  border-radius: var(--r-lg);
-  box-shadow: var(--depth), inset 0 1px 0 var(--highlight);
   overflow: hidden;
   position: relative;
 }
@@ -2336,7 +2331,12 @@ a { color: var(--brass); text-underline-offset: 2px; }
 }
 
 /* gợi ý nhanh = preset */
-.quick-prompts { display: flex; flex-wrap: wrap; gap: 6px; }
+.quick-prompts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 16px 14px;
+}
 .quick-prompt-chip {
   padding: 6px 12px;
   font-family: var(--mono);
@@ -2850,8 +2850,19 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   border-left: var(--bd-thin) solid var(--hairline) !important;
 }
 
-[data-theme='brutal'] .chat-container,
-[data-theme='brutal'] .sidebar-pipeline,
+[data-theme='brutal'] .chat-container {
+  background: var(--surface) !important;
+  border: none !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+}
+[data-theme='brutal'] .sidebar-pipeline {
+  background: var(--surface) !important;
+  border: none !important;
+  border-right: var(--bd-thin) solid var(--hairline) !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+}
 [data-theme='brutal'] .step-detail,
 [data-theme='brutal'] .pixel-panel,
 [data-theme='brutal'] .modal-content,
@@ -3012,18 +3023,24 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 }
 
 /* Ô nhập gộp (Composer) */
+[data-theme='brutal'] .composer {
+  border: var(--bd-thin) solid var(--hairline) !important;
+  box-shadow: 4px 4px 0 0 var(--hairline) !important;
+  border-radius: 0 !important;
+  margin: 0 16px 16px !important;
+}
 [data-theme='brutal'] .composer-input {
   background-color: var(--surface) !important;
-  border: var(--bd-thin) solid var(--hairline) !important;
-  box-shadow: 5px 5px 0 0 var(--hairline) !important;
+  border: 1px solid var(--hairline) !important;
+  box-shadow: none !important;
   border-radius: 0 !important;
-  transition: box-shadow var(--fast) !important;
 }
 [data-theme='brutal'] .composer-input:focus-within {
-  box-shadow: 7px 7px 0 0 var(--brass) !important;
+  border-color: var(--brass) !important;
+  box-shadow: none !important;
 }
 [data-theme='brutal'] .composer-bar {
-  border-top: var(--bd-thin) solid var(--hairline) !important;
+  border-top: 1px solid var(--hairline) !important;
   background-color: var(--surface-2) !important;
 }
 
@@ -3042,14 +3059,14 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 [data-theme='brutal'] textarea:focus,
 [data-theme='brutal'] select:focus {
   border-color: var(--hairline) !important;
-  box-shadow: 4px 4px 0 0 var(--brass) !important;
+  box-shadow: 2.5px 2.5px 0 0 var(--brass) !important;
 }
 
 /* Các nút điều khiển & tương tác (Primary, Run, Allow, Stop, Deny, Outline, Secondary) */
 [data-theme='brutal'] .btn,
 [data-theme='brutal'] .px-select-btn {
   border: var(--bd-thin) solid var(--hairline) !important;
-  box-shadow: 4px 4px 0 0 var(--hairline) !important;
+  box-shadow: 2px 2px 0 0 var(--hairline) !important;
   border-radius: 0 !important;
   font-weight: 800 !important;
   text-transform: uppercase;
@@ -3091,12 +3108,12 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 /* Hover/Active states của nút */
 [data-theme='brutal'] .btn:hover:not(:disabled),
 [data-theme='brutal'] .px-select-btn:hover {
-  transform: translate(-2px, -2px) !important;
-  box-shadow: 6px 6px 0 0 var(--hairline) !important;
+  transform: translate(-1px, -1px) !important;
+  box-shadow: 3px 3px 0 0 var(--hairline) !important;
 }
 [data-theme='brutal'] .btn:active:not(:disabled),
 [data-theme='brutal'] .px-select-btn:active {
-  transform: translate(4px, 4px) !important;
+  transform: translate(2px, 2px) !important;
   box-shadow: 0 0 0 0 var(--hairline) !important;
 }
 
@@ -3244,8 +3261,17 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 [data-theme='newsprint'] .md li { font-family: 'Lora', Georgia, serif; }
 
 /* Vùng chứa chính = trắng, viền 1px ink, HEAVY 3px bottom rule (mép cột báo), KHÔNG bóng. */
-[data-theme='newsprint'] .chat-container,
-[data-theme='newsprint'] .sidebar-pipeline,
+[data-theme='newsprint'] .chat-container {
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+[data-theme='newsprint'] .sidebar-pipeline {
+  border: none !important;
+  border-right: 1px solid var(--hairline) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
 [data-theme='newsprint'] .modal-content,
 [data-theme='newsprint'] .pixel-panel {
   border: 1px solid var(--hairline) !important;
@@ -3289,6 +3315,12 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 }
 
 /* Composer + input = viền ink vuông, focus viền đỏ editorial. */
+[data-theme='newsprint'] .composer {
+  border: 1px solid var(--hairline) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  margin: 0 16px 16px !important;
+}
 [data-theme='newsprint'] .composer-input,
 [data-theme='newsprint'] input,
 [data-theme='newsprint'] textarea,

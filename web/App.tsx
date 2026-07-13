@@ -3102,10 +3102,10 @@ export function App() {
             </span>
           )}
           {!readonlyShare && (
-            <span className="readout" title={modeDef(mode).desc}>
+            <span className="readout" title={modeDef(mode, language).desc}>
               <span className="rl">{language === 'vi' ? 'Chế độ' : 'Mode'}</span>
               <span className={`rv mode-${mode}`}>
-                {modeDef(mode).short}
+                {modeDef(mode, language).short}
               </span>
             </span>
           )}
@@ -3920,7 +3920,7 @@ export function App() {
           {!readonlyShare && (
           <div className="field">
             {language === 'vi' ? 'Chế độ:' : 'Mode:'}
-            <ModeSelect value={mode} onChange={setMode} disabled={running} />
+            <ModeSelect value={mode} onChange={setMode} disabled={running} language={language} />
           </div>
           )}
           {readonlyShare ? (
