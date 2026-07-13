@@ -30,6 +30,18 @@
   --med: 220ms var(--ease);
 }
 
+/* ─────────────────────────  §Step colors · màu THIÊN THỂ trong galaxy  ─────────────────────────
+ * NGUỒN SỰ THẬT DUY NHẤT cho màu 6 loại bước (start/tool/result/error/approval/thinking).
+ * Dùng ở 3 nơi, tất cả đều đọc từ đây — ĐỪNG hardcode lại:
+ *   1. canvas galaxy   → NeuralBrain.tsx: readStepColors() đọc các var này qua getComputedStyle,
+ *                        MutationObserver trên <html> bám data-theme/data-accent để re-đọc.
+ *   2. chấm chú giải   → .star-legend-item[data-k="…"] i  (cuối file)
+ *   3. (mọi UI mới)    → var(--step-…), không tự chế màu.
+ *
+ * Định nghĩa THEO TOKEN theme (--brass/--teal/--danger/--ink) chứ không phải mã hex rời:
+ * nhờ vậy 6 accent ở [data-accent] chỉ cần ghi đè --brass là galaxy đổi theo, không phải
+ * khai báo lại từng --step-* cho từng accent. Mỗi theme override khối này ở block của mình. */
+
 /* ══════════════════════════════════════════════════════════════════════════════════════
  * PHONG CÁCH 1 · NEO BRUTALISM — palette designprompts.dev/neo-brutalism (accent chọn VÀNG):
  *   • Background : #FFFDF5 (cream/off-white, giấy tái chế)
@@ -79,6 +91,15 @@
 
   --r: 0px;               /* góc VUÔNG */
   --r-lg: 0px;
+
+  /* (các bước "thuận") mới bám accent, nên đổi accent vẫn thấy vũ trụ đổi màu rõ. */
+  --step-start: var(--ink);         /* trung tính — mực đen thuần */
+  --step-tool: var(--brass);        /* accent chính */
+  --step-result: var(--brass-bright);
+  --step-error: #c81e1e;            /* đỏ thẫm cố định chống trùng lặp */
+  --step-approval: var(--danger);   /* dùng danger (coral/đỏ) để phân biệt với tool (accent) */
+  --step-thinking: #9b7cc2;         /* tím sáng — tách biệt rõ ràng ở mọi theme và accent */
+  --step-default: var(--muted);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════════════
@@ -131,6 +152,19 @@
 
   --r: 0px;               /* góc VUÔNG khắp nơi */
   --r-lg: 0px;
+
+  /* Màu THIÊN THỂ — viewport newsprint là khối ĐEN mực, nên trung tính phải SÁNG (giấy), KHÔNG
+   * dùng --ink như brutal (mực trên mực = vô hình). Theme gần như đơn sắc: đỏ editorial chấm phá,
+   * còn lại là các sắc giấy. Phân biệt loại bước chủ yếu bằng HÌNH DẠNG thiên thể — đúng tinh thần
+   * báo in. Vẫn phải tách LỖI khỏi tool: --danger ≡ --brass ≡ #cc0000 ở theme này nên nếu map
+   * thẳng thì lỗi trông y hệt tool → lỗi dùng đỏ thẫm hơn để còn đọc ra được. */
+  --step-start: #f9f9f7;   /* giấy */
+  --step-tool: var(--brass);        /* đỏ editorial */
+  --step-result: #ff8a8a;  /* đỏ nhạt/hồng giấy — tách khỏi tool mà vẫn cùng họ đỏ */
+  --step-error: #8c0000;   /* đỏ THẪM — lỗi, tách hẳn khỏi đỏ editorial của tool */
+  --step-approval: var(--brass);
+  --step-thinking: #e5e5e0;         /* xám giấy */
+  --step-default: #a8a8a2;
 }
 
 /* Nền: brutal = chấm bi lớn; newsprint = dot-grid 4×4 ink (đúng SVG chính thức của họ). */
@@ -786,15 +820,20 @@ a { color: var(--brass); text-underline-offset: 2px; }
   letter-spacing: 0.02em;
   margin-left: 3px;
 }
+/* Chấm chú giải bám §Step colors — CÙNG nguồn màu với canvas galaxy, không hardcode lại.
+ * Viền ink giữ chấm luôn đọc được cả khi màu trùng nền (VD --step-start = --ink trên brutal,
+ * hay --step-start = giấy trên newsprint). box-sizing: border-box để viền không nở chấm ra 9px. */
 .star-legend-item i {
   width: 7px; height: 7px;
+  box-sizing: border-box;
+  border: 1px solid var(--hairline);
   border-radius: 50%;
   flex-shrink: 0;
 }
-.star-legend-item[data-k="approval"] i { background: #f59e0b; box-shadow: 0 0 5px rgba(245, 158, 11, 0.7); }
-.star-legend-item[data-k="thinking"] i { background: #a78bfa; box-shadow: 0 0 5px rgba(167, 139, 250, 0.7); }
-.star-legend-item[data-k="tool"] i { background: #4ade80; box-shadow: 0 0 5px rgba(74, 222, 128, 0.7); }
-.star-legend-item[data-k="start"] i { background: #38bdf8; box-shadow: 0 0 5px rgba(56, 189, 248, 0.7); }
+.star-legend-item[data-k="approval"] i { background: var(--step-approval); }
+.star-legend-item[data-k="thinking"] i { background: var(--step-thinking); }
+.star-legend-item[data-k="tool"] i { background: var(--step-tool); }
+.star-legend-item[data-k="start"] i { background: var(--step-start); }
 
 /* Gợi ý điều khiển viewport */
 .star-hint {
