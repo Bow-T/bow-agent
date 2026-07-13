@@ -51,11 +51,11 @@
     "ui:web": "vite",
     "ui:build": "vite build",
     "ui:preview": "npm run ui:build && node --loader tsx src/web/server.ts",
-    "ui:qc:share": "BOW_QC_MODE=true BOW_AGENT_PORT=4001 BOW_WEB_PORT=5174 concurrently -n qc-api,qc-web -c magenta,cyan \"npm run ui:api\" \"vite --host --port 5174\"",
-    "ui:collab": "BOW_COLLAB_MODE=true BOW_AGENT_PORT=4002 BOW_WEB_PORT=5175 concurrently -n collab-api,collab-web -c yellow,red \"npm run ui:api\" \"vite --host --port 5175\"",
-    "ui:ba": "BOW_BA_MODE=true BOW_AGENT_PORT=4003 BOW_WEB_PORT=5176 concurrently -n ba-api,ba-web -c blue,cyan \"npm run ui:api\" \"vite --host --port 5176\"",
-    "ui:review:share": "BOW_REVIEWER_MODE=true BOW_AGENT_PORT=4004 BOW_WEB_PORT=5177 concurrently -n review-api,review-web -c magenta,cyan \"npm run ui:api\" \"vite --host --port 5177\"",
-    "ui:devops:share": "BOW_DEVOPS_MODE=true BOW_AGENT_PORT=4005 BOW_WEB_PORT=5178 concurrently -n devops-api,devops-web -c green,yellow \"npm run ui:api\" \"vite --host --port 5178\""
+    "ui:qc:share": "npm run ui:build && BOW_QC_MODE=true BOW_SERVE_STATIC=true BOW_AGENT_PORT=4001 npm run ui:api",
+    "ui:collab": "npm run ui:build && BOW_COLLAB_MODE=true BOW_SERVE_STATIC=true BOW_AGENT_PORT=4002 npm run ui:api",
+    "ui:ba": "npm run ui:build && BOW_BA_MODE=true BOW_SERVE_STATIC=true BOW_AGENT_PORT=4003 npm run ui:api",
+    "ui:review:share": "npm run ui:build && BOW_REVIEWER_MODE=true BOW_SERVE_STATIC=true BOW_AGENT_PORT=4004 npm run ui:api",
+    "ui:devops:share": "npm run ui:build && BOW_DEVOPS_MODE=true BOW_SERVE_STATIC=true BOW_AGENT_PORT=4005 npm run ui:api"
   },
   "engines": {
     "node": ">=18"
