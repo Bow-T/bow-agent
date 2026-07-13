@@ -31,15 +31,14 @@
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════════════
- * PHONG CÁCH 1 · NEO BRUTALISM — palette CHÍNH THỨC designprompts.dev/neo-brutalism:
+ * PHONG CÁCH 1 · NEO BRUTALISM — palette designprompts.dev/neo-brutalism (accent chọn VÀNG):
  *   • Background : #FFFDF5 (cream/off-white, giấy tái chế)
  *   • Foreground : #000000 (ĐEN THUẦN — mọi chữ, MỌI viền, MỌI bóng; không xám)
- *   • Accent     : #FF6B6B (hot red/coral — màu action CHÍNH)
- *   • Secondary  : #FFD93D (vivid yellow)
+ *   • Accent CHÍNH : #FFD93D (vivid yellow — designprompts Secondary, chọn làm accent chủ đạo)
+ *   • Coral      : #FF6B6B (hot red — designprompts Accent, để làm màu phụ/nút hủy)
  *   • Muted      : #C4B5FD (soft violet)
- *   • Text-on-accent : #FFFFFF (trắng trên khối coral/đen)
- * Luật: không xám nhạt (black hoặc màu), tương phản cao, khối màu, viền dày + bóng cứng, góc vuông.
- * ══════════════════════════════════════════════════════════════════════════════════════ */
+ * Chữ trên khối vàng = ĐEN (đúng chất brutalism). Luật: không xám nhạt, tương phản cao, khối màu,
+ * viền dày + bóng cứng, góc vuông. ══════════════════════════════════════════════════════════════ */
 :root,
 [data-theme='brutal'] {
   color-scheme: light;
@@ -53,14 +52,14 @@
   --ink-2: #000000;       /* brutalism không dùng xám → phụ vẫn đen */
   --muted: #3a3a3a;       /* chỉ dùng cho chữ mờ tối thiểu (gần đen) */
 
-  --brass: #ff6b6b;       /* HOT RED/CORAL — accent CHÍNH (designprompts Accent) */
-  --brass-bright: #ff8585;/* fill / hover */
-  --brass-soft: rgba(255, 107, 107, 0.28);
-  --on-brass: #ffffff;    /* chữ TRẮNG trên khối coral (designprompts) */
+  --brass: #ffd93d;       /* VIVID YELLOW — accent CHÍNH (chọn theo yêu cầu) */
+  --brass-bright: #ffe166;/* fill / hover */
+  --brass-soft: rgba(255, 217, 61, 0.32);
+  --on-brass: #000000;    /* chữ ĐEN trên khối vàng (đúng chất brutalism) */
 
   --teal: #c4b5fd;        /* soft violet (designprompts Muted — accent phụ) */
-  --danger: #1a1a1a;      /* nút hủy/stop = ĐEN (phân biệt với coral action); chữ trắng */
-  --danger-soft: rgba(0, 0, 0, 0.14);
+  --danger: #ff6b6b;      /* hot red/coral (designprompts Accent) — nút hủy/stop; chữ trắng */
+  --danger-soft: rgba(255, 107, 107, 0.2);
 
   --hairline: #000000;    /* viền ĐEN THUẦN */
   --hairline-2: rgba(0, 0, 0, 0.6);
@@ -149,14 +148,14 @@
  * CHỈ áp cho phong cách BRUTAL (Newsprint khóa đỏ editorial + ink, dùng cực ít màu). Mỗi selector
  * bọc :not([data-theme='newsprint']). Ghi đè --brass / --brass-bright / --brass-soft / --on-brass.
  * Vàng #FFD93D + Tím #C4B5FD là màu chính thức designprompts (secondary + muted) → chữ ĐEN.
- * Các màu đậm (lam/lá/hồng/cam) → chữ TRẮNG. 'brass' (coral #ff6b6b) = mặc định ở block brutal. */
+ * Các màu đậm (coral/lá/hồng/cam) → chữ TRẮNG. 'brass' (vàng #ffd93d) = mặc định ở block brutal. */
 
-/* ── Vàng (yellow) — secondary chính thức designprompts #FFD93D ── */
+/* ── Coral (hot red) — accent chính thức designprompts #FF6B6B ── */
 :root:not([data-theme='newsprint'])[data-accent='blue'] {
-  --brass: #ffd93d;
-  --brass-bright: #ffe166;
-  --brass-soft: rgba(255, 217, 61, 0.32);
-  --on-brass: #000000;
+  --brass: #ff6b6b;
+  --brass-bright: #ff8585;
+  --brass-soft: rgba(255, 107, 107, 0.28);
+  --on-brass: #ffffff;
 }
 
 /* ── Xanh lá (green) ── */
@@ -2975,12 +2974,12 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 }
 [data-theme='brutal'] .btn.stop,
 [data-theme='brutal'] .btn.deny {
-  background-color: var(--danger) !important;  /* đen — phân biệt với coral action */
+  background-color: var(--danger) !important;  /* coral — phân biệt với vàng action */
   color: #ffffff !important;
 }
 [data-theme='brutal'] .btn.stop:hover:not(:disabled),
 [data-theme='brutal'] .btn.deny:hover:not(:disabled) {
-  background-color: #000000 !important;
+  background-color: #ff4d4d !important;
 }
 [data-theme='brutal'] .btn:not(.primary):not(.run):not(.allow):not(.stop):not(.deny),
 [data-theme='brutal'] .px-select-btn {
@@ -3083,9 +3082,9 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   transform: rotate(6deg);
   pointer-events: none;
 }
-/* Badge trên chat lệch màu (vàng secondary) + xoay ngược để "collage" đa dạng. */
+/* Badge trên chat lệch màu (coral) + xoay ngược để "collage" đa dạng. */
 [data-theme='brutal'] .chat-container::after {
-  background-color: #ffd93d;
+  background-color: #ff6b6b;
   transform: rotate(-8deg);
 }
 
