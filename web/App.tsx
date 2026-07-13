@@ -36,8 +36,8 @@ type Accent = 'brass' | 'blue' | 'teal' | 'purple' | 'pink' | 'red' | 'orange';
  * bộ màu chính thức designprompts.dev/neo-brutalism.
  */
 const ACCENTS: { id: Accent; label: string; swatch: string }[] = [
-  { id: 'brass', label: 'Coral', swatch: '#ff6b6b' },
-  { id: 'blue', label: 'Vàng', swatch: '#ffd93d' },
+  { id: 'brass', label: 'Vàng', swatch: '#ffd93d' },
+  { id: 'blue', label: 'Coral', swatch: '#ff6b6b' },
   { id: 'teal', label: 'Xanh lá', swatch: '#22c55e' },
   { id: 'purple', label: 'Tím', swatch: '#c4b5fd' },
   { id: 'pink', label: 'Hồng', swatch: '#ff6bb0' },
