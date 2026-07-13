@@ -2573,6 +2573,64 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 }
 
 /* ── Cổng mã truy cập (màn khoá cho client LAN chưa nhập mã) ──────────────── */
+/* ── Màn loading khi mở/reload web ────────────────────────────────────────────
+   Hiện trong lúc chờ /api/access/status (gateState==='checking'). Fade-in nhẹ để
+   với admin/localhost — nơi trạng thái chỉ thoáng qua — không bị nhấp nháy giật. */
+.app-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: var(--paper);
+  animation: splash-fade 0.25s ease both;
+}
+.app-splash-orb {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.app-splash-spinner {
+  position: absolute;
+  inset: 0;
+  border: 3px solid var(--outline);
+  border-top-color: var(--brass);
+  border-radius: 50%;
+  animation: splash-spin 0.85s linear infinite;
+}
+.app-splash-emoji {
+  font-size: 26px;
+  line-height: 1;
+  animation: splash-bob 1.6s ease-in-out infinite;
+}
+.app-splash-title {
+  font-family: var(--sans);
+  font-weight: 800;
+  font-size: 22px;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+.app-splash-hint {
+  font-size: 13px;
+  color: var(--muted);
+  animation: splash-blink 1.4s ease-in-out infinite;
+}
+@keyframes splash-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes splash-spin { to { transform: rotate(360deg); } }
+@keyframes splash-bob { 50% { transform: translateY(-3px); } }
+@keyframes splash-blink { 50% { opacity: 0.4; } }
+@media (prefers-reduced-motion: reduce) {
+  .app-splash-spinner,
+  .app-splash-emoji,
+  .app-splash-hint { animation: none; }
+}
+
 .access-gate {
   min-height: 100vh;
   display: flex;
