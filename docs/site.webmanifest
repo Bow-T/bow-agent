@@ -1,0 +1,14 @@
+{
+  "name": "bow-agent",
+  "short_name": "bow-agent",
+  "description": "A self-hosted AI coding agent your whole team can share — where every write is approved by a human.",
+  "icons": [
+    { "src": "favicon-32.png", "sizes": "32x32", "type": "image/png" },
+    { "src": "apple-touch-icon.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ],
+  "theme_color": "#ffcf24",
+  "background_color": "#fbf6e9",
+  "display": "standalone",
+  "start_url": "/bow-agent/"
+}
