@@ -238,7 +238,12 @@ tự dùng `/watch <url>` (yt-dlp của skill tự tải).
 
 Mọi con đường tới một thao tác GHI đều qua đúng một cổng — `canUseTool` ở `runner.ts`:
 
-1. **Tool đọc** (`Read/Grep/Glob` + MCP read patterns) nằm trong `allowedTools` → chạy thẳng.
+1. **Tool đọc** (`Read/Grep/Glob` + MCP read patterns) được auto-duyệt qua **PreToolUse hook**
+   (`buildReadAutoApproveHook`, `src/skills/hooks.ts`) — **KHÔNG** dùng `allowedTools` (biến này
+   để rỗng có chủ đích, xem `runner.ts:344`). Lý do: entry trong `allowedTools` auto-approve
+   TRƯỚC khi tới `canUseTool`, tức là nó **che mất cổng duyệt** — không thể chặn đọc file nhạy
+   cảm nữa. Các mode QC/Reviewer/DevOps còn cố tình **loại `Read`/`Grep`** khỏi hook này để
+   `isSensitivePath` (chặn `.env`, `.ssh/`, `.git-credentials`…) thật sự chạy.
 2. **Bash an toàn** (`SAFE_COMMANDS`: `flutter test/analyze`, `npm test`, `tsc --noEmit`,
    `git status/diff`…) auto-allow — để chạy test/kiểm chứng không phiền người dùng.
 3. **Mọi thứ còn lại** (Edit/Write, Bash side-effect, MCP write) → `onApproval`. Từ chối →

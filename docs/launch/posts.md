@@ -268,6 +268,231 @@ https://github.com/Bow-T/bow-agent
 
 ---
 
+## 4. Reddit r/selfhosted
+
+**⚠️ ĐỌC RULE TRƯỚC KHI ĐĂNG.** r/selfhosted có luật riêng về self-promotion (thường yêu cầu
+**flair `Release`/`Product Announcement`**, một số bài bị gỡ nếu tài khoản mới hoặc thiếu karma).
+Mở sidebar sub, đọc rule + wiki, chọn đúng flair. Nhớ vụ r/ClaudeAI vừa gỡ bài vì karma —
+đừng để lặp lại.
+
+**Nguyên tắc sống còn với sub này:** họ ghét SaaS trá hình. Bài này **phải** nói thẳng ngay từ đầu
+là model vẫn là Claude cloud. Giấu = bị bới ra ở comment đầu tiên = chôn bài.
+
+**Tiêu đề:**
+```
+Self-hosted AI coding agent for a small team — every write stops at an approval gate on my machine
+```
+
+**Nội dung:**
+
+---
+
+**Up front, so nobody wastes time:** the agent, the permission gate, the web UI, and your code all
+run on your own box. Nothing goes through a server of mine. **But the model is Claude — it calls
+Anthropic's API.** This is not a local-LLM setup. If that's a dealbreaker, stop reading; I'd
+rather say it in line 1 than have you find it in the comments.
+
+Now the actual problem.
+
+I run a small team: a couple of devs, a QA engineer, a BA, sometimes a contractor. I use Claude
+Code every day and it's genuinely good. Nobody else on the team can touch it.
+
+Not because of a license — because handing someone Claude Code means handing them an agent that
+edits files and runs shell commands in a repo I'm responsible for. My QA engineer doesn't need
+that. She needs to *read* code and triage tickets. So instead she asks me "why does checkout crash
+when the cart is empty?", I drop what I'm doing, go read the code, and answer her. I am a human
+API to my own codebase, several times a day.
+
+Every off-the-shelf option was some flavor of SaaS: upload your repo to their cloud, get a seat
+per user, trust them with your source. Not doing that.
+
+So I built **bow-agent**: one agent process on my machine, the rest of the team reaches it over
+LAN, and every write goes through one approval gate.
+
+**What's actually self-hosted here:**
+
+- The agent runs as a Node process on your machine. `git clone`, `npm install`, `npm run ui`.
+- Your **code never leaves your machine** except as the context Claude Code would already send
+  to Anthropic. There is no bow-agent server, no telemetry, no account, no signup.
+- Your team hits it on your LAN IP. Approval cards pop on *your* screen.
+- Your Jira / Supabase / GitHub creds stay in your own MCP config, on your own disk.
+- MIT. Fork it and it keeps working — nothing phones home to me to stay alive.
+
+**The gate.** Reads run free — grep, read, list, safe shell. Every *write* stops: a file edit, a
+shell command with side effects, a Jira comment, an `execute_sql`. It hits one function, shows the
+diff, and waits for a human click. One gate, no bypass. If you want to audit the safety model, you
+read one file (`canUseTool` in `src/core/runner.ts`).
+
+Yes, I closed the obvious hole first: denying `Edit`/`Write` is theater if `Bash` can still run
+`sed -i`, `patch`, or `git apply`. Those route through the gate too.
+
+**Six role modes**, each on its own port, all runnable at once:
+
+- **QC** — read source, triage + transition Jira. Literally has no write tool.
+- **BA** — writes `docs/` and `*.md`. Source, DB, deploy: hard-denied.
+- **Reviewer** — reviews and approves PRs. Can't edit, merge, or push.
+- **Collab** — a contractor writes real code, but *every* write, **including git**, pops an
+  approval card on my machine with the diff and waits.
+- **DevOps** — Dockerfile, compose, workflows, Terraform, k8s. App source: denied. Deploy/apply
+  gets routed to me.
+- **Dev** — me, everything, still with approval cards.
+
+**Limitations, plainly:**
+
+- **Claude only, and that means the Anthropic cloud.** It's built on the Claude Agent SDK, so it's
+  bound to it. It uses your existing Claude CLI login (Pro/Max) — no API key, no separate bill,
+  no middleman — but the inference is not on your hardware. **Local model support (ollama /
+  llama.cpp) is the contribution I'd most like help with**, and I know exactly which crowd to ask.
+- **LAN-only, and "auth" is not real auth.** Admin = whoever is on localhost (checked by real
+  socket IP, not a spoofable `X-Forwarded-For`); LAN users request access by name and wait for
+  approval. Fine behind your own firewall. **Do not expose this to the internet.** Proper auth is
+  on the wanted list.
+- **No Docker image yet.** It's a Node ≥18 process; runs fine in a container if you build one, but
+  I haven't shipped an official image. If that's what's blocking you, say so and I'll prioritize it.
+- **Default knowledge profile assumes Flutter + Supabase** because that's my stack. It runs against
+  any repo (it reads that repo's `CLAUDE.md` and detects the stack), but the built-in profile won't
+  help you on Rails. Adding one is a single markdown file.
+
+MIT. I'd rather have ideas than stars — especially from anyone who has solved "let my team use an
+AI agent without giving them root."
+
+Code: https://github.com/Bow-T/bow-agent
+Landing page (has a clickable demo of the approval gate): https://bow-t.github.io/bow-agent/
+
+---
+
+### Lưu ý khi đăng r/selfhosted
+
+- **Comment đầu tiên gần như chắc chắn là:** *"this isn't self-hosted, it calls Anthropic"*. Bài
+  đã nói trước ở dòng 1 — nên trả lời bình tĩnh: *"đúng, agent + gate + dữ liệu là self-hosted,
+  inference thì không. Tôi ghi rõ ngay đầu bài. Local model là thứ tôi muốn có người giúp nhất."*
+  **Đừng phòng thủ, đừng cãi.**
+- Câu hỏi thứ hai chắc chắn là **Docker image / compose file**. Trả lời thật: chưa có. Hỏi ngược
+  họ cần compose kiểu gì — đó là research miễn phí.
+- Đừng dùng chữ "free tier", "sign up", "cloud" trong bài. Sub này dị ứng.
+
+---
+
+## 5. Reddit r/devtools
+
+**⚠️ ĐỌC RULE TRƯỚC KHI ĐĂNG.** r/devtools nhỏ và ít khắt khe hơn r/selfhosted, nhưng vẫn kiểm tra
+sidebar: có sub yêu cầu flair, có sub cấm link ở phần thân bài nếu tài khoản mới. Nếu bài bị auto-
+remove, nhắn modmail — thường được duyệt lại.
+
+**Góc tiếp cận của bài này:** không bán tool. Kể **bài toán thiết kế** (phân quyền khi cả team dùng
+chung một agent) và cách mình giải. Sub này quan tâm kiến trúc + DX hơn là feature list.
+
+**Tiêu đề:**
+```
+The permission problem nobody solves: what happens when your whole team shares one AI agent
+```
+
+**Nội dung:**
+
+---
+
+Every AI coding tool I've used is designed for exactly one user at exactly one trust level: you,
+with full access. That assumption quietly breaks the moment a second person on your team wants in.
+
+Concretely: my QA engineer asks me "why does checkout crash when the cart is empty?" I stop what
+I'm doing, read the code, answer her. Several times a day. I'm a human API to my own codebase, and
+the agent sitting right there could answer her in ten seconds.
+
+She can't use it, though. Giving her Claude Code means giving her an agent that edits files and
+runs shell commands in a repo I'm responsible for. She doesn't want that; she wants to *read* code
+and triage tickets. Same for my BA (writes specs), my tech lead (reviews PRs), my contractor
+(writes real code, but I'm not giving him unreviewed write access).
+
+Four people, four different slices of permission. The tool has one setting: root.
+
+**The design constraint I set myself:** exactly one place in the code decides what is allowed, and
+nothing routes around it. If a security model has two entry points, it has zero.
+
+**What I built.** One agent process on my machine. Everyone else reaches it over LAN. The whole
+thing turns on a single function — the Agent SDK's `canUseTool` hook:
+
+- **Reads pass through.** grep, read, list, `git status`, running tests. No prompt, no friction.
+  This matters for DX: a gate that interrupts you 40 times an hour is a gate you turn off.
+- **Every write stops.** File edit, shell command with side effects, Jira comment, `execute_sql`.
+  It shows the diff and waits for a human click.
+- **On top of the same gate: role policies.** A QC agent isn't *told* not to edit code — the edit
+  tools aren't in its toolset. A BA agent is hard-denied on source paths and can only write
+  `docs/` and `*.md`. Capability, not instruction.
+
+Auditing the whole safety model means reading one file. That was the point.
+
+**Two design details that cost me the most time**, and are the reason I'm posting here rather than
+just linking a repo:
+
+1. **Deny-listing `Edit`/`Write` is theater.** An agent with `Bash` and a denied `Edit` tool will
+   cheerfully reach for `sed -i`, `patch`, or `git apply`. Any in-place file mutation has to route
+   through the *same* gate, or the gate is decorative. Same for MCP writes — an `execute_sql` that
+   says `DROP TABLE` must not be auto-approvable, even for admin.
+2. **"Admin = localhost" must mean the real socket IP.** My first version trusted
+   `X-Forwarded-For`, which a LAN client sets to whatever it likes. That's a one-line privilege
+   escalation. It now reads `req.socket.remoteAddress`; the header is display-only.
+
+Both were bugs in my own code before they were features. Posting them because they're the parts
+someone else building this would step on.
+
+**Six role modes**, each on its own port, all runnable simultaneously: QC (read + Jira triage), BA
+(docs + Jira, source hard-denied), Reviewer (review + approve PRs, can't merge or push), Collab
+(contractor writes code, but *every* write including git pops an approval card on my screen and
+waits), DevOps (infra files yes, app source no, deploy routed to admin), Dev (me, everything, still
+gated).
+
+Collab is the one I actually use. The contractor's agent writes a file, the card appears on *my*
+machine with the diff, nothing lands on disk until I click.
+
+**The obvious objection — "just use PRs":** for the contractor, fair, and I don't replace PRs. But
+a PR gates the *end state on a branch*. It doesn't see the shell commands the agent ran, the
+migration it applied, or the Jira comment it posted. And PRs do nothing for QC or BA — they don't
+open PRs; they need the agent constrained from the start, not reviewed after.
+
+**Limits, before anyone has to ask:**
+
+- **Claude only.** Built on the Claude Agent SDK, so it's bound to it. The gate itself isn't
+  model-specific — it could wrap another engine — but I built on what I use daily. This is the
+  contribution I'd most like help with.
+- **LAN-only, and it is not real auth.** Admin = localhost; LAN users request access by name.
+  Fine for one office. Don't put it on the internet.
+- **Default knowledge profile is Flutter + Supabase**, because that's my stack. Runs on any repo,
+  but the built-in profile won't help you on Rails. Adding one is a single markdown file.
+
+MIT, free, uses your existing Claude CLI login (no API key, no server of mine in the middle).
+
+Mostly I want to hear how other people solved this — if you've dealt with "let the team use an
+agent without handing them root," I'd take that over a star.
+
+https://github.com/Bow-T/bow-agent
+Landing page with a clickable approval gate: https://bow-t.github.io/bow-agent/
+
+---
+
+### Lưu ý khi đăng r/devtools
+
+- Câu hỏi khó nhất sẽ là **"sao không dùng git branch + PR?"** — đáp án đã soạn trong
+  `faq.md`, nhóm 1. Đọc lại trước khi đăng.
+- Sub này thích **kiến trúc**, không thích **feature list**. Ai hỏi sâu về `canUseTool` thì trả lời
+  kỹ, dẫn thẳng vào `src/core/runner.ts`. Đó là loại comment kéo bài lên.
+- Có thể bị so sánh với Cursor/Aider/Continue → đáp án ở `faq.md`. Nói thẳng: chúng giải bài toán
+  *"tôi code nhanh hơn"*, cái này giải *"QC của tôi dùng được agent"*.
+
+---
+
+## 📋 Nhắc chung trước khi đăng BẤT KỲ sub nào
+
+1. **Đọc rule của sub.** Mỗi sub một luật. r/ClaudeAI vừa gỡ bài vì tài khoản thiếu karma —
+   nội dung không hề sai. Kiểm tra: có cấm self-promotion không? Có yêu cầu ngưỡng karma /
+   tuổi tài khoản không? Có bắt buộc flair không? Có ngày riêng cho bài show-off không?
+2. **Mỗi sub một bài riêng.** Đừng copy-paste chung một bài. Cách nhanh nhất để ăn downvote và bị
+   mod xoá.
+3. **Đăng cách nhau vài ngày**, không đăng cùng lúc nhiều sub — Reddit coi đó là spam.
+4. **Ngồi canh 2–3 giờ đầu** trả lời comment. Sau đó bài chìm.
+5. **Không nhờ bạn bè upvote.** Reddit phát hiện được, chôn cả bài lẫn tài khoản.
+
+---
+
 ## ⚠️ ĐỪNG đăng r/LocalLLaMA
 
 Đó là cộng đồng chạy model **local / tự host**. bow-agent bắt buộc dùng **Claude cloud trả phí**.

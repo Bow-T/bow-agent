@@ -258,8 +258,12 @@ uses `/watch <url>` on its own (the skill's yt-dlp does the download).
 
 Every road to a WRITE operation passes through exactly one gate — `canUseTool` in `runner.ts`:
 
-1. **Read tools** (`Read/Grep/Glob` + the MCP read patterns) are in `allowedTools` → they run straight
-   through.
+1. **Read tools** (`Read/Grep/Glob` + the MCP read patterns) are auto-approved by a **PreToolUse hook**
+   (`buildReadAutoApproveHook`, `src/skills/hooks.ts`) — deliberately **not** via `allowedTools`, which is
+   left empty (see `runner.ts:344`). The reason: an entry in `allowedTools` is auto-approved *before*
+   `canUseTool` ever runs, so it **shadows the gate** and there is no way left to block a read of a
+   sensitive file. QC/Reviewer/DevOps go further and deliberately **exclude `Read`/`Grep`** from this hook,
+   so that `isSensitivePath` (blocking `.env`, `.ssh/`, `.git-credentials`, …) actually runs.
 2. **Safe Bash** (`SAFE_COMMANDS`: `flutter test/analyze`, `npm test`, `tsc --noEmit`, `git status/diff`,
    …) is auto-allowed — so running tests and verification doesn't pester the user.
 3. **Everything else** (Edit/Write, side-effecting Bash, MCP writes) → `onApproval`. A rejection returns
