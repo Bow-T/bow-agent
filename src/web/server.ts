@@ -1092,11 +1092,18 @@ app.get('/api/config', async (req, res) => {
   // Source bị khoá theo mode: QC → qcCwd, Reviewer → reviewerCwd, Collab → collabCwd, BA → baCwd,
   // DevOps → devopsCwd.
   const effectiveCwd = isQcMode ? qcCwd() : isReviewerMode ? reviewerCwd() : isCollabMode ? collabCwd() : isBaMode ? baCwd() : isDevOpsMode ? devopsCwd() : process.cwd();
-  // Cổng web LAN theo bản đang chạy (BOW_WEB_PORT: dev 5173 / qc 5174 / collab 5175 / ba 5176 /
-  // review 5177 / devops 5178).
-  const webPort = process.env.BOW_WEB_PORT || '5173';
-
+  // Cổng client LAN quảng bá cho đồng nghiệp. HAI kiến trúc:
+  //  - Dev (Vite): frontend chạy ở BOW_WEB_PORT (5173/5174…) và PROXY /api về backend qua
+  //    localhost → backend thấy mọi client là 127.0.0.1 (mất phân quyền IP). CHỈ dùng khi tự
+  //    phát triển trên máy mình (cần HMR), KHÔNG chia sẻ LAN.
+  //  - Share (BOW_SERVE_STATIC=true): backend TỰ phục vụ dist-web ở cổng PORT (4001…). Client
+  //    gọi /api same-origin → socket IP là IP LAN THẬT → getSocketIp phân quyền đúng, cổng
+  //    token/admin hoạt động. Đây là cổng an toàn để chia sẻ.
   const currentPort = Number(process.env.BOW_AGENT_PORT || '4000');
+  const webPort = process.env.BOW_SERVE_STATIC === 'true'
+    ? String(currentPort)
+    : (process.env.BOW_WEB_PORT || '5173');
+
   const modes = {
     dev: { repoName: '', defaultCwd: '' },
     qc: { repoName: '', defaultCwd: '' },
@@ -2107,18 +2114,31 @@ app.get('/api/chat/groups/:id/events', (req, res) => {
 });
 
 const PORT = Number(process.env.BOW_AGENT_PORT ?? 4000);
+const serveStatic = process.env.BOW_SERVE_STATIC === 'true';
 app.listen(PORT, () => {
   process.stdout.write(`\n🌐 bow-agent web API chạy tại http://localhost:${PORT}\n`);
-  if (isQcMode) {
-    process.stdout.write(`   ⚠️ QC MODE ĐANG BẬT (read-only + Skill + Jira) - CHỈ HỎI ĐÁP/CHẤM TICKET, KHÔNG SỬA SOURCE\n`);
-    process.stdout.write(`   Để chia sẻ với đồng nghiệp, chạy frontend bằng: npm run ui:web -- --host\n\n`);
-  } else if (isReviewerMode) {
-    process.stdout.write(`   ⚠️ REVIEWER MODE ĐANG BẬT (read-only + gh pr review) - REVIEW/COMMENT/APPROVE PR, KHÔNG SỬA CODE\n`);
-    process.stdout.write(`   Để chia sẻ với đồng nghiệp, chạy frontend bằng: npm run ui:web -- --host\n\n`);
-  } else if (isDevOpsMode) {
-    process.stdout.write(`   ⚠️ DEVOPS MODE ĐANG BẬT (ghi file hạ tầng + deploy treo admin duyệt) - KHÔNG SỬA SOURCE ỨNG DỤNG\n`);
-    process.stdout.write(`   Để chia sẻ với đồng nghiệp, chạy frontend bằng: npm run ui:web -- --host\n\n`);
+  const modeWarn = isQcMode
+    ? '   ⚠️ QC MODE ĐANG BẬT (read-only + Skill + Jira) - CHỈ HỎI ĐÁP/CHẤM TICKET, KHÔNG SỬA SOURCE\n'
+    : isReviewerMode
+      ? '   ⚠️ REVIEWER MODE ĐANG BẬT (read-only + gh pr review) - REVIEW/COMMENT/APPROVE PR, KHÔNG SỬA CODE\n'
+      : isCollabMode
+        ? '   ⚠️ COLLAB MODE ĐANG BẬT (CTV code, mọi ghi phải admin duyệt từ xa)\n'
+        : isBaMode
+          ? '   ⚠️ BA MODE ĐANG BẬT (ghi tài liệu + Jira, DENY source/DB/deploy)\n'
+          : isDevOpsMode
+            ? '   ⚠️ DEVOPS MODE ĐANG BẬT (ghi file hạ tầng + deploy treo admin duyệt) - KHÔNG SỬA SOURCE ỨNG DỤNG\n'
+            : '';
+  if (modeWarn) process.stdout.write(modeWarn);
+  if (serveStatic) {
+    // Chia sẻ LAN AN TOÀN: frontend phục vụ ngay trên cổng này, client vào thẳng (không
+    // Vite proxy) → phân quyền theo IP thật hoạt động. Đưa các URL LAN dưới đây cho đồng nghiệp.
+    const ips = getLocalIps();
+    process.stdout.write('   ✅ Chia sẻ LAN — đưa đồng nghiệp một trong các URL sau:\n');
+    for (const ip of ips.length ? ips : ['localhost']) {
+      process.stdout.write(`      http://${ip}:${PORT}\n`);
+    }
+    process.stdout.write('\n');
   } else {
-    process.stdout.write(`   (dev frontend: chạy \`npm run ui:web\` rồi mở http://localhost:5173)\n\n`);
+    process.stdout.write(`   (dev frontend: chạy \`npm run ui:web\` rồi mở http://localhost:${process.env.BOW_WEB_PORT || 5173})\n\n`);
   }
 });

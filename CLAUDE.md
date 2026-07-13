@@ -31,14 +31,23 @@ trỏ vào `MEMORY.md`. Thư mục này được commit theo git để đồng b
 
 ## Mode web (6 mode, cổng riêng, chạy song song)
 
-| Mode | Script | API/Web | Quyền |
-| ---- | ------ | ------- | ----- |
-| **Dev** | `npm run ui` | 4000/5173 | Admin (localhost) full; non-admin LAN bị ép `plan` |
-| **QC** | `npm run ui:qc:share` | 4001/5174 | Read-only source + tool **Skill** (qc-triage) + **Jira** read/write; whitelist tool đọc, ép Sonnet, cho QC |
-| **Collab** | `npm run ui:collab` | 4002/5175 | CTV code như dev; **mọi ghi (kể cả Git) phải admin duyệt từ xa** |
-| **BA** | `npm run ui:ba` | 4003/5176 | Ghi TÀI LIỆU (`docs/`, `*.md`) + full Jira; DENY cứng source/DB/deploy |
-| **Reviewer** | `npm run ui:review:share` | 4004/5177 | Read-only code + review PR (`git/gh diff`) + comment/approve PR (`gh pr comment`/`gh pr review`) + test + Jira đọc; DENY sửa code/merge/push |
-| **DevOps** | `npm run ui:devops:share` | 4005/5178 | Ghi FILE HẠ TẦNG (Dockerfile, compose, `.github/workflows/*`, `*.tf/*.hcl`, k8s/Helm) + docs; DENY cứng source ứng dụng; deploy/apply **treo admin duyệt** (như Collab) |
+| Mode | Script | Cổng client | Quyền |
+| ---- | ------ | ----------- | ----- |
+| **Dev** | `npm run ui` | 5173 (Vite) | Admin (localhost) full; non-admin LAN bị ép `plan` |
+| **QC** | `npm run ui:qc:share` | **4001** | Read-only source + tool **Skill** (qc-triage) + **Jira** read/write; whitelist tool đọc, ép Sonnet, cho QC |
+| **Collab** | `npm run ui:collab` | **4002** | CTV code như dev; **mọi ghi (kể cả Git) phải admin duyệt từ xa** |
+| **BA** | `npm run ui:ba` | **4003** | Ghi TÀI LIỆU (`docs/`, `*.md`) + full Jira; DENY cứng source/DB/deploy |
+| **Reviewer** | `npm run ui:review:share` | **4004** | Read-only code + review PR (`git/gh diff`) + comment/approve PR (`gh pr comment`/`gh pr review`) + test + Jira đọc; DENY sửa code/merge/push |
+| **DevOps** | `npm run ui:devops:share` | **4005** | Ghi FILE HẠ TẦNG (Dockerfile, compose, `.github/workflows/*`, `*.tf/*.hcl`, k8s/Helm) + docs; DENY cứng source ứng dụng; deploy/apply **treo admin duyệt** (như Collab) |
+
+> **CỔNG AN TOÀN CHIA SẺ LAN — không dùng Vite proxy.** Các mode chia sẻ (QC/Collab/BA/
+> Reviewer/DevOps) chạy `BOW_SERVE_STATIC=true`: backend TỰ phục vụ `dist-web` ngay trên
+> cổng API (4001…), client vào thẳng cổng đó. **KHÔNG** còn Vite ở giữa. Lý do: Vite proxy
+> `/api` về backend qua `localhost` (`xfwd` bị bỏ qua) nên backend thấy MỌI client LAN là
+> `127.0.0.1` → ai cũng thành admin, mất sạch phân quyền IP + cổng token. Đi thẳng cổng API,
+> `req.socket.remoteAddress` là IP LAN THẬT → `getSocketIp`/`isAdminReq` phân quyền đúng.
+> URL admin đưa cho đồng nghiệp = `lanUrls` (đã trỏ cổng API). **Đừng** chuyển các mode này
+> về `vite --host`. Mode **Dev** vẫn dùng Vite (HMR) vì chỉ admin tự chạy local, không chia sẻ.
 
 Policy nằm trong các khối `isQcMode`/`isReviewerMode`/`isCollabMode`/`isBaMode`/`isDevOpsMode` của
 `canUseTool` (`runner.ts`) + `checkReadonlyConfig`/`requireAdmin` ở `server.ts`. Admin = **socket IP

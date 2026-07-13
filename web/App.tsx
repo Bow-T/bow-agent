@@ -1245,7 +1245,7 @@ export function App() {
   const persistActiveConversation = async (
     convItems: ChatItem[],
     convId: string | null,
-  ): Promise<string | null> => {
+  ): Promise<string | null | 'forbidden'> => {
     // Không lưu cuộc trống (chưa có gì để nhớ).
     if (convItems.length === 0) return activeConvId;
     let id = activeConvId;
@@ -1264,7 +1264,12 @@ export function App() {
           cwd: cwd.trim(),
         }),
       });
-      // Lưu thất bại (backend từ chối) → báo cho caller biết để không dọn màn hình.
+      // 403 = activeConvId (sót trong localStorage) trỏ tới cuộc KHÔNG thuộc IP hiện tại —
+      // hay gặp ở QC/LAN khi IP đổi. Đây KHÔNG phải mất kết nối: dữ liệu vẫn còn, chỉ là
+      // không ghi đè được cuộc của người khác. Trả 'forbidden' để caller biết vẫn an toàn
+      // để bắt đầu cuộc mới (không chặn nút "Cuộc trò chuyện mới").
+      if (res.status === 403) return 'forbidden';
+      // Lưu thất bại khác (backend từ chối) → báo cho caller biết để không dọn màn hình.
       if (!res.ok) return null;
     } catch {
       // Lưu thất bại (mạng/đứt kết nối) → trả null, không chặn UI ở lượt auto-lưu.
@@ -2469,12 +2474,21 @@ export function App() {
   }
 
   /**
-   * Mở cửa sổ xác nhận xóa chat (không xóa ngay). Cho bấm CẢ KHI agent đang chạy —
-   * lúc đó xác nhận sẽ dừng phiên rồi mới xóa (xem confirmClearChat). Chỉ chặn khi
-   * chat hoàn toàn trống và không có gì đang chạy (không có gì để xóa).
+   * Bấm "Cuộc trò chuyện mới". Cho bấm CẢ KHI agent đang chạy — lúc đó xác nhận sẽ dừng
+   * phiên rồi mới dọn (xem confirmClearChat).
+   *
+   * Khung chat trống: KHÔNG có gì để mất → không cần modal.
+   *  - Nếu đang GẮN một cuộc cũ (activeConvId/conversationId còn sót — vd vừa mở cuộc cũ
+   *    rồi xoá hết, hoặc state sót từ localStorage): reset THẲNG về cuộc mới. Đây là ca
+   *    "nút không phản ứng" mà QC gặp — trước đây return im lặng nên tưởng nút hỏng.
+   *  - Nếu đã hoàn toàn mới (không gắn cuộc nào): đã là trạng thái mong muốn, bỏ qua êm.
+   * Có nội dung hoặc đang chạy → mở modal xác nhận (tránh mất dữ liệu / cắt phiên nhầm).
    */
   function clearChat() {
-    if (!items.length && !running) return;
+    if (!items.length && !running) {
+      if (activeConvId || conversationId) resetToNewConversation();
+      return;
+    }
     setConfirmClearOpen(true);
   }
 
@@ -2496,15 +2510,27 @@ export function App() {
       }
     }
     // Lưu chốt cuộc hiện tại lần cuối (auto-lưu có thể chưa kịp chạy debounce).
-    // CHỈ dọn màn hình khi lưu thành công — nếu lưu lỗi, giữ nguyên tin nhắn để
-    // người dùng không mất dữ liệu, và báo cho họ biết.
+    // CHỈ chặn dọn màn hình khi MẤT KẾT NỐI thật (savedId === null) — giữ nguyên tin
+    // nhắn để không mất dữ liệu. Nếu là 'forbidden' (activeConvId sót trỏ tới cuộc của
+    // người khác — hay gặp ở QC/LAN khi IP đổi), KHÔNG chặn: đây chính là lúc người dùng
+    // muốn rời cuộc đó, cứ tạo cuộc mới bình thường (setActiveConvId(null) bên dưới bỏ id sót).
     if (items.length > 0) {
       const savedId = await persistActiveConversation(items, conversationId);
-      if (!savedId) {
+      if (savedId === null) {
         addItem('error', 'Không lưu được cuộc trò chuyện hiện tại (mất kết nối tới máy chủ). Đã giữ nguyên tin nhắn — hãy thử lại khi có kết nối để tránh mất dữ liệu.');
         return;
       }
     }
+    resetToNewConversation();
+  }
+
+  /**
+   * Dọn sạch mọi state về CUỘC MỚI HOÀN TOÀN: bỏ items/pending/questions, bỏ session +
+   * activeConvId/conversationId sót (để lượt kế tạo bản ghi mới), reset context window +
+   * xoá localStorage liên quan. Tách riêng để clearChat (ca trống) và confirmClearChat
+   * (ca có nội dung, sau khi đã lưu chốt) dùng chung.
+   */
+  function resetToNewConversation() {
     setItems([]);
     setPending([]);
     setQuestions([]);
@@ -4293,7 +4319,10 @@ export function App() {
             <button
               className="btn clear-chat"
               onClick={clearChat}
-              disabled={!running && !items.length}
+              // Bật khi: đang chạy, có nội dung, HOẶC đang gắn một cuộc (activeConvId/
+              // conversationId) — kể cả khi khung đã trống (để "rời" cuộc cũ đang xem).
+              // Chỉ tắt khi đã là cuộc mới trống hoàn toàn (bấm cũng chẳng làm gì).
+              disabled={!running && !items.length && !activeConvId && !conversationId}
               title="Bắt đầu cuộc trò chuyện mới — cuộc hiện tại vẫn được lưu vào Lịch sử (mở lại được). Dừng agent nếu đang chạy."
             >
               <Icon name="newChat" size={15} /> Cuộc trò chuyện mới
