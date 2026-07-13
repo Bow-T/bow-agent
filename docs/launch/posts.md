@@ -2,13 +2,76 @@
 
 > Giọng: ngắn, thẳng, không hoa mỹ. Kể vấn đề trước, tool sau. Thừa nhận hạn chế
 > trước khi người khác chỉ ra — trên HN/Reddit, thành thật ăn điểm hơn hoàn hảo.
->
-> **Thứ tự đăng:** r/ClaudeAI → cộng đồng VN → Show HN (HN chỉ cho một cơ hội,
-> để dành cho bản README đã mài qua feedback).
 
 ---
 
-## 1. Reddit r/ClaudeAI — ĐĂNG TRƯỚC
+## ⚠️ CẬP NHẬT: r/ClaudeAI đã chặn bài (13/07/2026)
+
+Bot kiểm duyệt gỡ bài khỏi feed. **Không phải vì nội dung** — bot nói rõ *"Your Showcase
+project DOES meet minimum requirements"*. Lý do: **tài khoản chưa đủ karma** để đăng bài
+Showcase riêng.
+
+Bài bị gỡ gần như ngay: 0 star, không referrer từ Reddit. Coi như chưa đăng, không mất gì.
+
+**Thứ tự đăng mới:**
+
+1. **Megathread r/ClaudeAI** (mục 0 bên dưới) — tốn 2 phút, nhưng đừng kỳ vọng: comment
+   lẫn giữa hàng chục dự án, traffic thấp.
+2. **Cộng đồng VN** (mục 2) — không rào cản, cùng múi giờ nên trả lời comment được ngay.
+3. **Show HN** (mục 3) — **HN KHÔNG có ngưỡng karma.** Tài khoản mới đăng bình thường.
+   Đây giờ là kênh chính, không phải kênh cuối.
+
+Muốn đăng bài riêng lên r/ClaudeAI sau này thì phải nuôi karma trước: comment hữu ích ở
+các sub khác vài tuần.
+
+---
+
+## 0. Megathread r/ClaudeAI (bản rút gọn — đăng dạng COMMENT)
+
+Link: https://www.reddit.com/r/ClaudeAI/comments/1sly3jm/built_with_claude_project_showcase_megathread/
+
+Comment nên ngắn hơn bài đăng nhiều — người ta lướt megathread rất nhanh.
+
+---
+
+**bow-agent — share one Claude agent with your team, behind an approval gate**
+
+I use Claude Code daily. The problem wasn't the model — it was everyone else on my team.
+
+My QA engineer keeps asking me "why does checkout crash when the cart is empty?" and I keep
+being a human API to my own codebase. She could just ask the agent — but giving her Claude Code
+means giving her an agent that edits files and runs shell commands in a repo I'm responsible
+for.
+
+So: one agent on my machine, everyone else reaches it through a permission gate.
+
+Reads run free. Every **write** stops — file edits, side-effecting shell, Jira comments, SQL —
+shows the diff, and waits for a human. One gate, no bypass.
+
+Six role modes, each on its own port, all runnable at once:
+
+- **QC** — read source, triage Jira. Can't touch code.
+- **BA** — write docs, full Jira. Source/DB/deploy hard-denied.
+- **Reviewer** — review + approve PRs. Can't edit or merge.
+- **Collab** — a contractor writes code, but *every* write (including git) pops an approval card
+  **on my screen**, with the diff, and waits.
+- **DevOps** — infra files yes, app source no.
+- **Dev** — me, everything, still with approval cards.
+
+Built on the Claude Agent SDK, uses your existing Claude CLI login — no API key, no extra bill.
+
+**Limits, up front:** Claude only (SDK-bound). LAN-only sharing, and "auth" is basically
+"admin = localhost" — fine for an office, not for the internet. Default knowledge profile
+assumes Flutter + Supabase because that's my stack.
+
+MIT. I'd rather have ideas than stars.
+
+GitHub: https://github.com/Bow-T/bow-agent
+Landing (with a clickable approval gate): https://bow-t.github.io/bow-agent/
+
+---
+
+## 1. Reddit r/ClaudeAI — bài đăng riêng (BỊ CHẶN KARMA — để dành khi đủ karma)
 
 **Tiêu đề:**
 ```
