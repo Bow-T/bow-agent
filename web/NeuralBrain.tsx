@@ -457,16 +457,16 @@ export const NeuralBrain = forwardRef<NeuralBrainHandle, {
   const stepsRef = useRef(steps);
   const selRef = useRef(selectedId);
   const themeRef = useRef(theme);
-  // Key theme|accent để draw biết khi nào cần đọc lại token --brass. Không đọc trong useEffect
-  // vì effect của component con chạy TRƯỚC effect cha (App set data-accent lên <html>) → đọc
-  // trễ 1 nhịp, galaxy kẹt màu cũ. Đọc ngay trong draw, cache theo key này, luôn đúng.
-  const accentKeyRef = useRef('');
+  // Màu accent (--brass) đọc từ CSS, cache trong ref để draw dùng mỗi frame không phải gọi
+  // getComputedStyle (đắt). KHÔNG cache theo key `${theme}|${accent}`: prop đổi trong thân
+  // render CHẠY TRƯỚC effect cha (App set data-accent lên <html>) → đọc --brass trúng màu CŨ
+  // rồi kẹt lại. Thay vào đó một MutationObserver bám data-accent/data-theme trên <html>: khi
+  // attribute THỰC SỰ đổi trên DOM (effect cha đã chạy) mới đọc lại → luôn đúng, không nhấp nháy.
   const accentRGBRef = useRef(readAccentRGB());
   activeRef.current = active;
   stepsRef.current = steps;
   selRef.current = selectedId;
   themeRef.current = theme;
-  accentKeyRef.current = `${theme ?? ''}|${accent ?? ''}`;
 
   const hitsRef = useRef<{ id: string; x: number; y: number; r: number }[]>([]);
   const [hoverId, setHoverId] = useState<string | null>(null);
@@ -495,6 +495,20 @@ export const NeuralBrain = forwardRef<NeuralBrainHandle, {
     },
   }), []);
 
+  // Đồng bộ màu accent với galaxy: bám data-accent/data-theme trên <html> bằng MutationObserver.
+  // App đổi màu nhấn = set/gỡ 2 attribute này (trong useEffect, tức SAU render con) → observer
+  // bắn đúng thời điểm --brass đã đổi, đọc lại token. Đọc thêm 1 lần ngay khi mount phòng khi
+  // attribute đã có sẵn trước lúc observer gắn. `theme`/`accent` prop chỉ còn để re-chạy effect
+  // này (App có thể render lại mà không đụng attribute — vẫn an toàn vì đọc lại là idempotent).
+  useEffect(() => {
+    const html = document.documentElement;
+    const sync = () => { accentRGBRef.current = readAccentRGB(); };
+    sync();
+    const mo = new MutationObserver(sync);
+    mo.observe(html, { attributes: true, attributeFilter: ['data-accent', 'data-theme'] });
+    return () => mo.disconnect();
+  }, [theme, accent]);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -506,7 +520,6 @@ export const NeuralBrain = forwardRef<NeuralBrainHandle, {
     let raf = 0;
     let t = 0;
     let lastT = t; // dùng để tính dt cho sao băng (độc lập tốc độ khung)
-    let lastAccentKey = ''; // theme|accent lần đọc token gần nhất — đọc lại --brass khi đổi
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
 
     const resize = () => {
@@ -613,41 +626,26 @@ export const NeuralBrain = forwardRef<NeuralBrainHandle, {
       const st = stepsRef.current;
       const sel = selRef.current;
       const theme = themeRef.current;
-      // Nền SÁNG gồm 'light' (giấy da) và 'brutal' (kem brutalism). 'dark'/'blueprint' là nền tối.
-      const isLight = theme === 'light' || theme === 'brutal';
-      const isBlueprint = theme === 'blueprint';
-      const isBrutal = theme === 'brutal';
-      // Đọc lại token --brass chỉ khi theme/accent đổi (getComputedStyle đắt, không gọi mỗi frame).
-      if (accentKeyRef.current !== lastAccentKey) {
-        lastAccentKey = accentKeyRef.current;
-        accentRGBRef.current = readAccentRGB();
-      }
+      // Hai theme thật: 'brutal' (kem) → nền SÁNG, galaxy vẽ bằng mực; 'newsprint' → viewport
+      // ĐEN mực (khối ảnh báo in đảo) → render TỐI (hạt trắng cộng sáng). isLight = nhánh nền
+      // sáng, dùng khắp draw để rẽ màu/blend mode. accentRGB đọc từ ref (đồng bộ qua observer).
+      const isLight = theme === 'brutal';
       const accentRGB = accentRGBRef.current; // "r, g, b" — màu nhấn người dùng chọn
 
       ctx.clearRect(0, 0, W, H);
-      
+
       // Deep space radial background — thích ứng theo theme
       const bg = ctx.createRadialGradient(W * 0.5, H * 0.5, 0, W * 0.5, H * 0.5, Math.max(W, H) * 0.7);
-      if (isBrutal) {
+      if (isLight) {
         // Neo Brutalism: nền KEM phẳng, gần như đơn sắc (brutalism ít chiều sâu gradient).
         bg.addColorStop(0, '#f2ecdd');   // Kem sáng ở tâm
         bg.addColorStop(0.5, '#eae4d3'); // Kem
         bg.addColorStop(1, '#e1dac6');   // Sạm rất nhẹ ở rìa
-      } else if (isLight) {
-        // Light theme: nền GIẤY DA ấm, đồng bộ với vỏ observatory (bản đồ sao mực trên giấy).
-        bg.addColorStop(0, '#efe8d7');   // Giấy sáng ở tâm
-        bg.addColorStop(0.5, '#e4dcc7'); // Giấy da
-        bg.addColorStop(1, '#d7ceb4');   // Sạm dần ở rìa
-      } else if (isBlueprint) {
-        // Blueprint theme: nền chàm-xanh sâu (giấy cyanotype), đồng bộ với vỏ bản vẽ.
-        bg.addColorStop(0, '#0b2246');   // Chàm sáng ở tâm
-        bg.addColorStop(0.5, '#071733');
-        bg.addColorStop(1, '#040e21');   // Chàm sạm ở rìa
       } else {
-        // Dark theme: nền vũ trụ sâu thẳm
-        bg.addColorStop(0, '#04091a');
-        bg.addColorStop(0.5, '#02040b');
-        bg.addColorStop(1, '#000002');
+        // Newsprint: viewport panel ĐEN mực (khối ảnh báo in đảo) — grayscale, không sắc màu.
+        bg.addColorStop(0, '#1c1c1c');   // Xám mực sáng ở tâm
+        bg.addColorStop(0.5, '#111111');
+        bg.addColorStop(1, '#0a0a0a');   // Đen mực ở rìa
       }
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, W, H);

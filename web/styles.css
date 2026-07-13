@@ -1,52 +1,19 @@
 /*
- * bow-agent · "STAR ATLAS / OBSERVATORY".
- * Vỏ = bảng điều khiển đài quan sát: mực đêm + giấy da + đồng thau/hổ phách.
- * Viewport galaxy = màn hình kính thiên văn (luôn tối). Chi tiết thủ công:
- * khung kép lồng trong, kẻ tóc graticule, hạt film, nhãn small-caps Space Mono,
- * toạ độ RA/DEC, đồng hồ UTC. Bo góc ~2px, không viên thuốc, không shadow mềm.
+ * bow-agent · "NEO-BRUTALISM" (2 theme: sáng kem + tối than).
+ * Neo-brutalism (designprompts.dev): khối phẳng đục, viền DÀY, bóng CỨNG (hard shadow, không
+ * blur), góc VUÔNG, khối accent PASTEL tươi. 3 trục nhận diện: viền dày, bóng cứng, khối phẳng.
+ * Không hạt film, không kính mờ, không quầng glow — brutalism là phẳng & thô.
+ *   • brutal (mặc định) : nền KEM, chữ/viền/bóng ĐEN.
+ *   • dark              : nền THAN, chữ/viền/bóng TRẮNG NGÀ (đảo tối, giữ nguyên chất poster).
+ * Palette accent pastel dùng chung cho cả 2 theme: vàng/hồng/lam/lục/cam/tím.
  *
  * Type: Space Grotesk (UI/heading) + Space Mono (nhãn/số liệu/mono).
  */
 
-/* ───────────────────────────  Tokens · Day chart (light)  ─────────────────────────── */
-:root,
-[data-theme='light'] {
-  color-scheme: light;
-
-  --bg: #e7e0cf;          /* giấy da */
-  --surface: #f1ebdb;     /* thẻ giấy sáng */
-  --surface-2: #e0d8c3;   /* inset */
-  --surface-3: #d5ccb2;
-
-  --ink: #211c16;         /* mực nâu-đen */
-  --ink-2: #5c5241;       /* phụ */
-  --muted: #8c8168;       /* mờ */
-
-  --brass: #935f12;       /* đồng thau — accent chính (đọc rõ trên giấy) */
-  --brass-bright: #b0791f;/* fill / hover */
-  --brass-soft: rgba(147, 95, 18, 0.1);
-  --on-brass: #f4eede;    /* chữ trên nền brass */
-
-  --teal: #1b6b63;        /* trạng thái "live" */
-  --danger: #a5321d;      /* đỏ oxit */
-  --danger-soft: rgba(165, 50, 29, 0.1);
-
-  --hairline: rgba(33, 28, 22, 0.18);   /* kẻ chính */
-  --hairline-2: rgba(33, 28, 22, 0.1);  /* khung lồng */
-  --graticule: rgba(33, 28, 22, 0.07);  /* crosshair mờ */
-
-  /* chiều sâu: lưới blueprint, quầng sáng môi trường, kính mờ, bóng */
-  --grid: rgba(33, 28, 22, 0.05);
-  --glow-a: rgba(147, 95, 18, 0.1);
-  --glow-b: rgba(27, 107, 99, 0.07);
-  --glass: 86%;
-  --highlight: rgba(255, 255, 255, 0.6);
-  --depth: 0 12px 44px -14px rgba(33, 28, 22, 0.2), 0 2px 8px -4px rgba(33, 28, 22, 0.12);
-  --viewport-bg: #e4dcc7;
-  --viewport-glow: 0 0 40px -18px rgba(147, 95, 18, 0.22);
-
-  /* hạt film — chấm đen alpha thấp trên giấy */
-  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.07 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+/* ───────────────────────────  Tokens THỰC SỰ chung (mọi phong cách kế thừa)  ─────────────────────────── */
+:root {
+  --danger: #ff5a5a;
+  --danger-soft: rgba(255, 90, 90, 0.22);
 
   /* back-compat cho style inline trong TSX */
   --outline: var(--hairline);
@@ -54,10 +21,6 @@
   --red: var(--danger);
   --text: var(--ink);
   --text-2: var(--ink-2);
-  --bd-thin: 1px;
-
-  --r: 2px;
-  --r-lg: 3px;
 
   --sans: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --mono: 'Space Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -67,310 +30,173 @@
   --med: 220ms var(--ease);
 }
 
-/* ───────────────────────────  Tokens · Night observatory (dark)  ─────────────────────────── */
-[data-theme='dark'] {
-  color-scheme: dark;
-
-  --bg: #0b0e12;          /* mực đêm hơi ngả lam */
-  --surface: #12161c;
-  --surface-2: #171c23;
-  --surface-3: #1f252e;
-
-  --ink: #e7dfcc;         /* chữ xương */
-  --ink-2: #a79e88;
-  --muted: #6e685a;
-
-  --brass: #d6a441;       /* đồng thau sáng trên nền tối */
-  --brass-bright: #e6b857;
-  --brass-soft: rgba(214, 164, 65, 0.14);
-  --on-brass: #14100a;
-
-  --teal: #45b3a6;
-  --danger: #d9603f;
-  --danger-soft: rgba(217, 96, 63, 0.14);
-
-  --hairline: rgba(231, 223, 204, 0.13);
-  --hairline-2: rgba(231, 223, 204, 0.07);
-  --graticule: rgba(231, 223, 204, 0.06);
-
-  /* chiều sâu (đêm): quầng sáng nebula, kính mờ sâu, bóng đổ mềm */
-  --grid: rgba(231, 223, 204, 0.045);
-  --glow-a: rgba(214, 164, 65, 0.15);
-  --glow-b: rgba(69, 179, 166, 0.13);
-  --glass: 78%;
-  --highlight: rgba(231, 223, 204, 0.07);
-  --depth: 0 24px 64px -18px rgba(0, 0, 0, 0.72), 0 4px 16px -8px rgba(0, 0, 0, 0.5);
-  --viewport-bg: #05070c;
-  --viewport-glow: 0 0 60px -12px rgba(69, 179, 166, 0.5);
-
-  /* hạt film — chấm sáng alpha thấp trên mực */
-  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-}
-
-/* ───────────────────────────  Tokens · Blueprint (bản vẽ kỹ thuật)  ───────────────────────────
- * Theme thứ 3: nền chàm-xanh đậm như giấy blueprint, đường nét cyan sáng — kiểu bản vẽ
- * cyanotype của kỹ sư. Vẫn là nền TỐI (cùng họ với dark: galaxy giữ nền vũ trụ), nhưng đổi
- * hẳn sắc sang lam-chàm + accent cyan thay cho đồng thau. Giữ đúng chất Star Atlas: khung
- * kép, kẻ tóc graticule, nhãn small-caps — chỉ đổi bảng màu và độ đậm graticule (rõ hơn để
- * ra chất "lưới bản vẽ"). */
-[data-theme='blueprint'] {
-  color-scheme: dark;
-
-  --bg: #0a1f3c;          /* chàm blueprint đậm */
-  --surface: #0e2a4f;
-  --surface-2: #123258;
-  --surface-3: #173c66;
-
-  --ink: #dce9fb;         /* chữ trắng ngả lam (mực trắng trên bản vẽ) */
-  --ink-2: #94b4dd;
-  --muted: #5b7aa6;
-
-  --brass: #4fc3f7;       /* cyan sáng — nét vẽ trên nền chàm */
-  --brass-bright: #7ad4fa;
-  --brass-soft: rgba(79, 195, 247, 0.15);
-  --on-brass: #05233f;
-
-  --teal: #4dd0c4;
-  --danger: #ff8a80;
-  --danger-soft: rgba(255, 138, 128, 0.15);
-
-  /* graticule rõ hơn 2 theme kia → ra chất "lưới kẻ ô bản vẽ kỹ thuật" */
-  --hairline: rgba(180, 210, 250, 0.2);
-  --hairline-2: rgba(180, 210, 250, 0.11);
-  --graticule: rgba(150, 190, 245, 0.12);
-
-  --grid: rgba(150, 190, 245, 0.09);
-  --glow-a: rgba(79, 195, 247, 0.18);
-  --glow-b: rgba(77, 208, 196, 0.13);
-  --glass: 80%;
-  --highlight: rgba(200, 225, 255, 0.09);
-  --depth: 0 24px 64px -18px rgba(0, 12, 30, 0.75), 0 4px 16px -8px rgba(0, 8, 22, 0.55);
-  --viewport-bg: #061630;
-  --viewport-glow: 0 0 60px -12px rgba(79, 195, 247, 0.45);
-
-  /* hạt film — chấm sáng ngả lam trên nền chàm */
-  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.7 0 0 0 0 0.85 0 0 0 0 1 0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-}
-
-/* ───────────────────────────  Tokens · Neo Brutalism (khối phẳng, viền đen, bóng cứng)  ───────────────────────────
- * Theme thứ 4 — NGHỊCH hẳn chất Star Atlas mềm mại: nền kem chói, chữ đen tuyền, accent
- * vàng bão hòa cao. Đặc trưng brutalism ghi đè 3 trục:
- *   • góc VUÔNG   → --r / --r-lg = 0
- *   • viền ĐEN DÀY → --hairline = đen đặc, --bd-thin = 2px (mọi `border: var(--bd-thin) solid var(--hairline)` dày lên)
- *   • bóng CỨNG   → --depth = offset đặc, KHÔNG blur, KHÔNG spread âm (hard drop shadow)
- * Không hạt film, không quầng glow mờ (glow-a/b về gần trong suốt) — brutalism là phẳng, thô. */
+/* ══════════════════════════════════════════════════════════════════════════════════════
+ * PHONG CÁCH 1 · NEO BRUTALISM — palette CHÍNH THỨC designprompts.dev/neo-brutalism:
+ *   • Background : #FFFDF5 (cream/off-white, giấy tái chế)
+ *   • Foreground : #000000 (ĐEN THUẦN — mọi chữ, MỌI viền, MỌI bóng; không xám)
+ *   • Accent     : #FF6B6B (hot red/coral — màu action CHÍNH)
+ *   • Secondary  : #FFD93D (vivid yellow)
+ *   • Muted      : #C4B5FD (soft violet)
+ *   • Text-on-accent : #FFFFFF (trắng trên khối coral/đen)
+ * Luật: không xám nhạt (black hoặc màu), tương phản cao, khối màu, viền dày + bóng cứng, góc vuông.
+ * ══════════════════════════════════════════════════════════════════════════════════════ */
+:root,
 [data-theme='brutal'] {
   color-scheme: light;
 
-  --bg: #fbf6e9;          /* kem chói (gần trắng, hơi ngả vàng như poster) */
-  --surface: #fffdf5;     /* thẻ trắng kem tinh */
-  --surface-2: #fdf3d6;   /* vàng kem rất nhạt cho inset */
-  --surface-3: #f9ead1;
+  --bg: #fffdf5;          /* cream/off-white (designprompts Background) */
+  --surface: #ffffff;     /* thẻ trắng tinh (contrast panel) */
+  --surface-2: #fff8dc;   /* vàng kem rất nhạt cho inset (ngả secondary) */
+  --surface-3: #fff3c4;
 
-  --ink: #0a0a0a;         /* đen tuyền */
-  --ink-2: #1a1a1a;       /* phụ vẫn rất đậm */
-  --muted: #4a4a4a;       /* mờ — nhưng brutalism ít dùng chữ xám nhạt */
+  --ink: #000000;         /* ĐEN THUẦN (chữ chính — designprompts Foreground) */
+  --ink-2: #000000;       /* brutalism không dùng xám → phụ vẫn đen */
+  --muted: #3a3a3a;       /* chỉ dùng cho chữ mờ tối thiểu (gần đen) */
 
-  --brass: #ffcf24;       /* vàng brutalist bão hòa cao (accent chính, như nền title mẫu) */
-  --brass-bright: #ffda52;
-  --brass-soft: rgba(255, 207, 36, 0.28);
-  --on-brass: #0a0a0a;    /* chữ ĐEN trên nút vàng (đúng chất brutalism) */
+  --brass: #ff6b6b;       /* HOT RED/CORAL — accent CHÍNH (designprompts Accent) */
+  --brass-bright: #ff8585;/* fill / hover */
+  --brass-soft: rgba(255, 107, 107, 0.28);
+  --on-brass: #ffffff;    /* chữ TRẮNG trên khối coral (designprompts) */
 
-  /* Bảng 3 màu NÓNG như mẫu poster: vàng (accent) + đỏ-hồng + tím lavender.
-   * teal → tím lavender, danger → đỏ-hồng coral. Cả hai đi kèm viền đen nên vẫn "đọc" tốt. */
-  --teal: #b8a4ff;        /* tím lavender (khối tím trong mẫu) */
-  --danger: #ff5a5a;      /* đỏ-hồng coral (marquee + khối vuông trong mẫu) */
-  --danger-soft: rgba(255, 90, 90, 0.22);
+  --teal: #c4b5fd;        /* soft violet (designprompts Muted — accent phụ) */
+  --danger: #1a1a1a;      /* nút hủy/stop = ĐEN (phân biệt với coral action); chữ trắng */
+  --danger-soft: rgba(0, 0, 0, 0.14);
 
-  /* viền đen đặc & DÀY — trục nhận diện chính của brutalism (mẫu dùng viền rất dày) */
-  --hairline: #0a0a0a;
-  --hairline-2: rgba(10, 10, 10, 0.6);
-  --graticule: rgba(10, 10, 10, 0.08);
-  --bd-thin: 3px;         /* viền dày hơn nữa cho ra chất poster */
+  --hairline: #000000;    /* viền ĐEN THUẦN */
+  --hairline-2: rgba(0, 0, 0, 0.6);
+  --graticule: rgba(0, 0, 0, 0.08);
 
-  /* nền CHẤM BI (dot grid) thay lưới kẻ ô — khớp mẫu. Tô ở --grid dưới dạng radial-gradient
-   * chấm đen; .app đọc --grid nên chỉ cần đổi token này + kiểu nền (xử lý ở block .app riêng). */
-  --grid: rgba(10, 10, 10, 0.42);
-  --glow-a: transparent;  /* không glow môi trường — bề mặt phẳng */
-  --glow-b: transparent;
+  --bd-thin: 3px;         /* viền DÀY cho ra chất poster */
   --glass: 100%;          /* không kính mờ — đục hoàn toàn */
+  --glow-a: transparent;  /* không glow môi trường — phẳng */
+  --glow-b: transparent;
   --highlight: transparent;
-  /* bóng CỨNG dày: offset 8px xuống-phải, đen đặc, KHÔNG blur (mẫu dùng bóng rất dày) */
-  --depth: 8px 8px 0 0 #0a0a0a;
-  --viewport-bg: #f2ecdb;
+  --grain: none;          /* không hạt film */
   --viewport-glow: none;
 
-  --grain: none;          /* không hạt film */
+  --grid: rgba(0, 0, 0, 0.42);          /* dot grid: chấm đen trên cream */
+  --depth: 8px 8px 0 0 #000000;         /* bóng CỨNG đen thuần, KHÔNG blur */
+  --viewport-bg: #fff8dc;
 
-  /* góc VUÔNG */
-  --r: 0px;
+  --r: 0px;               /* góc VUÔNG */
   --r-lg: 0px;
 }
 
-/* Nền CHẤM BI cho brutal: ghi đè background-image của .app (mặc định là hạt film + lưới kẻ).
- * Chấm tròn đen thưa trên nền kem — đúng dot grid của ảnh mẫu. */
-[data-theme='brutal'] .app {
+/* ══════════════════════════════════════════════════════════════════════════════════════
+ * PHONG CÁCH 2 · NEWSPRINT — palette CHÍNH THỨC designprompts.dev/newsprint:
+ *   • Background : #F9F9F7 (newsprint off-white — giấy báo ngả ấm, không trắng gắt)
+ *   • Foreground : #111111 (ink black — đen sâu, KHÔNG #000 thuần)
+ *   • Muted      : #E5E5E0 (divider grey)
+ *   • Accent     : #CC0000 (editorial red — dùng CỰC ÍT: breaking news, CTA, hover)
+ *   • Border     : #111111 (ink black)
+ * Đặc trưng: báo giấy editorial, font SERIF (Playfair heading + Lora body, Inter cho UI label);
+ * góc VUÔNG 0px; grid lines CELEBRATED (viền cột/section rõ); dot-grid 4×4 nền; FLAT không bóng
+ * (hover = hard offset shadow 4px); 99% đen-trắng, đỏ chấm phá. Editorial authority, nghiêm túc. */
+ /* ══════════════════════════════════════════════════════════════════════════════════════ */
+[data-theme='newsprint'] {
+  color-scheme: light;
+
+  --bg: #f9f9f7;          /* newsprint off-white (giấy báo ngả ấm) */
+  --surface: #ffffff;     /* thẻ trắng (cột báo nổi trên giấy) */
+  --surface-2: #f2f2ee;   /* inset ngả giấy */
+  --surface-3: #e8e8e2;
+
+  --ink: #111111;         /* ink black (không #000 thuần) */
+  --ink-2: #262626;
+  --muted: #6b6b66;       /* xám mực nhạt */
+
+  --brass: #cc0000;       /* EDITORIAL RED — accent chính, dùng cực ít */
+  --brass-bright: #e00000;/* fill / hover đỏ tươi hơn */
+  --brass-soft: rgba(204, 0, 0, 0.12);
+  --on-brass: #ffffff;    /* chữ trắng trên khối đỏ */
+
+  --teal: #111111;        /* accent phụ = ink (newsprint gần như không màu thứ 2) */
+  --danger: #cc0000;      /* nút hủy/lỗi = editorial red */
+  --danger-soft: rgba(204, 0, 0, 0.1);
+
+  --hairline: #111111;    /* viền INK — grid lines celebrated */
+  --hairline-2: #e5e5e0;  /* divider grey (kẻ phụ) */
+  --graticule: rgba(17, 17, 17, 0.06);
+
+  --bd-thin: 1px;         /* hairline 1px (section rule dày dùng riêng ở override) */
+  --glass: 100%;          /* đục — giấy phẳng */
+  --glow-a: transparent;
+  --glow-b: transparent;
+  --highlight: transparent;
+  --grain: none;
+  --viewport-glow: none;
+
+  --grid: rgba(17, 17, 17, 0.06);       /* dot-grid ink mờ */
+  --depth: none;          /* FLAT — không bóng (hover mới có hard offset) */
+  --viewport-bg: #111111; /* màn viewport ĐEN mực (khối ảnh báo in đảo) */
+
+  --r: 0px;               /* góc VUÔNG khắp nơi */
+  --r-lg: 0px;
+}
+
+/* Nền: brutal = chấm bi lớn; newsprint = dot-grid 4×4 ink (đúng SVG chính thức của họ). */
+.app {
   background-image: radial-gradient(var(--grid) 1.4px, transparent 1.6px);
   background-size: 22px 22px;
   background-position: 0 0;
 }
+[data-theme='newsprint'] .app {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4' viewBox='0 0 4 4'%3E%3Cpath fill='%23111111' fill-opacity='0.05' d='M1 3h1v1H1V3zm2-2h1v1H3V1z'%3E%3C/path%3E%3C/svg%3E");
+  background-size: 4px 4px;
+}
 
 /* ───────────────────────────  Accent · màu nhấn chọn ở header  ───────────────────────────
- * Nền sáng/tối (paper/night) GIỮ NGUYÊN — chỉ hoán màu nhấn (brass mặc định → hồng/lam/…).
- * Người dùng chọn 1 trong 7 swatch; App.tsx đặt <html data-accent="…">.
- * Mỗi accent khai báo 2 sắc độ: bản LIGHT (đậm hơn, đọc rõ trên giấy) và bản DARK (sáng
- * hơn để nổi trên mực đêm) — khớp cách --brass đổi giữa 2 theme gốc. Chỉ ghi đè 5 token
- * nhấn: --brass / --brass-bright / --brass-soft / --on-brass / --glow-a (quầng môi trường).
- * 'brass' không cần block riêng — đó là mặc định của :root/[data-theme]. */
+ * CHỈ áp cho phong cách BRUTAL (Newsprint khóa đỏ editorial + ink, dùng cực ít màu). Mỗi selector
+ * bọc :not([data-theme='newsprint']). Ghi đè --brass / --brass-bright / --brass-soft / --on-brass.
+ * Vàng #FFD93D + Tím #C4B5FD là màu chính thức designprompts (secondary + muted) → chữ ĐEN.
+ * Các màu đậm (lam/lá/hồng/cam) → chữ TRẮNG. 'brass' (coral #ff6b6b) = mặc định ở block brutal. */
 
-/* Bảng màu ĐÃ KIỂM ĐỊNH (dataviz palette): 6 hue categorical được validate bằng
- * scripts/validate_palette.js — đạt CVD-safe (worst adjacent ΔE ~29, phân biệt tốt cả
- * khi mù màu) và tương phản ≥3:1 với nền (đọc rõ khi làm màu chữ/nút). Bản LIGHT chọn cho
- * nền giấy #e7e0cf, bản DARK chọn cho nền đêm #0b0e12 — mỗi mode validate riêng, không
- * lật tự động. -bright/-soft/-glow suy ra từ hue chính; -on-brass là chữ tương phản trên nút. */
+/* ── Vàng (yellow) — secondary chính thức designprompts #FFD93D ── */
+:root:not([data-theme='newsprint'])[data-accent='blue'] {
+  --brass: #ffd93d;
+  --brass-bright: #ffe166;
+  --brass-soft: rgba(255, 217, 61, 0.32);
+  --on-brass: #000000;
+}
+
+/* ── Xanh lá (green) ── */
+:root:not([data-theme='newsprint'])[data-accent='teal'] {
+  --brass: #22c55e;
+  --brass-bright: #3dd674;
+  --brass-soft: rgba(34, 197, 94, 0.28);
+  --on-brass: #ffffff;
+}
+
+/* ── Tím (soft violet) — muted chính thức designprompts #C4B5FD ── */
+:root:not([data-theme='newsprint'])[data-accent='purple'] {
+  --brass: #c4b5fd;
+  --brass-bright: #d4c9fe;
+  --brass-soft: rgba(196, 181, 253, 0.34);
+  --on-brass: #000000;
+}
+
+/* ── Hồng (pink) ── */
+:root:not([data-theme='newsprint'])[data-accent='pink'] {
+  --brass: #ff6bb0;
+  --brass-bright: #ff8bc2;
+  --brass-soft: rgba(255, 107, 176, 0.28);
+  --on-brass: #ffffff;
+}
 
 /* ── Lam (blue) ── */
-[data-accent='blue'] {
-  --brass: #2a78d6;
-  --brass-bright: #3d87e0;
-  --brass-soft: rgba(42, 120, 214, 0.1);
-  --on-brass: #eef4fc;
-  --glow-a: rgba(42, 120, 214, 0.1);
-}
-[data-theme='dark'][data-accent='blue'],
-[data-theme='blueprint'][data-accent='blue'] {
-  --brass: #5c9fea;
-  --brass-bright: #78b1f0;
-  --brass-soft: rgba(92, 159, 234, 0.14);
-  --on-brass: #081524;
-  --glow-a: rgba(92, 159, 234, 0.14);
+:root:not([data-theme='newsprint'])[data-accent='red'] {
+  --brass: #3b82f6;
+  --brass-bright: #5c98f8;
+  --brass-soft: rgba(59, 130, 246, 0.28);
+  --on-brass: #ffffff;
 }
 
-/* ── Xanh vịt (teal) ── */
-[data-accent='teal'] {
-  --brass: #0a8a72;
-  --brass-bright: #0f9d82;
-  --brass-soft: rgba(10, 138, 114, 0.1);
-  --on-brass: #eaf6f3;
-  --glow-a: rgba(10, 138, 114, 0.1);
-}
-[data-theme='dark'][data-accent='teal'],
-[data-theme='blueprint'][data-accent='teal'] {
-  --brass: #3bb89d;
-  --brass-bright: #55c7af;
-  --brass-soft: rgba(59, 184, 157, 0.14);
-  --on-brass: #04211b;
-  --glow-a: rgba(59, 184, 157, 0.14);
-}
-
-/* ── Tím (violet) ── */
-[data-accent='purple'] {
-  --brass: #4a3aa7;
-  --brass-bright: #5a49bd;
-  --brass-soft: rgba(74, 58, 167, 0.1);
-  --on-brass: #efedf9;
-  --glow-a: rgba(74, 58, 167, 0.1);
-}
-[data-theme='dark'][data-accent='purple'],
-[data-theme='blueprint'][data-accent='purple'] {
-  --brass: #9085e9;
-  --brass-bright: #a49bef;
-  --brass-soft: rgba(144, 133, 233, 0.14);
-  --on-brass: #100a24;
-  --glow-a: rgba(144, 133, 233, 0.14);
-}
-
-/* ── Hồng (magenta) ── */
-[data-accent='pink'] {
-  --brass: #b13a68;
-  --brass-bright: #c44a79;
-  --brass-soft: rgba(177, 58, 104, 0.1);
-  --on-brass: #fbedf3;
-  --glow-a: rgba(177, 58, 104, 0.1);
-}
-[data-theme='dark'][data-accent='pink'],
-[data-theme='blueprint'][data-accent='pink'] {
-  --brass: #e084ac;
-  --brass-bright: #e89dbe;
-  --brass-soft: rgba(224, 132, 172, 0.14);
-  --on-brass: #260c17;
-  --glow-a: rgba(224, 132, 172, 0.14);
-}
-
-/* ── Đỏ (red) ── */
-[data-accent='red'] {
-  --brass: #c1443f;
-  --brass-bright: #d1544f;
-  --brass-soft: rgba(193, 68, 63, 0.1);
-  --on-brass: #fceeed;
-  --glow-a: rgba(193, 68, 63, 0.1);
-}
-[data-theme='dark'][data-accent='red'],
-[data-theme='blueprint'][data-accent='red'] {
-  --brass: #e66767;
-  --brass-bright: #ec8080;
-  --brass-soft: rgba(230, 103, 103, 0.14);
-  --on-brass: #260c0c;
-  --glow-a: rgba(230, 103, 103, 0.14);
-}
-
-/* ── Cam (orange) — lệch hẳn sang cam để không lẫn với đồng thau vàng ── */
-[data-accent='orange'] {
-  --brass: #c05a1a;
-  --brass-bright: #d16a24;
-  --brass-soft: rgba(192, 90, 26, 0.1);
-  --on-brass: #fbefe7;
-  --glow-a: rgba(192, 90, 26, 0.1);
-}
-[data-theme='dark'][data-accent='orange'],
-[data-theme='blueprint'][data-accent='orange'] {
-  --brass: #e88f4c;
-  --brass-bright: #efa367;
-  --brass-soft: rgba(232, 143, 76, 0.14);
-  --on-brass: #261307;
-  --glow-a: rgba(232, 143, 76, 0.14);
-}
-
-/* ── Nền nhuốm theo accent ──
- * Mọi accent (trừ brass mặc định) trộn NHẸ sắc accent vào token nền trung tính, để cả
- * không gian "ấm" về phía màu đã chọn mà vẫn giữ chất giấy da / mực đêm. Một luật chung
- * cho nền SÁNG + một cho nền TỐI — dùng var(--brass) (đã set ở block accent phía trên)
- * nên tự đúng hue cho từng màu; không phải lặp công thức ở 12 block. %-mix thấp = tinh tế.
- * --viewport-bg trộn ít hơn (màn kính thiên văn nên gần như trung tính). */
-[data-accent] {
-  --bg: color-mix(in srgb, var(--brass) 7%, #e7e0cf);
-  --surface: color-mix(in srgb, var(--brass) 6%, #f1ebdb);
-  --surface-2: color-mix(in srgb, var(--brass) 7%, #e0d8c3);
-  --surface-3: color-mix(in srgb, var(--brass) 8%, #d5ccb2);
-  --viewport-bg: color-mix(in srgb, var(--brass) 5%, #e4dcc7);
-}
-[data-theme='dark'][data-accent] {
-  --bg: color-mix(in srgb, var(--brass) 8%, #0b0e12);
-  --surface: color-mix(in srgb, var(--brass) 8%, #12161c);
-  --surface-2: color-mix(in srgb, var(--brass) 9%, #171c23);
-  --surface-3: color-mix(in srgb, var(--brass) 10%, #1f252e);
-  --viewport-bg: color-mix(in srgb, var(--brass) 6%, #05070c);
-}
-/* Blueprint: nhuốm accent vào nền CHÀM (không phải mực đen như dark). */
-[data-theme='blueprint'][data-accent] {
-  --bg: color-mix(in srgb, var(--brass) 8%, #0a1f3c);
-  --surface: color-mix(in srgb, var(--brass) 8%, #0e2a4f);
-  --surface-2: color-mix(in srgb, var(--brass) 9%, #123258);
-  --surface-3: color-mix(in srgb, var(--brass) 10%, #173c66);
-  --viewport-bg: color-mix(in srgb, var(--brass) 6%, #061630);
-}
-
-/* Neo Brutalism: dùng sắc LIGHT của accent (nền sáng), nhưng ÉP lại đúng chất brutalism:
- * chữ ĐEN trên mọi nút accent, soft đậm hơn, và giữ nguyên viền/bóng/glow của theme (không
- * nhuốm nền — brutalism ưa nền phẳng, khối accent tự nổi nhờ viền đen). Một luật cho MỌI màu. */
-[data-theme='brutal'][data-accent] {
-  --on-brass: #0a0a0a;
-  --brass-soft: color-mix(in srgb, var(--brass) 22%, transparent);
-  --glow-a: transparent;
-  --bg: color-mix(in srgb, var(--brass) 5%, #fbf6e9);
-  --surface: #fffdf5;
-  --surface-2: color-mix(in srgb, var(--brass) 8%, #fdf3d6);
-  --surface-3: color-mix(in srgb, var(--brass) 10%, #f9ead1);
+/* ── Cam (orange) ── */
+:root:not([data-theme='newsprint'])[data-accent='orange'] {
+  --brass: #ff9a3c;
+  --brass-bright: #ffb063;
+  --brass-soft: rgba(255, 154, 60, 0.28);
+  --on-brass: #000000;
 }
 
 /* ───────────────────────────  Base  ─────────────────────────── */
@@ -2397,6 +2223,24 @@ a { color: var(--brass); text-underline-offset: 2px; }
   border-left: 2px solid var(--brass);
 }
 
+/* Badge gọn cạnh selector Profile: tên profile repo + cỡ kiến thức nhồi vào agent. */
+.profile-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--on-brass);
+  background: var(--brass);
+  border: 1px solid var(--brass);
+  border-radius: 3px;
+  white-space: nowrap;
+  cursor: help;
+}
+.profile-badge strong { font-weight: 700; }
+
 .row { display: flex; gap: 8px; align-items: stretch; }
 
 /* cwd = TARGET */
@@ -2872,7 +2716,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 }
 
 /* ───────────────────────────  Neo Brutalism · tinh chỉnh "poster"  ───────────────────────────
- * Chỉ áp khi data-theme=brutal. Bắt vibe Neo Brutalism đích thực:
+ * Áp mặc định (theme duy nhất). Bắt vibe Neo Brutalism đích thực:
  * 1. Khối phẳng đục hoàn toàn (background solid), triệt tiêu các lớp glow/kính mờ/hạt film.
  * 2. Đường viền đen đặc và DÀY (3px) cho mọi cấu trúc phân mảnh (panel, container, card, button, input).
  * 3. Bóng đổ cứng (hard shadow) đen đặc lệch 6px - 8px, không nhạt nhòa, không mờ.
@@ -3131,12 +2975,12 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 }
 [data-theme='brutal'] .btn.stop,
 [data-theme='brutal'] .btn.deny {
-  background-color: var(--danger) !important;
+  background-color: var(--danger) !important;  /* đen — phân biệt với coral action */
   color: #ffffff !important;
 }
 [data-theme='brutal'] .btn.stop:hover:not(:disabled),
 [data-theme='brutal'] .btn.deny:hover:not(:disabled) {
-  background-color: #ff3b3b !important;
+  background-color: #000000 !important;
 }
 [data-theme='brutal'] .btn:not(.primary):not(.run):not(.allow):not(.stop):not(.deny),
 [data-theme='brutal'] .px-select-btn {
@@ -3212,4 +3056,203 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 }
 [data-theme='brutal'] a:hover {
   background-color: var(--brass-soft);
+}
+
+/* ───────────────  Neo Brutalism · STICKER decorative (badge sao ★ + shape)  ───────────────
+ * "Sticker/collage board" đặc trưng designprompts: các badge dán như sticker giấy, xoay nhẹ,
+ * khối vuông viền đen bóng cứng. Badge ★ ghim góc trên-phải panel chính (giống ảnh mẫu). Chỉ
+ * áp cho brutal — không hiện ở newsprint. Dùng ::after (::before của panel là double-frame/tắt). */
+
+/* Badge NGÔI SAO ★ — khối vuông coral, sao trắng, viền đen, bóng cứng, xoay 6°. Ghim góc TRÊN-PHẢI
+ * BÊN TRONG panel (panel có overflow:hidden nên không ló ra ngoài được — đặt sát mép trong). */
+[data-theme='brutal'] .sidebar-pipeline::after,
+[data-theme='brutal'] .chat-container::after {
+  content: '';
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 30;
+  width: 36px;
+  height: 36px;
+  background:
+    var(--brass)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23fff'%3E%3Cpath d='M12 2l2.9 6.6 7.1.6-5.4 4.7 1.7 7L12 17.8 5.7 21.5l1.7-7L2 9.8l7.1-.6z'/%3E%3C/svg%3E")
+    center / 20px 20px no-repeat;
+  border: 3px solid #000;
+  box-shadow: 3px 3px 0 0 #000;
+  transform: rotate(6deg);
+  pointer-events: none;
+}
+/* Badge trên chat lệch màu (vàng secondary) + xoay ngược để "collage" đa dạng. */
+[data-theme='brutal'] .chat-container::after {
+  background-color: #ffd93d;
+  transform: rotate(-8deg);
+}
+
+/* Shape TAM GIÁC nhỏ (sticker) — dán góc dưới-trái sidebar, coral viền đen. */
+[data-theme='brutal'] .sidebar-pipeline .sidebar-pipeline-title::before {
+  content: '';
+  width: 0;
+  height: 0;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-bottom: 12px solid var(--brass);
+  filter: drop-shadow(1.5px 1.5px 0 #000);
+  transform: rotate(-10deg);
+  flex-shrink: 0;
+  margin-right: 2px;
+}
+
+/* ═══════════════════════════════  Newsprint · tinh chỉnh "editorial báo giấy"  ═══════════════════════════════
+ * Chỉ áp khi data-theme=newsprint. Bắt vibe báo giấy:
+ * 1. Font SERIF: Playfair (brand/heading — high-contrast authoritative) + Lora (body); label Inter/mono in HOA.
+ * 2. Góc VUÔNG 0px. Grid lines CELEBRATED: viền ink rõ, HEAVY 3px bottom rule cho section (mép cột báo).
+ * 3. FLAT không bóng; HOVER = hard offset shadow 4px ink (đúng chính thức). Đỏ editorial dùng CỰC ÍT.
+ * 4. Nút chính = ĐEN mực invert; CTA-đỏ (stop/deny) = editorial red; secondary trắng viền đen.
+ * 5. Viewport panel ĐEN mực (khối ảnh báo in đảo) — điểm nhấn.
+ */
+
+/* Brand + heading = Playfair serif authoritative; label UI = mono in HOA spaced. */
+[data-theme='newsprint'] .brand-name {
+  font-family: 'Playfair Display', 'Times New Roman', serif;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+}
+[data-theme='newsprint'] .brand-tag {
+  color: var(--brass);   /* editorial red — điểm nhấn hiếm hoi */
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+}
+[data-theme='newsprint'] .sidebar-pipeline-title,
+[data-theme='newsprint'] .modal-header {
+  font-family: var(--mono);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--ink);
+}
+[data-theme='newsprint'] .md h1,
+[data-theme='newsprint'] .md h2,
+[data-theme='newsprint'] .md h3,
+[data-theme='newsprint'] .md h4 {
+  font-family: 'Playfair Display', 'Times New Roman', serif;
+  font-weight: 700;
+  letter-spacing: 0;
+  color: var(--ink);
+}
+/* Body văn bản (bong bóng agent, markdown) = Lora serif — đọc dài kiểu báo. */
+[data-theme='newsprint'] .bubble.agent .md,
+[data-theme='newsprint'] .md p,
+[data-theme='newsprint'] .md li { font-family: 'Lora', Georgia, serif; }
+
+/* Vùng chứa chính = trắng, viền 1px ink, HEAVY 3px bottom rule (mép cột báo), KHÔNG bóng. */
+[data-theme='newsprint'] .chat-container,
+[data-theme='newsprint'] .sidebar-pipeline,
+[data-theme='newsprint'] .modal-content,
+[data-theme='newsprint'] .pixel-panel {
+  border: 1px solid var(--hairline) !important;
+  border-bottom-width: 3px !important;   /* heavy section rule (editorial) */
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+[data-theme='newsprint'] .step-detail,
+[data-theme='newsprint'] .accent-menu,
+[data-theme='newsprint'] .lan-url-menu {
+  border: 1px solid var(--hairline) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+/* Viewport galaxy — panel ĐEN mực inverted (khối ảnh báo in), viền ink, vuông. */
+[data-theme='newsprint'] .neural-net-container {
+  border: 1px solid var(--hairline) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+[data-theme='newsprint'] .neural-net-container.is-live { border-color: var(--brass) !important; }
+[data-theme='newsprint'] .viewport-corner { border-color: #ffffff !important; }
+
+/* Bong bóng chat = viền ink, vuông. User thanh phải ĐỎ editorial (breaking-news accent). */
+[data-theme='newsprint'] .bubble.user {
+  background: var(--surface-2) !important;
+  border: 1px solid var(--hairline) !important;
+  border-right: 3px solid var(--brass) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  color: var(--ink) !important;
+}
+[data-theme='newsprint'] .bubble.user::before { color: var(--brass) !important; }
+[data-theme='newsprint'] .bubble.tool::before { color: var(--ink) !important; }
+[data-theme='newsprint'] .bubble.error {
+  border: 1px solid var(--brass) !important;
+  border-left: 3px solid var(--brass) !important;
+  border-radius: 0 !important;
+  color: var(--brass) !important;
+}
+
+/* Composer + input = viền ink vuông, focus viền đỏ editorial. */
+[data-theme='newsprint'] .composer-input,
+[data-theme='newsprint'] input,
+[data-theme='newsprint'] textarea,
+[data-theme='newsprint'] select {
+  background: var(--surface) !important;
+  border: 1px solid var(--hairline) !important;
+  border-radius: 0 !important;
+  color: var(--ink) !important;
+}
+[data-theme='newsprint'] .composer-input:focus-within,
+[data-theme='newsprint'] input:focus,
+[data-theme='newsprint'] textarea:focus,
+[data-theme='newsprint'] select:focus {
+  border-color: var(--brass) !important;
+  box-shadow: inset 0 0 0 1px var(--brass) !important;
+}
+
+/* Nút — vuông, label mono HOA, FLAT; hover = HARD OFFSET SHADOW 4px ink (đúng chính thức). */
+[data-theme='newsprint'] .btn,
+[data-theme='newsprint'] .px-select-btn {
+  border: 1px solid var(--hairline) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  font-family: var(--mono) !important;
+  font-weight: 700 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  transition: box-shadow var(--fast), transform var(--fast), background-color var(--fast), color var(--fast) !important;
+}
+[data-theme='newsprint'] .btn.run,
+[data-theme='newsprint'] .btn.allow,
+[data-theme='newsprint'] .btn.primary {
+  background: var(--ink) !important;     /* nút chính = ĐEN mực, chữ trắng */
+  color: #ffffff !important;
+  border-color: var(--ink) !important;
+}
+[data-theme='newsprint'] .btn.stop,
+[data-theme='newsprint'] .btn.deny {
+  background: var(--brass) !important;   /* CTA huỷ = editorial RED (điểm nhấn hiếm) */
+  color: #ffffff !important;
+  border-color: var(--brass) !important;
+}
+[data-theme='newsprint'] .btn:not(.primary):not(.run):not(.allow):not(.stop):not(.deny) {
+  background: #ffffff !important;        /* secondary: trắng viền ink */
+  color: var(--ink) !important;
+}
+[data-theme='newsprint'] .btn:hover:not(:disabled),
+[data-theme='newsprint'] .px-select-btn:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 4px 4px 0 0 var(--ink) !important;   /* hard offset shadow (chính thức) */
+}
+[data-theme='newsprint'] .btn:active:not(:disabled),
+[data-theme='newsprint'] .px-select-btn:active {
+  transform: translate(0, 0);
+  box-shadow: 0 0 0 0 var(--ink) !important;
+}
+
+/* Liên kết = ĐỎ editorial gạch chân (điểm nhấn hiếm). */
+[data-theme='newsprint'] a {
+  color: var(--brass) !important;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
 }

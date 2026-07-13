@@ -78,7 +78,7 @@ export function detectSource(cwd: string): DetectedSource {
       profile: genName,
       stack: 'generated',
       empty: false,
-      summary: `Dùng profile đã sinh cho repo này: ${genName}.`,
+      summary: `Profile repo: ${genName}`,
       profileChars,
     };
   }

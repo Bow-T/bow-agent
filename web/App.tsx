@@ -21,27 +21,28 @@ import type {
   WebEvent,
 } from './types.js';
 
-type Theme = 'light' | 'dark' | 'blueprint' | 'brutal';
+/** 2 phong cách UI: 'brutal' (Neo Brutalism, kem) + 'newsprint' (báo giấy editorial). */
+type Theme = 'brutal' | 'newsprint';
 
-/** Thứ tự xoay vòng khi bấm nút theme ở header: sáng → tối → blueprint → brutal → sáng. */
-const THEME_CYCLE: Theme[] = ['light', 'dark', 'blueprint', 'brutal'];
+/** Thứ tự xoay vòng khi bấm nút phong cách ở header: brutal → newsprint → brutal. */
+const THEME_CYCLE: Theme[] = ['brutal', 'newsprint'];
 
-/** Màu nhấn chọn ở header. 'brass' = mặc định (đồng thau), không đặt data-accent. */
+/** Màu nhấn chọn ở header. 'brass' = mặc định (coral #ff6b6b), không đặt data-accent. */
 type Accent = 'brass' | 'blue' | 'teal' | 'purple' | 'pink' | 'red' | 'orange';
 
 /**
- * 7 màu nhấn hiển thị thành swatch ở header — bảng đã kiểm định bằng dataviz palette
- * (CVD-safe, tương phản ≥3:1). `swatch` chỉ tô chấm màu trong picker (dùng sắc DARK cho
- * đẹp trên nút header tối); màu thật khi áp do CSS [data-accent] quyết định.
+ * 7 màu nhấn hiển thị thành swatch ở header — chỉ áp cho phong cách Neo Brutalism. `swatch`
+ * tô chấm màu trong picker (khớp đúng --brass mỗi accent trong CSS). Coral + vàng + tím là
+ * bộ màu chính thức designprompts.dev/neo-brutalism.
  */
 const ACCENTS: { id: Accent; label: string; swatch: string }[] = [
-  { id: 'brass', label: 'Đồng thau', swatch: '#d6a441' },
-  { id: 'blue', label: 'Lam', swatch: '#5c9fea' },
-  { id: 'teal', label: 'Xanh vịt', swatch: '#3bb89d' },
-  { id: 'purple', label: 'Tím', swatch: '#9085e9' },
-  { id: 'pink', label: 'Hồng', swatch: '#e084ac' },
-  { id: 'red', label: 'Đỏ', swatch: '#e66767' },
-  { id: 'orange', label: 'Cam', swatch: '#e88f4c' },
+  { id: 'brass', label: 'Coral', swatch: '#ff6b6b' },
+  { id: 'blue', label: 'Vàng', swatch: '#ffd93d' },
+  { id: 'teal', label: 'Xanh lá', swatch: '#22c55e' },
+  { id: 'purple', label: 'Tím', swatch: '#c4b5fd' },
+  { id: 'pink', label: 'Hồng', swatch: '#ff6bb0' },
+  { id: 'red', label: 'Lam', swatch: '#3b82f6' },
+  { id: 'orange', label: 'Cam', swatch: '#ff9a3c' },
 ];
 
 /** Một node trong Activity Log / Star Chart. `ops` & `approval` phục vụ khung chi tiết mở rộng. */
@@ -1734,11 +1735,10 @@ export function App() {
 
   const [detected, setDetected] = useState<DetectedSource | null>(null);
   const [theme, setTheme] = useState<Theme>(() => {
-    // Lần đầu: 'brutal' (Neo Brutalism) — khớp với landing page bow-t.github.io/bow-agent.
-    // Máy đặt nền tối thì vẫn tôn trọng, cho 'dark'. Sau đó ưu tiên lựa chọn user đã lưu.
+    // Lần đầu: 'brutal' (Neo Brutalism) — khớp landing page. Sau đó ưu tiên lựa chọn user đã lưu.
     const saved = localStorage.getItem('bow-theme') as Theme | null;
     if (saved && THEME_CYCLE.includes(saved)) return saved;
-    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'brutal';
+    return 'brutal';
   });
   // Màu nhấn (accent) — độc lập với sáng/tối. 'brass' = mặc định (không đặt data-accent).
   const [accent, setAccent] = useState<Accent>(() => {
@@ -1849,14 +1849,15 @@ export function App() {
   // dựng lại từ event, tránh nhân đôi mà vẫn giữ lịch sử các task cũ phía trên.
   const sessionBaselineRef = useRef(0);
 
-  // Áp theme lên <html data-theme> và nhớ vào localStorage.
+  // Áp theme lên <html data-theme> và nhớ vào localStorage. 'brutal' cũng set tường minh để
+  // đồng bộ với block CSS [data-theme='brutal'] (dù :root đã là brutal — set cho chắc & rõ ý).
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('bow-theme', theme);
   }, [theme]);
 
   // Áp màu nhấn lên <html data-accent> và nhớ. 'brass' = mặc định → gỡ attribute
-  // để :root/[data-theme] chi phối (không cần block CSS riêng cho brass).
+  // để :root chi phối (không cần block CSS riêng cho brass).
   useEffect(() => {
     if (accent === 'brass') document.documentElement.removeAttribute('data-accent');
     else document.documentElement.setAttribute('data-accent', accent);
@@ -3238,37 +3239,17 @@ export function App() {
               )}
             </button>
           )}
-          <AccentPicker value={accent} options={ACCENTS} onChange={(id) => setAccent(id as Accent)} />
+          {/* Accent chỉ áp cho Neo Brutalism — Newsprint dùng cực ít màu (đỏ editorial) nên ẩn picker. */}
+          {theme !== 'newsprint' && (
+            <AccentPicker value={accent} options={ACCENTS} onChange={(id) => setAccent(id as Accent)} />
+          )}
           <button
             className="theme-btn"
-            title={(() => {
-              // Nút hiển thị icon + đích của theme KẾ TIẾP trong vòng lặp (light→dark→blueprint→…).
-              const next = THEME_CYCLE[(THEME_CYCLE.indexOf(theme) + 1) % THEME_CYCLE.length];
-              const label: Record<Theme, string> = {
-                light: 'giao diện sáng (giấy da)',
-                dark: 'giao diện tối (đài quan sát)',
-                blueprint: 'giao diện blueprint (bản vẽ)',
-                brutal: 'giao diện Neo Brutalism (khối phẳng)',
-              };
-              return `Chuyển sang ${label[next]}`;
-            })()}
-            onClick={() =>
-              setTheme(THEME_CYCLE[(THEME_CYCLE.indexOf(theme) + 1) % THEME_CYCLE.length])
-            }
+            title={theme === 'brutal' ? 'Chuyển sang phong cách Newsprint (báo giấy editorial)' : 'Chuyển sang phong cách Neo Brutalism (kem)'}
+            onClick={() => setTheme(THEME_CYCLE[(THEME_CYCLE.indexOf(theme) + 1) % THEME_CYCLE.length])}
           >
-            <Icon
-              name={(() => {
-                const next = THEME_CYCLE[(THEME_CYCLE.indexOf(theme) + 1) % THEME_CYCLE.length];
-                return next === 'light'
-                  ? 'sun'
-                  : next === 'dark'
-                    ? 'moon'
-                    : next === 'blueprint'
-                      ? 'blueprint'
-                      : 'brutal';
-              })()}
-              size={18}
-            />
+            {/* Icon = đích của lần bấm kế tiếp: brutal → hiện tờ báo (sẽ sang newsprint) & ngược lại. */}
+            <Icon name={theme === 'brutal' ? 'newsprint' : 'brutal'} size={18} />
           </button>
         </div>
       </header>
@@ -4122,6 +4103,14 @@ export function App() {
               ]}
             />
           </label>
+          {/* Badge gọn: khi AUTO & có profile repo, hiện tên + cỡ kiến thức nhồi vào agent.
+              Trước đây thông tin này nằm ở dòng .detected dài dòng → dời vào hàng Agent. */}
+          {!readonlyShare && profile === 'auto' && detected && detected.profile !== 'none' && (
+            <span className="profile-badge" title={`Kiến thức repo này (~${detected.profileChars ? Math.round(detected.profileChars / 1000) + 'K' : '?'} ký tự) được nhồi sẵn vào agent khi PROFILE: AUTO`}>
+              <strong>{detected.profile}</strong>
+              {detected.profileChars ? ` ~${Math.round(detected.profileChars / 1000)}K` : ''}
+            </span>
+          )}
           {/* Đội agent (multi-agent): bật reviewer/verifier/impact-scout. Tốn token hơn nên
               CHỈ admin thấy/dùng; server cũng cưỡng chế lại (allowSubagents = isAdmin && …). */}
           {cfg?.isAdmin && (
@@ -4185,22 +4174,14 @@ export function App() {
           </div>
         </div>
 
-        {!readonlyShare && detected && (
+        {/* Chỉ hiện khi repo CHƯA có profile — để mời "Sinh profile cho repo này".
+            Khi đã có profile, thông tin tên+cỡ đã nằm gọn ở badge Hàng Agent nên ẩn hẳn dòng này. */}
+        {!readonlyShare && detected && detected.profile === 'none' && !detected.empty && (
           <div className="detected">
             <Icon name="search" size={14} /> {detected.summary}
-            {profile === 'auto' && detected.profile !== 'none' && (
-              <span className="profile-badge" title="Kiến thức repo này được nhồi sẵn vào agent khi để PROFILE: AUTO">
-                {' '}→ profile: <strong>{detected.profile}</strong>
-                {detected.profileChars
-                  ? ` (~${Math.round(detected.profileChars / 1000)}K ký tự nhồi vào agent)`
-                  : ''}
-              </span>
-            )}
-            {detected.profile === 'none' && !detected.empty && (
-              <button className="btn genprof" disabled={running} onClick={genProfile}>
-                Sinh profile cho repo này
-              </button>
-            )}
+            <button className="btn genprof" disabled={running} onClick={genProfile}>
+              Sinh profile cho repo này
+            </button>
           </div>
         )}
 

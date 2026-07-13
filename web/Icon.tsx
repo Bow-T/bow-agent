@@ -15,9 +15,7 @@ import {
   Book1,
   Global,
   Wifi,
-  Moon,
-  Sun1,
-  Ruler,
+  Category,
   CloseSquare,
   TickCircle,
   CloseCircle,
@@ -61,7 +59,6 @@ import {
   Broom,
   Gps,
   Refresh2,
-  Box1,
   type Icon as IconType,
 } from 'iconsax-react';
 
@@ -79,10 +76,8 @@ const ICONS: Record<string, IconType> = {
   // Header / toolbar
   lang: Global,
   mcp: Wifi,
-  moon: Moon,
-  sun: Sun1,
-  blueprint: Ruler,
-  brutal: Box1,
+  newsprint: DocumentText,  // phong cách Newsprint (trang báo giấy)
+  brutal: Category,         // phong cách Neo Brutalism (khối lưới)
   close: CloseSquare,
   // Pipeline / trạng thái
   pending: Timer1,
