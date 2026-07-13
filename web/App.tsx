@@ -1734,10 +1734,11 @@ export function App() {
 
   const [detected, setDetected] = useState<DetectedSource | null>(null);
   const [theme, setTheme] = useState<Theme>(() => {
-    // Lần đầu: theo cài đặt hệ điều hành. Sau đó ưu tiên lựa chọn user đã lưu.
+    // Lần đầu: 'brutal' (Neo Brutalism) — khớp với landing page bow-t.github.io/bow-agent.
+    // Máy đặt nền tối thì vẫn tôn trọng, cho 'dark'. Sau đó ưu tiên lựa chọn user đã lưu.
     const saved = localStorage.getItem('bow-theme') as Theme | null;
     if (saved && THEME_CYCLE.includes(saved)) return saved;
-    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'brutal';
   });
   // Màu nhấn (accent) — độc lập với sáng/tối. 'brass' = mặc định (không đặt data-accent).
   const [accent, setAccent] = useState<Accent>(() => {
