@@ -2850,6 +2850,22 @@ export function App() {
   const readonlyShare = qc || reviewer;
   const repoLabel = readonlyShare ? localQcRepoLabel : (cwdRepoLabel || '(chưa chọn)');
 
+  // Lúc mở/reload web, trong khi chờ /api/access/status trả về (gateState==='checking'),
+  // hiện màn LOADING mượt thay vì nhảy thẳng cái card "Yêu cầu truy cập" 🔒 — với admin/
+  // localhost (đa số) nó chỉ thoáng qua nên không được giật/nhấp nháy khó chịu.
+  if (gateState === 'checking') {
+    return (
+      <div className="app-splash" role="status" aria-label="Đang tải">
+        <div className="app-splash-orb">
+          <span className="app-splash-spinner" />
+          <span className="app-splash-emoji">🏹</span>
+        </div>
+        <div className="app-splash-title">bow</div>
+        <div className="app-splash-hint">Đang khởi động…</div>
+      </div>
+    );
+  }
+
   // Cổng duyệt truy cập theo tên: chưa được vào thì chặn toàn bộ app bằng màn khoá.
   if (gateState !== 'open') {
     return (
@@ -2865,9 +2881,6 @@ export function App() {
                 ? 'Bị từ chối'
                 : 'Yêu cầu truy cập'}
           </h1>
-          {gateState === 'checking' && (
-            <p className="access-gate-hint">Đang kiểm tra quyền truy cập…</p>
-          )}
           {gateState === 'pending' && (
             <p className="access-gate-hint" style={{ color: 'var(--brass)' }}>
               Yêu cầu của bạn đã gửi đi. Vui lòng đợi Admin phê duyệt để tiếp tục...
