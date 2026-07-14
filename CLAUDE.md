@@ -25,6 +25,8 @@ trỏ vào `MEMORY.md`. Thư mục này được commit theo git để đồng b
 - **Khung rỗng.** KHÔNG còn thư mục `skills/` (data) trong repo. Skill tải từ GitHub lúc
   runtime, cache ở `~/.bow/skills-cache/`, trải vào `.claude/skills/` (gitignore). `src/skills/*.ts`
   là **code module** (đừng nhầm với data đã gỡ). Registry allowlist ở `~/.bow-agent/registry.json`.
+  Repo đích đã fork/đổi tên skill bundle thành bộ riêng thì khai `.claude/skills/.bow-skip`
+  (mỗi dòng một tên) — bow bỏ qua VÀ tự dọn bản đã lỡ trải, tránh nhân đôi mô tả skill tốn token.
 - **MCP tách khỏi profile.** MCP chung lưu `~/.bow-agent/mcp.json` (không phải `~/.claude.json`).
 - **Cổng an toàn duy nhất** = `canUseTool` trong `runner.ts`: tool đọc + Bash an toàn tự chạy;
   mọi thao tác GHI qua cổng duyệt. Đừng mở đường ghi vòng qua cổng này.

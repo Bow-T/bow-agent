@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 /**
@@ -44,6 +44,29 @@ export function skillSignature(dir: string): string {
   return files.join('|');
 }
 
+/**
+ * Tên file SKIP-LIST trong `.claude/skills/` của repo đích: mỗi dòng một TÊN skill mà repo
+ * KHÔNG muốn bow trải (repo đã fork/đổi tên thành skill riêng — vd bundle `bow-ui` đã thành
+ * `octopus-ui` commit trong repo, trải thêm bản bundle chỉ nhân đôi mô tả skill trong system
+ * prompt, tốn token mỗi lượt gọi). Dòng bắt đầu `#` là comment. File này commit theo repo đích
+ * để mọi máy cùng hiệu lực.
+ */
+export const SKIP_FILE = '.bow-skip';
+
+/** Đọc skip-list của repo đích (Set tên skill). Thiếu file/không đọc được → Set rỗng. */
+function loadSkipList(skillsRoot: string): Set<string> {
+  try {
+    return new Set(
+      readFileSync(join(skillsRoot, SKIP_FILE), 'utf8')
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0 && !l.startsWith('#')),
+    );
+  } catch {
+    return new Set();
+  }
+}
+
 /** Copy đệ quy một thư mục (ghi đè file đích). */
 export function copyDir(src: string, dst: string): void {
   mkdirSync(dst, { recursive: true });
@@ -63,6 +86,9 @@ export function copyDir(src: string, dst: string): void {
  * - KHÔNG đụng skill người dùng tự đặt: chỉ ghi vào thư mục do CHÍNH ta trải (nhận diện qua
  *   file STAMP tương ứng). Nếu `<cwd>/.claude/skills/<name>` đã có mà KHÔNG có STAMP → coi là
  *   của người dùng, tôn trọng, không ghi đè.
+ * - TÔN TRỌNG skip-list `.bow-skip` (xem SKIP_FILE): tên có trong đó thì KHÔNG trải; nếu ta
+ *   từng trải trước khi repo khai skip (dir mang đúng STAMP của ta) thì DỌN luôn — tự lành
+ *   trên mọi máy đã lỡ trải bản trùng. Dir không stamp (của người dùng) không bao giờ bị xóa.
  * - Chỉ copy lại khi chữ ký nguồn đổi (nâng cấp skill) — tránh ghi đĩa thừa mỗi lần chạy.
  *
  * `stamp` là tên file marker phân biệt nguồn (mỗi nguồn một STAMP để không đá nhau khi trùng
@@ -83,11 +109,24 @@ export function deploySkillsFrom(srcRoot: string, cwd: string, stamp: string, re
     return [];
   }
 
+  const skillsRoot = join(resolve(cwd), '.claude', 'skills');
+  const skip = loadSkipList(skillsRoot);
+
   const deployed: string[] = [];
   for (const name of names) {
     const src = join(srcRoot, name);
-    const dst = join(resolve(cwd), '.claude', 'skills', name);
+    const dst = join(skillsRoot, name);
     const stampFile = join(dst, stamp);
+    if (skip.has(name)) {
+      // Repo khai không nhận skill này (đã có bản riêng). Bản ta từng trải → dọn; bản không
+      // stamp (người dùng tự đặt trùng tên) → để nguyên.
+      try {
+        if (existsSync(stampFile)) rmSync(dst, { recursive: true, force: true });
+      } catch {
+        // Dọn lỗi không kéo sập — lần chạy sau thử lại.
+      }
+      continue;
+    }
     try {
       const want = skillSignature(src);
       if (existsSync(dst)) {

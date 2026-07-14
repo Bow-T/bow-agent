@@ -84,6 +84,15 @@ The **registry** (allowlist of stacks + the core repo) lives **outside the repo*
 `~/.bow-agent/registry.json` — seeded on first run from the `DEFAULT_REGISTRY` constant in
 `src/config/env.ts`, overridable via the `BOW_REGISTRY` env var.
 
+**Skip-list `.bow-skip`.** A target repo that has forked/renamed bundle skills into its own
+committed set (e.g. the monorepo renamed `bow-ui` → `octopus-ui`) can opt out of individual
+bundle skills via `.claude/skills/.bow-skip` — one skill name per line, `#` for comments,
+committed with the repo so every machine honors it. `deploySkillsFrom` skips those names and
+**removes** a previously deployed copy (recognized by its STAMP) — self-healing on machines
+that already got the duplicate. Unstamped dirs (user-owned) are never deleted. Without this,
+duplicated skills double their descriptions in the system prompt of every API call — pure
+token waste — and the agent may pick the stale twin.
+
 > **No more code-bearing skills running over MCP.** The first version had a `bow-skills` server
 > (`src/skills/code.ts`) that ran real logic through `tool()`. It's gone — with a strong model, Bash
 > plus Claude Code's built-in tools are already enough; an in-house MCP server whose only job is to
