@@ -660,7 +660,7 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
    *  tên MCP tool dạng `mcp__<server>__<tool>` → khớp phần server chứa 'jira'. */
   const isJiraTool = (name: string): boolean => /^mcp__[^_]*jira[^_]*__/i.test(name);
 
-  const workdir = resolve(opts.cwd || process.cwd());
+  const workdir = resolve(opts.cwd || config.defaultCwd);
   // realpath của repo (theo symlink) — mốc so sánh THẬT để chống lách bằng symlink (M4).
   const realWorkdir = (() => {
     try { return realpathSync(workdir); } catch { return workdir; }
@@ -727,7 +727,7 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     // Multi-agent (opt-in): định nghĩa subagent để agent chính giao việc qua tool Agent.
     ...(subagents ? { agents: subagents } : {}),
     ...(hasHooks ? { hooks } : {}),
-    pathToClaudeCodeExecutable: findClaudeCodeExecutable(opts.cwd || process.cwd()),
+    pathToClaudeCodeExecutable: findClaudeCodeExecutable(opts.cwd || config.defaultCwd),
     ...(opts.abortSignal ? { abortController: toController(opts.abortSignal) } : {}),
     ...(hasMcp ? { mcpServers } : {}),
     // Đọc chéo read-only sang repo anh em trong cùng workspace: mở phạm vi Read/Grep/Glob
@@ -1476,7 +1476,7 @@ export async function fetchUsageSnapshot(model?: string): Promise<UsageSnapshot 
     options: {
       model: model ?? config.model,
       permissionMode: 'plan',
-      pathToClaudeCodeExecutable: findClaudeCodeExecutable(process.cwd()),
+      pathToClaudeCodeExecutable: findClaudeCodeExecutable(config.defaultCwd),
     },
   });
   try {

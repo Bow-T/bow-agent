@@ -1,7 +1,8 @@
 import 'dotenv/config';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+
 
 /**
  * Cấu hình đọc từ biến môi trường (.env). Đây là NGUỒN DUY NHẤT đọc process.env —
@@ -24,7 +25,10 @@ export function loadActiveProfileToken(): void {
     try {
       const token = readFileSync(tokenFile, 'utf8').trim();
       if (token) {
-        if (token.startsWith('sk-ant-')) {
+        // Phân loại token: CHỈ API key thật (`sk-ant-api…`) mới là ANTHROPIC_API_KEY.
+        // OAuth access token của login Claude Code có tiền tố `sk-ant-oat…` — phải đi qua
+        // CLAUDE_CODE_OAUTH_TOKEN, KHÔNG nhét vào ANTHROPIC_API_KEY (SDK sẽ hiểu sai auth).
+        if (token.startsWith('sk-ant-api')) {
           process.env.ANTHROPIC_API_KEY = token;
           delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
         } else {
@@ -194,4 +198,11 @@ export const config = {
    * (Jira đọc qua MCP jira của Claude Code — không cần JIRA_BASE_URL/EMAIL/TOKEN nữa.)
    */
   defaultProjectKey: optional('BOW_PROJECT_KEY') ?? optional('JIRA_PROJECT_KEY'),
+
+  /**
+   * Thư mục dự án mặc định nếu không truyền cwd. Mặc định là BOW_CWD từ env hoặc process.cwd().
+   */
+  get defaultCwd(): string {
+    return resolve(process.env.BOW_CWD || process.cwd());
+  },
 } as const;

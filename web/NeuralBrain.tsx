@@ -245,13 +245,13 @@ function readVarRGB(name: string, fallback: [number, number, number]): [number, 
  * --brass đổi theo theme + data-accent nên galaxy bám token này là đồng bộ với màu người dùng chọn.
  */
 function readAccentRGB(): string {
-  const [r, g, b] = readVarRGB('--brass', [214, 164, 65]); // fallback: brass dark
+  const [r, g, b] = readVarRGB('--brass', [255, 207, 36]); // fallback: vivid yellow (landing --yellow)
   return `${r}, ${g}, ${b}`;
 }
 
 /** Accent PHỤ (var(--teal)) — dùng cho lớp tinh vân thứ hai để nền có chiều sâu 2 màu. */
 function readAccent2RGB(): string {
-  const [r, g, b] = readVarRGB('--teal', [196, 181, 253]); // fallback: soft violet
+  const [r, g, b] = readVarRGB('--teal', [184, 164, 255]); // fallback: lavender (landing --lav)
   return `${r}, ${g}, ${b}`;
 }
 
@@ -265,13 +265,13 @@ export type StepPalette = Record<string, [number, number, number]>;
  */
 function readStepColors(): StepPalette {
   return {
-    start: readVarRGB('--step-start', [17, 17, 17]),
-    tool: readVarRGB('--step-tool', [255, 217, 61]),
-    result: readVarRGB('--step-result', [255, 225, 102]),
-    error: readVarRGB('--step-error', [255, 107, 107]),
-    approval: readVarRGB('--step-approval', [255, 217, 61]),
-    thinking: readVarRGB('--step-thinking', [196, 181, 253]),
-    default: readVarRGB('--step-default', [122, 122, 122]),
+    start: readVarRGB('--step-start', [10, 10, 10]),
+    tool: readVarRGB('--step-tool', [255, 207, 36]),
+    result: readVarRGB('--step-result', [255, 218, 82]),
+    error: readVarRGB('--step-error', [200, 30, 30]),
+    approval: readVarRGB('--step-approval', [255, 90, 90]),
+    thinking: readVarRGB('--step-thinking', [155, 124, 194]),
+    default: readVarRGB('--step-default', [74, 74, 74]),
   };
 }
 
@@ -354,8 +354,9 @@ function drawSpaceObject(
   // Lõi chói (tâm sao/pulsar) — cực trị của cùng trục sáng đó.
   const hot = isLight ? mix(color, BLACK, 0.75) : WHITE;
   const hotCSS = `rgb(${hot[0]}, ${hot[1]}, ${hot[2]})`;
-  // "Hư vô" (chân trời sự kiện hố đen, đuôi gradient) = màu nền của theme.
-  const voidCSS = isLight ? '#ffffff' : '#050505';
+  // "Hư vô" (chân trời sự kiện hố đen, đuôi gradient) = màu nền viewport của theme
+  // (khớp --viewport-bg: brutal = thẻ card kem, newsprint = khối đen mực).
+  const voidCSS = isLight ? '#fffdf5' : '#111111';
   const fadeRGBA = isLight ? 'rgba(255,255,255,0)' : 'rgba(0,0,0,0)';
 
   switch (type) {
@@ -710,23 +711,10 @@ export const NeuralBrain = forwardRef<NeuralBrainHandle, {
       const accent2RGB = accent2RGBRef.current; // accent phụ (--teal) — lớp tinh vân thứ hai
       const palette = stepColorsRef.current;  // màu 6 loại thiên thể (§Step colors trong CSS)
 
+      // KHÔNG vẽ nền — canvas trong suốt, nền lấy từ CSS var(--viewport-bg) của theme
+      // (.neural-net-container). Trước đây canvas tự tô một radial gradient sạm đè lên
+      // viewport → bản đồ sao lúc nào cũng có lớp "phủ tối" lệch khỏi nền kem chuẩn.
       ctx.clearRect(0, 0, W, H);
-
-      // Deep space radial background — thích ứng theo theme
-      const bg = ctx.createRadialGradient(W * 0.5, H * 0.5, 0, W * 0.5, H * 0.5, Math.max(W, H) * 0.7);
-      if (isLight) {
-        // Neo Brutalism: nền KEM phẳng, gần như đơn sắc (brutalism ít chiều sâu gradient).
-        bg.addColorStop(0, '#f2ecdd');   // Kem sáng ở tâm
-        bg.addColorStop(0.5, '#eae4d3'); // Kem
-        bg.addColorStop(1, '#e1dac6');   // Sạm rất nhẹ ở rìa
-      } else {
-        // Newsprint: viewport panel ĐEN mực (khối ảnh báo in đảo) — grayscale, không sắc màu.
-        bg.addColorStop(0, '#1c1c1c');   // Xám mực sáng ở tâm
-        bg.addColorStop(0.5, '#111111');
-        bg.addColorStop(1, '#0a0a0a');   // Đen mực ở rìa
-      }
-      ctx.fillStyle = bg;
-      ctx.fillRect(0, 0, W, H);
 
       const cx = W * 0.5;
       const cy = H * 0.5;
@@ -809,7 +797,7 @@ export const NeuralBrain = forwardRef<NeuralBrainHandle, {
           // Light: galaxy vẽ bằng mực (nền kem → sao phải là mực mới thấy). Dark: hạt nhuốm theo
           // token nó bám (accent chính / accent phụ), 'none' giữ trắng làm sao điểm xuyết.
           color: isLight
-            ? '28, 25, 23'
+            ? '10, 10, 10'
             : p.tint === 'accent'
               ? accentRGB
               : p.tint === 'accent2'
@@ -943,7 +931,7 @@ export const NeuralBrain = forwardRef<NeuralBrainHandle, {
       }
       const coreGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, currentScale * 0.16);
       // Nhân sáng trắng/mực ở tâm, quầng giữa & rìa nhuốm accent để đồng bộ màu người dùng chọn.
-      coreGrad.addColorStop(0, isLight ? 'rgba(28, 25, 23, 0.7)' : 'rgba(255, 255, 255, 0.95)');
+      coreGrad.addColorStop(0, isLight ? 'rgba(10, 10, 10, 0.7)' : 'rgba(255, 255, 255, 0.95)');
       coreGrad.addColorStop(0.2, isLight ? `rgba(${accentRGB}, 0.32)` : `rgba(${accentRGB}, 0.6)`);
       coreGrad.addColorStop(0.5, isLight ? `rgba(${accentRGB}, 0.1)` : `rgba(${accentRGB}, 0.18)`);
       coreGrad.addColorStop(1, isLight ? 'rgba(255, 255, 255, 0)' : 'rgba(0, 0, 0, 0)');
@@ -1028,7 +1016,7 @@ export const NeuralBrain = forwardRef<NeuralBrainHandle, {
           ctx.beginPath();
           ctx.arc(p.x, p.y, size + 6 * dpr * p.perspective, 0, Math.PI * 2);
           ctx.strokeStyle = isLight
-            ? `rgba(28, 25, 23, ${0.9 * p.perspective})`
+            ? `rgba(10, 10, 10, ${0.9 * p.perspective})`
             : `rgba(255, 255, 255, ${0.9 * p.perspective})`;
           ctx.lineWidth = 1.6 * dpr * p.perspective;
           ctx.stroke();
@@ -1094,7 +1082,7 @@ export const NeuralBrain = forwardRef<NeuralBrainHandle, {
           ctx.beginPath();
           roundRectPath(ctx, boxX, boxY, boxW, boxH, rad);
           ctx.fillStyle = isLight
-            ? `rgba(239, 232, 215, ${bgA})`
+            ? `rgba(255, 253, 245, ${bgA})`
             : `rgba(6, 10, 22, ${bgA})`;
           ctx.fill();
 
@@ -1117,7 +1105,7 @@ export const NeuralBrain = forwardRef<NeuralBrainHandle, {
           if (role) {
             ctx.font = `400 ${roleSize}px 'Space Mono', ui-monospace, monospace`;
             ctx.fillStyle = isLight
-              ? `rgba(92, 82, 65, ${0.85 * persp})`
+              ? `rgba(74, 74, 74, ${0.85 * persp})`
               : `rgba(200, 195, 180, ${0.7 * persp})`;
             ctx.fillText(role, p.x, boxY + padY + codeSize + lineGap);
           }

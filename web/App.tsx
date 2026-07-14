@@ -27,19 +27,19 @@ type Theme = 'brutal' | 'newsprint';
 /** Thứ tự xoay vòng khi bấm nút phong cách ở header: brutal → newsprint → brutal. */
 const THEME_CYCLE: Theme[] = ['brutal', 'newsprint'];
 
-/** Màu nhấn chọn ở header. 'brass' = mặc định (coral #ff6b6b), không đặt data-accent. */
+/** Màu nhấn chọn ở header. 'brass' = mặc định (vàng #ffcf24), không đặt data-accent. */
 type Accent = 'brass' | 'blue' | 'teal' | 'purple' | 'pink' | 'red' | 'orange';
 
 /**
  * 7 màu nhấn hiển thị thành swatch ở header — chỉ áp cho phong cách Neo Brutalism. `swatch`
- * tô chấm màu trong picker (khớp đúng --brass mỗi accent trong CSS). Coral + vàng + tím là
- * bộ màu chính thức designprompts.dev/neo-brutalism.
+ * tô chấm màu trong picker (khớp đúng --brass mỗi accent trong CSS). Vàng + coral + tím lấy
+ * đúng hex chuẩn của landing page (docs/index.html: --yellow / --coral / --lav).
  */
 const ACCENTS: { id: Accent; label: string; swatch: string }[] = [
-  { id: 'brass', label: 'Vàng', swatch: '#ffd93d' },
-  { id: 'blue', label: 'Coral', swatch: '#ff6b6b' },
+  { id: 'brass', label: 'Vàng', swatch: '#ffcf24' },
+  { id: 'blue', label: 'Coral', swatch: '#ff5a5a' },
   { id: 'teal', label: 'Xanh lá', swatch: '#22c55e' },
-  { id: 'purple', label: 'Tím', swatch: '#c4b5fd' },
+  { id: 'purple', label: 'Tím', swatch: '#b8a4ff' },
   { id: 'pink', label: 'Hồng', swatch: '#ff6bb0' },
   { id: 'red', label: 'Lam', swatch: '#3b82f6' },
   { id: 'orange', label: 'Cam', swatch: '#ff9a3c' },
@@ -282,21 +282,21 @@ export function App() {
     hasAuth?: boolean;
     tokenSet?: boolean;
     otherModes?: {
-      dev: { repoName: string; defaultCwd: string };
-      qc: { repoName: string; defaultCwd: string };
-      collab: { repoName: string; defaultCwd: string };
-      ba: { repoName: string; defaultCwd: string };
-      review: { repoName: string; defaultCwd: string };
-      devops: { repoName: string; defaultCwd: string };
+      dev: { repoName: string; defaultCwd: string; active?: boolean };
+      qc: { repoName: string; defaultCwd: string; active?: boolean };
+      collab: { repoName: string; defaultCwd: string; active?: boolean };
+      ba: { repoName: string; defaultCwd: string; active?: boolean };
+      review: { repoName: string; defaultCwd: string; active?: boolean };
+      devops: { repoName: string; defaultCwd: string; active?: boolean };
     };
   } | null>(null);
   const [otherModes, setOtherModes] = useState<{
-    dev: { repoName: string; defaultCwd: string };
-    qc: { repoName: string; defaultCwd: string };
-    collab: { repoName: string; defaultCwd: string };
-    ba: { repoName: string; defaultCwd: string };
-    review: { repoName: string; defaultCwd: string };
-    devops: { repoName: string; defaultCwd: string };
+    dev: { repoName: string; defaultCwd: string; active?: boolean };
+    qc: { repoName: string; defaultCwd: string; active?: boolean };
+    collab: { repoName: string; defaultCwd: string; active?: boolean };
+    ba: { repoName: string; defaultCwd: string; active?: boolean };
+    review: { repoName: string; defaultCwd: string; active?: boolean };
+    devops: { repoName: string; defaultCwd: string; active?: boolean };
   } | null>(null);
   const [task, setTask] = useState(() => localStorage.getItem('bow-task') || '');
   const [cwd, setCwd] = useState(() => localStorage.getItem('bow-cwd') || '');
@@ -322,7 +322,10 @@ export function App() {
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   // Nhóm tool liên tiếp trong khung chat đang được mở (bung ra xem từng thao tác).
   const [expandedChatGroups, setExpandedChatGroups] = useState<Set<string>>(new Set());
-  const [language, setLanguage] = useState(() => localStorage.getItem('bow-language') || 'vi');
+  const [language, setLanguage] = useState<'vi' | 'en'>(() => {
+    const saved = localStorage.getItem('bow-language');
+    return saved === 'en' ? 'en' : 'vi';
+  });
   const [selectedMcps, setSelectedMcps] = useState<string[]>(() => {
     try {
       const val = localStorage.getItem('bow-selectedMcps');
@@ -353,20 +356,26 @@ export function App() {
   const getActiveOrigins = useCallback(() => {
     const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
     if (!isLocal) return [''];
-    const origins = ['http://localhost:4000'];
-    if (otherModes?.qc?.defaultCwd) {
+    // Chỉ nối tới cổng có tiến trình ĐANG chạy (cờ active do server ping) — defaultCwd
+    // luôn có giá trị fallback nên không dùng được để đoán mode nào sống.
+    if (!otherModes) return ['http://localhost:4000'];
+    const origins: string[] = [];
+    if (otherModes.dev?.active) {
+      origins.push('http://localhost:4000');
+    }
+    if (otherModes.qc?.active) {
       origins.push('http://localhost:4001');
     }
-    if (otherModes?.collab?.defaultCwd) {
+    if (otherModes.collab?.active) {
       origins.push('http://localhost:4002');
     }
-    if (otherModes?.ba?.defaultCwd) {
+    if (otherModes.ba?.active) {
       origins.push('http://localhost:4003');
     }
-    if (otherModes?.review?.defaultCwd) {
+    if (otherModes.review?.active) {
       origins.push('http://localhost:4004');
     }
-    if (otherModes?.devops?.defaultCwd) {
+    if (otherModes.devops?.active) {
       origins.push('http://localhost:4005');
     }
     return origins;
@@ -1384,6 +1393,12 @@ export function App() {
         .then((r) => r.json())
         .then((c) => {
           if (c.otherModes) {
+            // Cập nhật cả otherModes để cờ active bám theo mode bật/tắt sau khi trang
+            // đã mở. Giữ nguyên object cũ khi nội dung không đổi — tránh đổi identity
+            // mỗi 5s làm getActiveOrigins đổi → các EventSource bị đóng/mở lại liên tục.
+            setOtherModes((prev) =>
+              JSON.stringify(prev) === JSON.stringify(c.otherModes) ? prev : c.otherModes,
+            );
             setDevRepoLabel(c.otherModes.dev.repoName);
             setDevCwd(c.otherModes.dev.defaultCwd);
             setQcRepoLabel(c.otherModes.qc.repoName);
@@ -1494,6 +1509,12 @@ export function App() {
                 ? 'devops-cwd'
                 : 'dev-cwd';
       applyPortCwd(activeTarget, newPath);
+      // Collab bám theo nguồn chọn ở thanh dưới: nếu tiến trình Collab (4002) đang
+      // chạy và mode hiện tại không phải Collab, đồng bộ luôn thư mục Collab sang
+      // cùng nguồn để pill "Nguồn Collab" và phiên CTV khớp thư mục đang thao tác.
+      if (activeTarget !== 'collab-cwd' && otherModes?.collab?.active) {
+        applyPortCwd('collab-cwd', newPath);
+      }
     }
   };
 
@@ -1719,6 +1740,9 @@ export function App() {
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
   // Dropdown danh sách host LAN đang mở hay không.
   const [lanMenuOpen, setLanMenuOpen] = useState(false);
+  // Dropdown nguồn mã của các mode đang mở hay không.
+  const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
+
 
   // Tất cả host LAN của máy. Ưu tiên lanUrls (nhiều host); fallback lanUrl (bản cũ).
   const lanUrls = cfg?.lanUrls?.length ? cfg.lanUrls : cfg?.lanUrl ? [cfg.lanUrl] : [];
@@ -1916,7 +1940,14 @@ export function App() {
         if (c.otherModes) {
           setOtherModes(c.otherModes);
         }
-        if (c.defaultCwd) setCwd(c.defaultCwd);
+        // Mode chia sẻ (QC/Collab/BA/Reviewer/DevOps) ép cwd cố định theo server —
+        // luôn ghi đè. Dev mode để người dùng tự chọn: chỉ dùng defaultCwd làm fallback
+        // lần đầu (localStorage rỗng), KHÔNG ghi đè lựa chọn đã nhớ mỗi lần reload.
+        const sharedMode =
+          c.isQcMode || c.isCollabMode || c.isBaMode || c.isReviewerMode || c.isDevOpsMode;
+        if (c.defaultCwd && (sharedMode || !localStorage.getItem('bow-cwd'))) {
+          setCwd(c.defaultCwd);
+        }
         // QC Mode chỉ hỏi đáp read-only → LUÔN dùng Sonnet (nhẹ/rẻ), bất kể
         // localStorage. Backend cũng ép Sonnet ở mode này nên UI phải khớp để không
         // hiển thị Opus mà thực chất chạy Sonnet.
@@ -3000,73 +3031,105 @@ export function App() {
         </div>
         <div className="obs-readouts">
           {cfg?.isAdmin ? (
-            <>
-              {devRepoLabel && (
-                <button
-                  className="readout readout-btn"
-                  title={language === 'vi' ? `Thư mục Dev Mode: ${devCwd} — bấm để đổi` : `Dev Mode Repo: ${devCwd} — click to change`}
-                  onClick={() => openPicker(devCwd || '', 'dev-cwd')}
-                >
-                  <span className="rl">{language === 'vi' ? 'Nguồn Dev' : 'Dev Src'}</span>
-                  <span className="rv" style={{ color: 'var(--brass)' }}>{devRepoLabel}</span>
-                </button>
+            <div className="lan-url-wrap">
+              <button
+                className="readout readout-btn"
+                title={language === 'vi' ? 'Nguồn mã của các chế độ chạy. Bấm để xem chi tiết / đổi.' : 'Source directories of execution modes. Click to view or change.'}
+                onClick={() => setSourceMenuOpen((o) => !o)}
+              >
+                <span className="rl">{language === 'vi' ? 'Nguồn' : 'Source'}</span>
+                <span className="rv" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  {(() => {
+                    const activeMode = cfg?.isQcMode
+                      ? { label: 'QC', repo: qcRepoLabel }
+                      : cfg?.isReviewerMode
+                        ? { label: 'Review', repo: reviewerRepoLabel }
+                        : cfg?.isCollabMode
+                          ? { label: 'Collab', repo: collabRepoLabel }
+                          : cfg?.isBaMode
+                            ? { label: 'BA', repo: baRepoLabel }
+                            : cfg?.isDevOpsMode
+                              ? { label: 'DevOps', repo: devopsRepoLabel }
+                              : { label: 'Dev', repo: devRepoLabel };
+                    return `${activeMode.label}: ${activeMode.repo || '...'}`;
+                  })()}
+                  <span className="lan-url-caret">{sourceMenuOpen ? '▴' : '▾'}</span>
+                </span>
+              </button>
+              {sourceMenuOpen && (
+                <>
+                  <div className="lan-url-backdrop" onClick={() => setSourceMenuOpen(false)} />
+                  <div className="lan-url-menu" role="menu" style={{ right: 'auto', left: 0, minWidth: '260px' }}>
+                    <div className="lan-url-menu-head">
+                      {language === 'vi' ? 'Nguồn mã theo chế độ' : 'Sources by Mode'}
+                    </div>
+                    {[
+                      { id: 'dev-cwd', modeLabel: 'Dev Mode', label: devRepoLabel, path: devCwd, color: 'var(--brass)' },
+                      { id: 'qc-cwd', modeLabel: 'QC Mode', label: qcRepoLabel, path: qcCwd, color: 'var(--teal)' },
+                      { id: 'collab-cwd', modeLabel: 'Collab Mode', label: collabRepoLabel, path: collabCwd, color: 'var(--red)' },
+                      { id: 'ba-cwd', modeLabel: 'BA Mode', label: baRepoLabel, path: baCwd, color: 'var(--gold, #c9a227)' },
+                      { id: 'reviewer-cwd', modeLabel: 'Reviewer Mode', label: reviewerRepoLabel, path: reviewerCwd, color: 'var(--violet, #8b5cf6)' },
+                      { id: 'devops-cwd', modeLabel: 'DevOps Mode', label: devopsRepoLabel, path: devopsCwd, color: 'var(--devops, #10b981)' },
+                    ].map((item) => (
+                      <div
+                        key={item.id}
+                        className="lan-url-item"
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          padding: '6px 8px',
+                          gap: '12px',
+                          borderBottom: '1px solid var(--hairline-2)',
+                        }}
+                      >
+                        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, textAlign: 'left' }}>
+                          <span style={{ fontSize: '10px', fontWeight: 'bold', color: item.color }}>{item.modeLabel}</span>
+                          <span
+                            title={item.path}
+                            style={{
+                              fontSize: '11px',
+                              fontFamily: 'var(--mono)',
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              maxWidth: '160px',
+                              color: 'var(--ink)',
+                            }}
+                          >
+                            {item.label || '...'}
+                          </span>
+                        </div>
+                        <button
+                          className="btn-tiny"
+                          style={{
+                            padding: '2px 6px',
+                            fontSize: '9px',
+                            fontFamily: 'var(--mono)',
+                            border: '1px solid var(--hairline)',
+                            borderRadius: '2px',
+                            background: 'var(--surface-2)',
+                            cursor: 'pointer',
+                            color: 'var(--ink)',
+                          }}
+                          onClick={() => {
+                            setSourceMenuOpen(false);
+                            openPicker(item.path || '', item.id as any);
+                          }}
+                        >
+                          {language === 'vi' ? 'Đổi' : 'Change'}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </>
               )}
-              {qcRepoLabel && (
-                <button
-                  className="readout readout-btn"
-                  title={language === 'vi' ? `Thư mục QC Mode: ${qcCwd} — bấm để đổi` : `QC Mode Repo: ${qcCwd} — click to change`}
-                  onClick={() => openPicker(qcCwd || '', 'qc-cwd')}
-                >
-                  <span className="rl">{language === 'vi' ? 'Nguồn QC' : 'QC Src'}</span>
-                  <span className="rv" style={{ color: 'var(--teal)' }}>{qcRepoLabel}</span>
-                </button>
-              )}
-              {collabRepoLabel && (
-                <button
-                  className="readout readout-btn"
-                  title={language === 'vi' ? `Thư mục Collab Mode: ${collabCwd} — bấm để đổi` : `Collab Mode Repo: ${collabCwd} — click to change`}
-                  onClick={() => openPicker(collabCwd || '', 'collab-cwd')}
-                >
-                  <span className="rl">{language === 'vi' ? 'Nguồn Collab' : 'Collab Src'}</span>
-                  <span className="rv" style={{ color: 'var(--red)' }}>{collabRepoLabel}</span>
-                </button>
-              )}
-              {baRepoLabel && (
-                <button
-                  className="readout readout-btn"
-                  title={language === 'vi' ? `Thư mục BA Mode: ${baCwd} — bấm để đổi` : `BA Mode Repo: ${baCwd} — click to change`}
-                  onClick={() => openPicker(baCwd || '', 'ba-cwd')}
-                >
-                  <span className="rl">{language === 'vi' ? 'Nguồn BA' : 'BA Src'}</span>
-                  <span className="rv" style={{ color: 'var(--gold, #c9a227)' }}>{baRepoLabel}</span>
-                </button>
-              )}
-              {reviewerRepoLabel && (
-                <button
-                  className="readout readout-btn"
-                  title={language === 'vi' ? `Thư mục Reviewer Mode: ${reviewerCwd} — bấm để đổi` : `Reviewer Mode Repo: ${reviewerCwd} — click to change`}
-                  onClick={() => openPicker(reviewerCwd || '', 'reviewer-cwd')}
-                >
-                  <span className="rl">{language === 'vi' ? 'Nguồn Review' : 'Review Src'}</span>
-                  <span className="rv" style={{ color: 'var(--violet, #8b5cf6)' }}>{reviewerRepoLabel}</span>
-                </button>
-              )}
-              {devopsRepoLabel && (
-                <button
-                  className="readout readout-btn"
-                  title={language === 'vi' ? `Thư mục DevOps Mode: ${devopsCwd} — bấm để đổi` : `DevOps Mode Repo: ${devopsCwd} — click to change`}
-                  onClick={() => openPicker(devopsCwd || '', 'devops-cwd')}
-                >
-                  <span className="rl">{language === 'vi' ? 'Nguồn DevOps' : 'DevOps Src'}</span>
-                  <span className="rv" style={{ color: 'var(--devops, #10b981)' }}>{devopsRepoLabel}</span>
-                </button>
-              )}
-            </>
+            </div>
           ) : (
             (readonlyShare || collab || devops) && (
               <span className="readout" title={language === 'vi' ? `Đang thao tác nguồn: ${repoLabel}` : `Working on source: ${repoLabel}`}>
                 <span className="rl">{language === 'vi' ? 'Nguồn' : 'Source'}</span>
-                <span className="rv" style={{ color: 'var(--brass)' }}>{repoLabel}</span>
+                <span className="rv rv-source" style={{ color: 'var(--brass)' }}>{repoLabel}</span>
               </span>
             )
           )}
@@ -3227,7 +3290,7 @@ export function App() {
           <div className="lang-select" title={language === 'vi' ? "Ngôn ngữ trả lời của agent" : "Agent response language"}>
             <PixelSelect
               value={language}
-              onChange={setLanguage}
+              onChange={(val) => setLanguage(val as 'vi' | 'en')}
               direction="down"
               options={[
                 { value: 'vi', label: 'Tiếng Việt' },
@@ -3942,6 +4005,7 @@ export function App() {
               onChange={setSelectedModel}
               disabled={running}
               options={[
+                { value: 'claude-fable-5', label: 'Fable 5' },
                 { value: 'claude-opus-4-8', label: 'Opus 4.8' },
                 { value: 'claude-sonnet-5', label: 'Sonnet 5' },
                 { value: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },

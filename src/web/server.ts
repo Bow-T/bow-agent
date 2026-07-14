@@ -119,7 +119,7 @@ const simulateSessionLimit = process.env.BOW_SIMULATE_SESSION_LIMIT === 'true';
 // Mặc định = process.cwd() (thư mục đang chạy server). Admin đổi lúc chạy qua
 // POST /api/qc-cwd (không cần restart) → lưu vào qcCwdOverride.
 let qcCwdOverride: string | null = null;
-const qcCwd = () => resolve(qcCwdOverride || process.env.BOW_QC_CWD || process.cwd());
+const qcCwd = () => resolve(qcCwdOverride || process.env.BOW_QC_CWD || config.defaultCwd);
 
 // Collab Mode: cộng tác viên (CTV) qua LAN code gần như dev, nhưng lệnh HỦY HOẠI
 // (rm -rf, deploy, ghi ngoài repo…) phải được ADMIN (localhost) duyệt từ xa. Git
@@ -128,7 +128,7 @@ const qcCwd = () => resolve(qcCwdOverride || process.env.BOW_QC_CWD || process.c
 //   BOW_COLLAB_MODE=true BOW_COLLAB_CWD=/path/to/repo npm run ui:collab
 const isCollabMode = process.env.BOW_COLLAB_MODE === 'true';
 // Repo cố định cho Collab (tương tự BOW_QC_CWD). Mặc định = cwd chạy server.
-const collabCwd = () => resolve(process.env.BOW_COLLAB_CWD || process.cwd());
+const collabCwd = () => resolve(process.env.BOW_COLLAB_CWD || config.defaultCwd);
 
 // BA Mode: Business Analyst qua LAN. Được ĐỌC toàn bộ repo (hiểu ngữ cảnh) + GHI TÀI LIỆU
 // (docs/, *.md/*.txt) + FULL Jira write (tạo/sửa/comment/transition ticket — đầu ra chính
@@ -140,7 +140,7 @@ const isBaMode = process.env.BOW_BA_MODE === 'true';
 // Repo cố định cho BA (tương tự BOW_QC_CWD/BOW_COLLAB_CWD). Admin đổi lúc chạy qua
 // POST /api/qc-cwd (gọi tới cổng BA 4003) → lưu vào baCwdOverride, không cần restart.
 let baCwdOverride: string | null = null;
-const baCwd = () => resolve(baCwdOverride || process.env.BOW_BA_CWD || process.cwd());
+const baCwd = () => resolve(baCwdOverride || process.env.BOW_BA_CWD || config.defaultCwd);
 
 // Reviewer Mode: Tech Lead/Reviewer qua LAN. ĐỌC code + review PR GitHub (`gh pr view/diff`) và
 // diff branch local (`git diff`), COMMENT/APPROVE PR (`gh pr comment`/`gh pr review`), chạy
@@ -151,7 +151,7 @@ const isReviewerMode = process.env.BOW_REVIEWER_MODE === 'true';
 // Repo cố định cho Reviewer (tương tự BOW_QC_CWD). Admin đổi lúc chạy qua POST /api/qc-cwd
 // (gọi tới cổng Reviewer 4004) → lưu vào reviewerCwdOverride, không cần restart.
 let reviewerCwdOverride: string | null = null;
-const reviewerCwd = () => resolve(reviewerCwdOverride || process.env.BOW_REVIEWER_CWD || process.cwd());
+const reviewerCwd = () => resolve(reviewerCwdOverride || process.env.BOW_REVIEWER_CWD || config.defaultCwd);
 
 // DevOps Mode (mode thứ 6): Triển khai & Hạ tầng qua LAN. ĐỌC repo + GHI FILE HẠ TẦNG
 // (Dockerfile, docker-compose*, .github/workflows/*, *.tf/*.hcl, k8s/Helm manifests) + tài liệu
@@ -164,7 +164,7 @@ const isDevOpsMode = process.env.BOW_DEVOPS_MODE === 'true';
 // Repo cố định cho DevOps (tương tự BOW_QC_CWD). Admin đổi lúc chạy qua POST /api/qc-cwd
 // (gọi tới cổng DevOps 4005) → lưu vào devopsCwdOverride, không cần restart.
 let devopsCwdOverride: string | null = null;
-const devopsCwd = () => resolve(devopsCwdOverride || process.env.BOW_DEVOPS_CWD || process.cwd());
+const devopsCwd = () => resolve(devopsCwdOverride || process.env.BOW_DEVOPS_CWD || config.defaultCwd);
 
 /**
  * Trả về TẤT CẢ địa chỉ IPv4 LAN của máy (bỏ loopback), đã sắp xếp: IP mạng nội bộ
@@ -632,8 +632,8 @@ app.post('/api/run', async (req, res) => {
             : isDevOpsMode
               ? devopsCwd()
               : isAdmin
-                ? (cwd || process.cwd())
-                : process.cwd();
+                ? (cwd || config.defaultCwd)
+                : config.defaultCwd;
     const cleanIp = getCleanIp(req);
     // M11: guard kiểu — body do client gửi, ép về string để .trim() không ném TypeError
     // (trước đây {jiraRef:123} gây 500 + rò message lỗi nội bộ thay vì 400 đúng nghĩa).
@@ -1056,7 +1056,9 @@ function getCurrentProfile(): string {
 
 function pingConfigPort(port: number): Promise<{ repoName: string; defaultCwd: string } | null> {
   return new Promise((resolve) => {
-    const req = http.get(`http://localhost:${port}/api/config`, (res) => {
+    // ?ping=1: bảo server kia trả lời ngay, KHÔNG ping ngược lại — tránh hai server
+    // sống ping đệ quy lẫn nhau đến khi cùng timeout (ping sẽ luôn fail sai).
+    const req = http.get(`http://localhost:${port}/api/config?ping=1`, (res) => {
       let data = '';
       res.on('data', (chunk) => { data += chunk; });
       res.on('end', () => {
@@ -1091,7 +1093,7 @@ app.get('/api/config', async (req, res) => {
 
   // Source bị khoá theo mode: QC → qcCwd, Reviewer → reviewerCwd, Collab → collabCwd, BA → baCwd,
   // DevOps → devopsCwd.
-  const effectiveCwd = isQcMode ? qcCwd() : isReviewerMode ? reviewerCwd() : isCollabMode ? collabCwd() : isBaMode ? baCwd() : isDevOpsMode ? devopsCwd() : process.cwd();
+  const effectiveCwd = isQcMode ? qcCwd() : isReviewerMode ? reviewerCwd() : isCollabMode ? collabCwd() : isBaMode ? baCwd() : isDevOpsMode ? devopsCwd() : config.defaultCwd;
   // Cổng client LAN quảng bá cho đồng nghiệp. HAI kiến trúc:
   //  - Dev (Vite): frontend chạy ở BOW_WEB_PORT (5173/5174…) và PROXY /api về backend qua
   //    localhost → backend thấy mọi client là 127.0.0.1 (mất phân quyền IP). CHỈ dùng khi tự
@@ -1104,50 +1106,42 @@ app.get('/api/config', async (req, res) => {
     ? String(currentPort)
     : (process.env.BOW_WEB_PORT || '5173');
 
+  // active = tiến trình mode đó ĐANG chạy (chính mình, hoặc ping cổng kia thành công).
+  // Khi active=false, defaultCwd/repoName chỉ là giá trị cấu hình fallback để hiển thị —
+  // client KHÔNG được mở SSE/fetch tới cổng đó (tránh spam ERR_CONNECTION_REFUSED).
   const modes = {
-    dev: { repoName: '', defaultCwd: '' },
-    qc: { repoName: '', defaultCwd: '' },
-    collab: { repoName: '', defaultCwd: '' },
-    ba: { repoName: '', defaultCwd: '' },
-    review: { repoName: '', defaultCwd: '' },
-    devops: { repoName: '', defaultCwd: '' }
+    dev: { repoName: basename(config.defaultCwd), defaultCwd: config.defaultCwd, active: currentPort === 4000 },
+    qc: { repoName: basename(qcCwd()), defaultCwd: qcCwd(), active: currentPort === 4001 },
+    collab: { repoName: basename(collabCwd()), defaultCwd: collabCwd(), active: currentPort === 4002 },
+    ba: { repoName: basename(baCwd()), defaultCwd: baCwd(), active: currentPort === 4003 },
+    review: { repoName: basename(reviewerCwd()), defaultCwd: reviewerCwd(), active: currentPort === 4004 },
+    devops: { repoName: basename(devopsCwd()), defaultCwd: devopsCwd(), active: currentPort === 4005 }
   };
 
-  if (currentPort === 4000) {
-    modes.dev = { repoName: basename(effectiveCwd), defaultCwd: effectiveCwd };
-  } else if (currentPort === 4001) {
-    modes.qc = { repoName: basename(effectiveCwd), defaultCwd: effectiveCwd };
-  } else if (currentPort === 4002) {
-    modes.collab = { repoName: basename(effectiveCwd), defaultCwd: effectiveCwd };
-  } else if (currentPort === 4003) {
-    modes.ba = { repoName: basename(effectiveCwd), defaultCwd: effectiveCwd };
-  } else if (currentPort === 4004) {
-    modes.review = { repoName: basename(effectiveCwd), defaultCwd: effectiveCwd };
-  } else if (currentPort === 4005) {
-    modes.devops = { repoName: basename(effectiveCwd), defaultCwd: effectiveCwd };
+  // Yêu cầu ping từ server khác (?ping=1) trả lời ngay bằng thông tin của mình,
+  // không ping tiếp — xem chú thích ở pingConfigPort.
+  if (req.query.ping !== '1') {
+    const promises = [];
+    if (currentPort !== 4000) {
+      promises.push(pingConfigPort(4000).then(res => { if (res) modes.dev = { ...res, active: true }; }));
+    }
+    if (currentPort !== 4001) {
+      promises.push(pingConfigPort(4001).then(res => { if (res) modes.qc = { ...res, active: true }; }));
+    }
+    if (currentPort !== 4002) {
+      promises.push(pingConfigPort(4002).then(res => { if (res) modes.collab = { ...res, active: true }; }));
+    }
+    if (currentPort !== 4003) {
+      promises.push(pingConfigPort(4003).then(res => { if (res) modes.ba = { ...res, active: true }; }));
+    }
+    if (currentPort !== 4004) {
+      promises.push(pingConfigPort(4004).then(res => { if (res) modes.review = { ...res, active: true }; }));
+    }
+    if (currentPort !== 4005) {
+      promises.push(pingConfigPort(4005).then(res => { if (res) modes.devops = { ...res, active: true }; }));
+    }
+    await Promise.all(promises);
   }
-
-  const promises = [];
-  if (currentPort !== 4000) {
-    promises.push(pingConfigPort(4000).then(res => { if (res) modes.dev = res; }));
-  }
-  if (currentPort !== 4001) {
-    promises.push(pingConfigPort(4001).then(res => { if (res) modes.qc = res; }));
-  }
-  if (currentPort !== 4002) {
-    promises.push(pingConfigPort(4002).then(res => { if (res) modes.collab = res; }));
-  }
-  if (currentPort !== 4003) {
-    promises.push(pingConfigPort(4003).then(res => { if (res) modes.ba = res; }));
-  }
-  if (currentPort !== 4004) {
-    promises.push(pingConfigPort(4004).then(res => { if (res) modes.review = res; }));
-  }
-  if (currentPort !== 4005) {
-    promises.push(pingConfigPort(4005).then(res => { if (res) modes.devops = res; }));
-  }
-
-  await Promise.all(promises);
 
   res.json({
     defaultCwd: effectiveCwd,
@@ -1759,7 +1753,7 @@ app.delete('/api/my-mcp/:name', (req, res) => {
 /** GET /api/browse-dirs?path=... — duyệt thư mục local. */
 app.get('/api/browse-dirs', requireAdmin, (req, res) => {
   const queryPath = typeof req.query.path === 'string' ? req.query.path : '';
-  const currentPath = resolve(queryPath || process.cwd());
+  const currentPath = resolve(queryPath || config.defaultCwd);
   try {
     const items = fs.readdirSync(currentPath, { withFileTypes: true });
     const dirs = items
@@ -1793,7 +1787,7 @@ app.get('/api/browse-dirs', requireAdmin, (req, res) => {
 
 /** GET /api/detect?cwd=... — nhận diện source từ thư mục (profile/stack/empty). */
 app.get('/api/detect', (req, res) => {
-  const cwd = (req.query.cwd as string) || process.cwd();
+  const cwd = (req.query.cwd as string) || config.defaultCwd;
   try {
     res.json(detectSource(cwd));
   } catch (err) {
@@ -1822,7 +1816,7 @@ app.get('/api/workspaces', (_req, res) => {
  * chỉ báo ở composer). Trả { workspace: null } nếu cwd không thuộc workspace nào.
  */
 app.get('/api/workspace/current', (req, res) => {
-  const cwd = (req.query.cwd as string) || process.cwd();
+  const cwd = (req.query.cwd as string) || config.defaultCwd;
   try {
     res.json({ workspace: resolveWorkspace(cwd) });
   } catch (err) {
@@ -1905,7 +1899,7 @@ app.put('/api/workspace/:slug/shared', requireAdmin, checkReadonlyConfig, (req, 
  * body: { cwd }. Stream tiến độ qua session giống /api/run.
  */
 app.post('/api/generate-profile', requireAdmin, async (req, res) => {
-  const cwd = (req.body?.cwd as string) || process.cwd();
+  const cwd = (req.body?.cwd as string) || config.defaultCwd;
   const session = createSession();
   res.json({ sessionId: session.id });
 
@@ -1926,7 +1920,7 @@ app.post('/api/generate-profile', requireAdmin, async (req, res) => {
  * Kết quả cuối đẩy qua event 'done' với result = mô tả markdown. body: { cwd }.
  */
 app.post('/api/analyze-structure', requireAdmin, (req, res) => {
-  const cwd = (req.body?.cwd as string) || process.cwd();
+  const cwd = (req.body?.cwd as string) || config.defaultCwd;
   if (!fs.existsSync(cwd)) {
     res.status(400).json({ error: `Không thấy thư mục: ${cwd}` });
     return;

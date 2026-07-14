@@ -43,39 +43,41 @@
  * khai báo lại từng --step-* cho từng accent. Mỗi theme override khối này ở block của mình. */
 
 /* ══════════════════════════════════════════════════════════════════════════════════════
- * PHONG CÁCH 1 · NEO BRUTALISM — palette designprompts.dev/neo-brutalism (accent chọn VÀNG):
- *   • Background : #FFFDF5 (cream/off-white, giấy tái chế)
- *   • Foreground : #000000 (ĐEN THUẦN — mọi chữ, MỌI viền, MỌI bóng; không xám)
- *   • Accent CHÍNH : #FFD93D (vivid yellow — designprompts Secondary, chọn làm accent chủ đạo)
- *   • Coral      : #FF6B6B (hot red — designprompts Accent, để làm màu phụ/nút hủy)
- *   • Muted      : #C4B5FD (soft violet)
+ * PHONG CÁCH 1 · NEO BRUTALISM — palette CHUẨN theo landing page (docs/index.html :root):
+ *   • Background : #FBF6E9 (cream — landing --cream)
+ *   • Card       : #FFFDF5 (thẻ/panel — landing --card)
+ *   • Foreground : #0A0A0A (ink — mọi chữ, MỌI viền, MỌI bóng; landing --ink)
+ *   • Accent CHÍNH : #FFCF24 (vivid yellow — landing --yellow)
+ *   • Coral      : #FF5A5A (hot red — landing --coral, nút hủy/deny)
+ *   • Lavender   : #B8A4FF (landing --lav — accent phụ/allow)
+ * Landing và app PHẢI nói cùng một ngôn ngữ màu — đổi ở đây thì đổi cả docs/index.html.
  * Chữ trên khối vàng = ĐEN (đúng chất brutalism). Luật: không xám nhạt, tương phản cao, khối màu,
  * viền dày + bóng cứng, góc vuông. ══════════════════════════════════════════════════════════════ */
 :root,
 [data-theme='brutal'] {
   color-scheme: light;
 
-  --bg: #fffdf5;          /* cream/off-white (designprompts Background) */
-  --surface: #ffffff;     /* thẻ trắng tinh (contrast panel) */
-  --surface-2: #fff8dc;   /* vàng kem rất nhạt cho inset (ngả secondary) */
-  --surface-3: #fff3c4;
+  --bg: #fbf6e9;          /* cream (landing --cream) */
+  --surface: #fffdf5;     /* thẻ card (landing --card) */
+  --surface-2: #fdf3d6;   /* inset ngả vàng kem (landing --inset) */
+  --surface-3: #fbedc2;
 
-  --ink: #000000;         /* ĐEN THUẦN (chữ chính — designprompts Foreground) */
-  --ink-2: #000000;       /* brutalism không dùng xám → phụ vẫn đen */
-  --muted: #3a3a3a;       /* chỉ dùng cho chữ mờ tối thiểu (gần đen) */
+  --ink: #0a0a0a;         /* ink (chữ chính — landing --ink) */
+  --ink-2: #1a1a1a;       /* landing --ink-2 */
+  --muted: #4a4a4a;       /* chữ mờ tối thiểu (landing --muted) */
 
-  --brass: #ffd93d;       /* VIVID YELLOW — accent CHÍNH (chọn theo yêu cầu) */
-  --brass-bright: #ffe166;/* fill / hover */
-  --brass-soft: rgba(255, 217, 61, 0.32);
-  --on-brass: #000000;    /* chữ ĐEN trên khối vàng (đúng chất brutalism) */
+  --brass: #ffcf24;       /* VIVID YELLOW — accent CHÍNH (landing --yellow) */
+  --brass-bright: #ffda52;/* fill / hover (landing --yellow-2) */
+  --brass-soft: rgba(255, 207, 36, 0.32);
+  --on-brass: #0a0a0a;    /* chữ ĐEN trên khối vàng (đúng chất brutalism) */
 
-  --teal: #c4b5fd;        /* soft violet (designprompts Muted — accent phụ) */
-  --danger: #ff6b6b;      /* hot red/coral (designprompts Accent) — nút hủy/stop; chữ trắng */
-  --danger-soft: rgba(255, 107, 107, 0.2);
+  --teal: #b8a4ff;        /* lavender (landing --lav — accent phụ) */
+  --danger: #ff5a5a;      /* hot red/coral (landing --coral) — nút hủy/stop; chữ trắng */
+  --danger-soft: rgba(255, 90, 90, 0.2);
 
-  --hairline: #000000;    /* viền ĐEN THUẦN */
-  --hairline-2: rgba(0, 0, 0, 0.6);
-  --graticule: rgba(0, 0, 0, 0.08);
+  --hairline: #0a0a0a;    /* viền INK (landing border) */
+  --hairline-2: rgba(10, 10, 10, 0.6);
+  --graticule: rgba(10, 10, 10, 0.08);
 
   --bd-thin: 2px;         /* viền DÀY cho ra chất poster */
   --glass: 100%;          /* không kính mờ — đục hoàn toàn */
@@ -85,9 +87,9 @@
   --grain: none;          /* không hạt film */
   --viewport-glow: none;
 
-  --grid: rgba(0, 0, 0, 0.42);          /* dot grid: chấm đen trên cream */
-  --depth: 8px 8px 0 0 #000000;         /* bóng CỨNG đen thuần, KHÔNG blur */
-  --viewport-bg: #fff8dc;
+  --grid: rgba(10, 10, 10, 0.42);       /* dot grid: chấm ink trên cream (landing --dot) */
+  --depth: 8px 8px 0 0 #0a0a0a;         /* bóng CỨNG ink, KHÔNG blur (landing --shadow) */
+  --viewport-bg: #fffdf5;               /* màn bản đồ sao = thẻ card SÁNG — không nền tối đè */
 
   --r: 0px;               /* góc VUÔNG */
   --r-lg: 0px;
@@ -184,11 +186,11 @@
  * Vàng #FFD93D + Tím #C4B5FD là màu chính thức designprompts (secondary + muted) → chữ ĐEN.
  * Các màu đậm (coral/lá/hồng/cam) → chữ TRẮNG. 'brass' (vàng #ffd93d) = mặc định ở block brutal. */
 
-/* ── Coral (hot red) — accent chính thức designprompts #FF6B6B ── */
+/* ── Coral (hot red) — landing --coral #FF5A5A ── */
 :root:not([data-theme='newsprint'])[data-accent='blue'] {
-  --brass: #ff6b6b;
-  --brass-bright: #ff8585;
-  --brass-soft: rgba(255, 107, 107, 0.28);
+  --brass: #ff5a5a;
+  --brass-bright: #ff7676;
+  --brass-soft: rgba(255, 90, 90, 0.28);
   --on-brass: #ffffff;
 }
 
@@ -200,12 +202,12 @@
   --on-brass: #ffffff;
 }
 
-/* ── Tím (soft violet) — muted chính thức designprompts #C4B5FD ── */
+/* ── Tím (lavender) — landing --lav #B8A4FF ── */
 :root:not([data-theme='newsprint'])[data-accent='purple'] {
-  --brass: #c4b5fd;
-  --brass-bright: #d4c9fe;
-  --brass-soft: rgba(196, 181, 253, 0.34);
-  --on-brass: #000000;
+  --brass: #b8a4ff;
+  --brass-bright: #cbbcff;
+  --brass-soft: rgba(184, 164, 255, 0.34);
+  --on-brass: #0a0a0a;
 }
 
 /* ── Hồng (pink) ── */
@@ -1662,10 +1664,12 @@ a { color: var(--brass); text-underline-offset: 2px; }
   font-weight: 700;
   letter-spacing: 0.06em;
 }
-.diff-label.deletion { color: var(--danger); }
-.diff-label.addition { color: var(--teal); }
-.diff-del { background: var(--danger-soft) !important; }
-.diff-add { background: color-mix(in srgb, var(--teal) 12%, transparent) !important; }
+/* Màu diff theo chuẩn landing (.diff .del/.add): xóa = đỏ gạch, thêm = XANH LÁ (không dùng
+ * --teal nữa — teal giờ là lavender, tím cho "dòng thêm" đọc sai ngữ nghĩa diff). */
+.diff-label.deletion { color: #c0271b; }
+.diff-label.addition { color: #0a6b3f; }
+.diff-del { background: rgba(192, 39, 27, 0.1) !important; }
+.diff-add { background: rgba(10, 107, 63, 0.1) !important; }
 .approval-actions {
   flex-shrink: 0; /* nút Cho phép/Từ chối ghim đáy thẻ, luôn hiện */
   display: flex;
@@ -2837,7 +2841,13 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   border-bottom: var(--bd-thin) solid var(--hairline) !important;
 }
 [data-theme='brutal'] .brand {
+  background-color: #ffcf24 !important; /* Yellow */
+  color: #0a0a0a !important;
   border-right: var(--bd-thin) solid var(--hairline) !important;
+  font-weight: 900 !important;
+}
+[data-theme='brutal'] .brand-tag {
+  color: rgba(10, 10, 10, 0.75) !important; /* High contrast dark grey/black on yellow background */
 }
 [data-theme='brutal'] .readout,
 [data-theme='brutal'] .readout-btn {
@@ -2849,6 +2859,96 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 [data-theme='brutal'] .topbar-right {
   border-left: var(--bd-thin) solid var(--hairline) !important;
 }
+
+/* Các nhãn nguồn / repository dạng badge Neo-Brutalist nhỏ gọn hơn */
+[data-theme='brutal'] .rv-dev {
+  background-color: #ffcf24 !important; /* Yellow */
+  color: #0a0a0a !important;
+  border: 1.5px solid var(--hairline) !important;
+  padding: 1px 5px !important;
+  box-shadow: 1px 1px 0 0 var(--hairline) !important;
+  font-size: 11px !important;
+}
+[data-theme='brutal'] .rv-qc {
+  background-color: #b8a4ff !important; /* Lavender/Purple */
+  color: #0a0a0a !important;
+  border: 1.5px solid var(--hairline) !important;
+  padding: 1px 5px !important;
+  box-shadow: 1px 1px 0 0 var(--hairline) !important;
+  font-size: 11px !important;
+}
+[data-theme='brutal'] .rv-collab {
+  background-color: #ff5a5a !important; /* Coral Red */
+  color: #0a0a0a !important;
+  border: 1.5px solid var(--hairline) !important;
+  padding: 1px 5px !important;
+  box-shadow: 1px 1px 0 0 var(--hairline) !important;
+  font-size: 11px !important;
+}
+[data-theme='brutal'] .rv-ba {
+  background-color: #ff9a3c !important; /* Orange */
+  color: #0a0a0a !important;
+  border: 1.5px solid var(--hairline) !important;
+  padding: 1px 5px !important;
+  box-shadow: 1px 1px 0 0 var(--hairline) !important;
+  font-size: 11px !important;
+}
+[data-theme='brutal'] .rv-reviewer {
+  background-color: #ff6bb0 !important; /* Pink */
+  color: #0a0a0a !important;
+  border: 1.5px solid var(--hairline) !important;
+  padding: 1px 5px !important;
+  box-shadow: 1px 1px 0 0 var(--hairline) !important;
+  font-size: 11px !important;
+}
+[data-theme='brutal'] .rv-devops {
+  background-color: #22c55e !important; /* Green */
+  color: #0a0a0a !important;
+  border: 1.5px solid var(--hairline) !important;
+  padding: 1px 5px !important;
+  box-shadow: 1px 1px 0 0 var(--hairline) !important;
+  font-size: 11px !important;
+}
+[data-theme='brutal'] .rv-source {
+  background-color: #ffcf24 !important; /* Yellow */
+  color: #0a0a0a !important;
+  border: 1.5px solid var(--hairline) !important;
+  padding: 1px 5px !important;
+  box-shadow: 1px 1px 0 0 var(--hairline) !important;
+  font-size: 11px !important;
+}
+
+/* Chế độ chạy (Mode) dạng badge Neo-Brutalist ở Header */
+[data-theme='brutal'] .mode-select-btn {
+  border-left: var(--bd-thin) solid var(--hairline) !important;
+  box-shadow: 2px 2px 0 0 var(--hairline) !important;
+  margin: 0 8px !important;
+  padding: 4px 10px !important;
+  border-radius: 0 !important;
+}
+[data-theme='brutal'] .mode-select-btn.mode-plan {
+  background-color: #b8a4ff !important; /* Lavender */
+  color: #0a0a0a !important;
+}
+[data-theme='brutal'] .mode-select-btn.mode-auto {
+  background-color: #ffcf24 !important; /* Yellow */
+  color: #0a0a0a !important;
+}
+[data-theme='brutal'] .mode-select-btn.mode-edit-auto {
+  background-color: #ff9a3c !important; /* Orange */
+  color: #0a0a0a !important;
+}
+[data-theme='brutal'] .mode-select-btn.mode-manual {
+  background-color: #ff5a5a !important; /* Coral */
+  color: #0a0a0a !important;
+}
+[data-theme='brutal'] .mode-select-icon {
+  color: #0a0a0a !important;
+}
+[data-theme='brutal'] .mode-select-caret {
+  color: #0a0a0a !important;
+}
+
 
 [data-theme='brutal'] .chat-container {
   background: var(--surface) !important;
@@ -2895,10 +2995,9 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 [data-theme='brutal'] .viewport-corner.br { border-bottom-width: 3px !important; border-right-width: 3px !important; }
 
 /* Tiêu đề thanh sidebar / modal header */
-[data-theme='brutal'] .sidebar-pipeline-title,
-[data-theme='brutal'] .modal-header {
-  background-color: var(--surface-2) !important;
-  color: var(--ink) !important;
+[data-theme='brutal'] .sidebar-pipeline-title {
+  background-color: #b8a4ff !important; /* Lavender Purple */
+  color: #0a0a0a !important;
   font-family: var(--sans) !important;
   font-weight: 900 !important;
   text-transform: uppercase;
@@ -2912,54 +3011,33 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   display: none !important;
 }
 
-/* Nút phẳng icon ở header (theme-btn) */
-[data-theme='brutal'] .theme-btn {
-  background-color: var(--surface) !important;
-  color: var(--ink) !important;
-  border: var(--bd-thin) solid var(--hairline) !important;
-  box-shadow: 4px 4px 0 0 var(--hairline) !important;
-  border-radius: 0 !important;
-  transition: transform var(--fast), box-shadow var(--fast), background-color var(--fast) !important;
-}
-[data-theme='brutal'] .theme-btn:hover:not(:disabled) {
-  background-color: var(--surface-2) !important;
-  transform: translate(-2px, -2px) !important;
-  box-shadow: 6px 6px 0 0 var(--hairline) !important;
-}
-[data-theme='brutal'] .theme-btn:active:not(:disabled) {
-  transform: translate(4px, 4px) !important;
-  box-shadow: 0 0 0 0 var(--hairline) !important;
-}
-
-/* Swatches và Accent dot */
-[data-theme='brutal'] .accent-dot {
-  border-radius: 0 !important;
-  border: 2px solid var(--hairline) !important;
-  box-shadow: none !important;
-}
-[data-theme='brutal'] .accent-swatch {
-  border-radius: 0 !important;
-  border: 2px solid var(--hairline) !important;
-  box-shadow: none !important;
-}
-[data-theme='brutal'] .accent-swatch.selected {
-  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--hairline) !important;
+[data-theme='brutal'] .modal-header {
+  background-color: #ff9a3c !important; /* Orange */
+  color: #0a0a0a !important;
+  font-family: var(--sans) !important;
+  font-weight: 900 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 13px !important;
+  border-bottom: var(--bd-thin) solid var(--hairline) !important;
+  padding: 12px 14px !important;
+  margin: 0 !important;
 }
 
 /* Bong bóng chat (User, Agent, Tool, Error, System) */
 [data-theme='brutal'] .bubble.user {
   align-self: flex-end;
-  background-color: var(--surface-2) !important;
+  background-color: #b8a4ff !important; /* Lavender Purple */
   border: var(--bd-thin) solid var(--hairline) !important;
   box-shadow: 5px 5px 0 0 var(--hairline) !important;
   border-radius: 0 !important;
-  color: var(--ink) !important;
+  color: #0a0a0a !important;
   padding: 12px 16px !important;
   margin: 10px 0 !important;
 }
 [data-theme='brutal'] .bubble.user::before {
   content: '» ';
-  color: var(--ink) !important;
+  color: #0a0a0a !important;
   font-family: var(--mono);
   font-weight: 800;
 }
@@ -2974,20 +3052,20 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   margin: 10px 0 !important;
 }
 [data-theme='brutal'] .bubble.tool {
-  background-color: var(--surface-3) !important;
+  background-color: #ff9a3c !important; /* Orange */
   border: var(--bd-thin) solid var(--hairline) !important;
   box-shadow: 3px 3px 0 0 var(--hairline) !important;
   border-radius: 0 !important;
-  color: var(--ink) !important;
+  color: #0a0a0a !important;
   padding: 8px 12px !important;
   margin: 6px 0 !important;
 }
 [data-theme='brutal'] .bubble.tool::before {
-  color: var(--ink) !important;
+  color: #0a0a0a !important;
 }
 [data-theme='brutal'] .bubble.tool.tool-group {
   display: block !important;
-  background-color: var(--surface-3) !important;
+  background-color: #ffcf24 !important; /* Yellow */
   border: var(--bd-thin) solid var(--hairline) !important;
   box-shadow: 4px 4px 0 0 var(--hairline) !important;
   border-radius: 0 !important;
@@ -2995,7 +3073,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   margin: 10px 0 !important;
 }
 [data-theme='brutal'] .tool-group-head {
-  color: var(--ink) !important;
+  color: #0a0a0a !important;
 }
 [data-theme='brutal'] .tool-group-list {
   border-left: 2px solid var(--hairline) !important;
@@ -3003,13 +3081,21 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   padding-left: 12px !important;
 }
 [data-theme='brutal'] .bubble.error {
-  background-color: var(--danger-soft) !important;
+  background-color: #ff5a5a !important; /* Coral Red */
   border: var(--bd-thin) solid var(--hairline) !important;
   box-shadow: 5px 5px 0 0 var(--hairline) !important;
   border-radius: 0 !important;
-  color: var(--ink) !important;
+  color: #0a0a0a !important;
   padding: 12px 16px !important;
   margin: 10px 0 !important;
+}
+[data-theme='brutal'] .bubble.system {
+  align-self: flex-start;
+  background-color: #fffdf5 !important;
+  color: var(--ink) !important;
+  border: 2px dashed var(--hairline) !important;
+  padding: 10px 14px !important;
+  box-shadow: none !important;
 }
 [data-theme='brutal'] .bubble.result {
   color: var(--ink) !important;
@@ -3076,31 +3162,58 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 
 /* Màu sắc nút trong brutal */
 [data-theme='brutal'] .btn.run,
-[data-theme='brutal'] .btn.allow,
 [data-theme='brutal'] .btn.primary {
   background-color: var(--brass) !important;
   color: var(--on-brass) !important;
 }
 [data-theme='brutal'] .btn.run:hover:not(:disabled),
-[data-theme='brutal'] .btn.allow:hover:not(:disabled),
 [data-theme='brutal'] .btn.primary:hover:not(:disabled) {
   background-color: var(--brass-bright) !important;
 }
+/* ALLOW = khối LAVENDER chữ đen — đúng nút "✓ ALLOW" trên landing (.allow{background:var(--lav)}).
+ * Tách khỏi nhóm run/primary (vàng) để cặp Cho phép/Từ chối khớp cặp tím/coral của landing. */
+[data-theme='brutal'] .btn.allow {
+  /* Shorthand `background` để dập luôn linear-gradient brass của .btn.allow gốc
+   * (background-color đơn lẻ KHÔNG đè được background-image). */
+  background: var(--teal) !important;         /* lavender #b8a4ff */
+  color: #0a0a0a !important;
+}
+[data-theme='brutal'] .btn.allow:hover:not(:disabled) {
+  background: #cbbcff !important;
+}
 [data-theme='brutal'] .btn.stop,
 [data-theme='brutal'] .btn.deny {
-  background-color: var(--danger) !important;  /* coral — phân biệt với vàng action */
-  color: #ffffff !important;
+  background-color: var(--danger) !important;  /* coral — đúng nút "✕ DENY" landing */
+  color: #0a0a0a !important;                   /* landing .gb: chữ ink trên khối màu */
 }
 [data-theme='brutal'] .btn.stop:hover:not(:disabled),
 [data-theme='brutal'] .btn.deny:hover:not(:disabled) {
-  background-color: #ff4d4d !important;
+  background-color: #ff7676 !important;
 }
-[data-theme='brutal'] .btn:not(.primary):not(.run):not(.allow):not(.stop):not(.deny),
+[data-theme='brutal'] .btn.attach {
+  background-color: #ff9a3c !important; /* Orange */
+  color: #0a0a0a !important;
+  border: var(--bd-thin) solid var(--hairline) !important;
+  box-shadow: 2px 2px 0 0 var(--hairline) !important;
+}
+[data-theme='brutal'] .btn.attach:hover:not(:disabled) {
+  background-color: #ffb063 !important;
+}
+[data-theme='brutal'] .btn.clear-chat {
+  background-color: #ff6bb0 !important; /* Pink */
+  color: #0a0a0a !important;
+  border: var(--bd-thin) solid var(--hairline) !important;
+  box-shadow: 2px 2px 0 0 var(--hairline) !important;
+}
+[data-theme='brutal'] .btn.clear-chat:hover:not(:disabled) {
+  background-color: #ff8bc2 !important;
+}
+[data-theme='brutal'] .btn:not(.primary):not(.run):not(.allow):not(.stop):not(.deny):not(.attach):not(.clear-chat),
 [data-theme='brutal'] .px-select-btn {
   background-color: var(--surface-2) !important;
   color: var(--ink) !important;
 }
-[data-theme='brutal'] .btn:not(.primary):not(.run):not(.allow):not(.stop):not(.deny):hover:not(:disabled),
+[data-theme='brutal'] .btn:not(.primary):not(.run):not(.allow):not(.stop):not(.deny):not(.attach):not(.clear-chat):hover:not(:disabled),
 [data-theme='brutal'] .px-select-btn:hover {
   background-color: var(--surface-3) !important;
 }
@@ -3115,6 +3228,38 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 [data-theme='brutal'] .px-select-btn:active {
   transform: translate(2px, 2px) !important;
   box-shadow: 0 0 0 0 var(--hairline) !important;
+}
+
+/* ── Thẻ duyệt (approval) = card "WRITE REQUIRES APPROVAL" của landing (docs/index.html .appr) ──
+ * Khối VÀNG đặc (--brass) viền ink 3px + bóng cứng 4px; tiêu đề chữ ink đậm ngay trên nền vàng
+ * (không kẻ, không quầng đỏ); khối code/diff bên trong = thẻ TRẮNG viền ink 2px (landing .diff). */
+[data-theme='brutal'] .approval {
+  background: var(--brass);
+  border: 3px solid var(--hairline);
+  box-shadow: 4px 4px 0 0 var(--hairline);
+}
+[data-theme='brutal'] .approval-head {
+  color: var(--ink);
+  background: transparent;
+  border-bottom: none;
+}
+[data-theme='brutal'] .approval-head > svg {
+  animation: none;
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+  box-shadow: none;
+}
+[data-theme='brutal'] .approval-code-block,
+[data-theme='brutal'] .approval-body-custom > pre {
+  background: var(--surface);
+  border: 2px solid var(--hairline);
+}
+[data-theme='brutal'] .approval .block-title { background: var(--surface); }
+[data-theme='brutal'] .approval .block-title code { color: var(--muted); }
+[data-theme='brutal'] .approval-path code,
+[data-theme='brutal'] .approval-reason code { background: var(--surface); }
+[data-theme='brutal'] .approval-actions {
+  background: transparent;
+  border-top: none;
 }
 
 /* Định dạng tiêu đề Markdown trong nội dung */
@@ -3191,14 +3336,14 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
     var(--brass)
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23fff'%3E%3Cpath d='M12 2l2.9 6.6 7.1.6-5.4 4.7 1.7 7L12 17.8 5.7 21.5l1.7-7L2 9.8l7.1-.6z'/%3E%3C/svg%3E")
     center / 20px 20px no-repeat;
-  border: 3px solid #000;
-  box-shadow: 3px 3px 0 0 #000;
+  border: 3px solid #0a0a0a;
+  box-shadow: 3px 3px 0 0 #0a0a0a;
   transform: rotate(6deg);
   pointer-events: none;
 }
 /* Badge trên chat lệch màu (coral) + xoay ngược để "collage" đa dạng. */
 [data-theme='brutal'] .chat-container::after {
-  background-color: #ff6b6b;
+  background-color: var(--danger);
   transform: rotate(-8deg);
 }
 
@@ -3210,7 +3355,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   border-left: 7px solid transparent;
   border-right: 7px solid transparent;
   border-bottom: 12px solid var(--brass);
-  filter: drop-shadow(1.5px 1.5px 0 #000);
+  filter: drop-shadow(1.5px 1.5px 0 #0a0a0a);
   transform: rotate(-10deg);
   flex-shrink: 0;
   margin-right: 2px;

@@ -73,7 +73,7 @@ interface ParsedArgs {
 function parseArgs(argv: string[]): ParsedArgs {
   const out: ParsedArgs = {
     execute: false,
-    cwd: process.cwd(),
+    cwd: config.defaultCwd,
     effort: 'high',
     profile: 'none',
     subagents: false,
