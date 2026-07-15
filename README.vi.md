@@ -1,10 +1,25 @@
-# bow-agent
+<p align="center">
+  <img src="docs/media/logo.vi.svg" alt="bow-agent banner" width="680">
+</p>
 
-AI agent nhận **đề tài / tài liệu WBS / task-bug từ Jira** rồi tự **lập kế hoạch** và **thực thi** thay đổi code — chạy theo mô hình *plan-then-approve* (lập kế hoạch trước, xin duyệt trước khi thay đổi thật).
+<p align="center">
+  <b>AI agent tự lập kế hoạch và thực thi code — chạy theo mô hình plan-then-approve (mọi thay đổi đều được kiểm soát qua gate duyệt).</b>
+</p>
 
-Repo độc lập, thiết kế để **tái sử dụng cho nhiều dự án**: trỏ agent vào bất kỳ repo nào qua `--cwd`, và mỗi dự án có thể tự động sinh một **profile** kiến thức riêng.
+<p align="center">
+  Chỉ cần trỏ agent vào bất kỳ repo nào qua <code>--cwd</code>, và dự án sẽ tự động được quét để tối ưu ngữ cảnh. Tích hợp sâu Jira, Supabase, và các chế độ phân quyền cực kỳ chi tiết cho nhóm (QC, BA, Reviewer, DevOps).
+</p>
 
-Xây trên [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) (engine chạy Claude Code).
+<p align="center">
+  <a href="README.md">English version</a>
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+  <img alt="Node >= 18" src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg">
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-3178c6.svg?logo=typescript&logoColor=white">
+  <a href="https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk"><img alt="Claude Agent SDK" src="https://img.shields.io/badge/built%20on-Claude%20Agent%20SDK-d97757.svg"></a>
+</p>
 
 ---
 

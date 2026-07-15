@@ -1,4 +1,6 @@
-<h1 align="center">bow-agent</h1>
+<p align="center">
+  <img src="docs/media/logo.svg" alt="bow-agent banner" width="680">
+</p>
 
 <p align="center">
   <b>A self-hosted AI coding agent your whole team can share — where every write is approved by a human.</b>

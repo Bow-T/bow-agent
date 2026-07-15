@@ -1,0 +1,188 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 120" width="680" height="120" fill="none">
+  <style>
+    .title {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      font-weight: 800;
+      font-size: 38px;
+      fill: #0f172a;
+    }
+    .subtitle {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      font-style: italic;
+      font-size: 16px;
+      fill: #475569;
+    }
+    .metadata {
+      font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
+      font-size: 11px;
+      fill: #64748b;
+      letter-spacing: 0.5px;
+    }
+    @media (prefers-color-scheme: dark) {
+      .title {
+        fill: #ffcf24;
+      }
+      .subtitle {
+        fill: #94a3b8;
+      }
+      .metadata {
+        fill: #64748b;
+      }
+    }
+  </style>
+  
+  <!-- Pixel Art Bow Tie Logo -->
+  <rect x="26" y="30" width="6" height="6" fill="#a855f7" />
+  <rect x="32" y="30" width="6" height="6" fill="#a855f7" />
+  <rect x="38" y="30" width="6" height="6" fill="#a855f7" />
+  <rect x="44" y="30" width="6" height="6" fill="#a855f7" />
+  <rect x="50" y="30" width="6" height="6" fill="#a855f7" />
+  <rect x="56" y="30" width="6" height="6" fill="#a855f7" />
+  <rect x="122" y="30" width="6" height="6" fill="#a855f7" />
+  <rect x="128" y="30" width="6" height="6" fill="#a855f7" />
+  <rect x="134" y="30" width="6" height="6" fill="#a855f7" />
+  <rect x="140" y="30" width="6" height="6" fill="#a855f7" />
+  <rect x="146" y="30" width="6" height="6" fill="#a855f7" />
+  <rect x="152" y="30" width="6" height="6" fill="#a855f7" />
+  <rect x="26" y="36" width="6" height="6" fill="#a855f7" />
+  <rect x="32" y="36" width="6" height="6" fill="#ffcf24" />
+  <rect x="38" y="36" width="6" height="6" fill="#ffcf24" />
+  <rect x="44" y="36" width="6" height="6" fill="#ffcf24" />
+  <rect x="50" y="36" width="6" height="6" fill="#ffcf24" />
+  <rect x="56" y="36" width="6" height="6" fill="#ffcf24" />
+  <rect x="62" y="36" width="6" height="6" fill="#a855f7" />
+  <rect x="116" y="36" width="6" height="6" fill="#a855f7" />
+  <rect x="122" y="36" width="6" height="6" fill="#ffcf24" />
+  <rect x="128" y="36" width="6" height="6" fill="#ffcf24" />
+  <rect x="134" y="36" width="6" height="6" fill="#ffcf24" />
+  <rect x="140" y="36" width="6" height="6" fill="#ffcf24" />
+  <rect x="146" y="36" width="6" height="6" fill="#ffcf24" />
+  <rect x="152" y="36" width="6" height="6" fill="#a855f7" />
+  <rect x="32" y="42" width="6" height="6" fill="#a855f7" />
+  <rect x="38" y="42" width="6" height="6" fill="#ffcf24" />
+  <rect x="44" y="42" width="6" height="6" fill="#ffcf24" />
+  <rect x="50" y="42" width="6" height="6" fill="#06b6d4" />
+  <rect x="56" y="42" width="6" height="6" fill="#06b6d4" />
+  <rect x="62" y="42" width="6" height="6" fill="#06b6d4" />
+  <rect x="68" y="42" width="6" height="6" fill="#a855f7" />
+  <rect x="110" y="42" width="6" height="6" fill="#a855f7" />
+  <rect x="116" y="42" width="6" height="6" fill="#06b6d4" />
+  <rect x="122" y="42" width="6" height="6" fill="#06b6d4" />
+  <rect x="128" y="42" width="6" height="6" fill="#06b6d4" />
+  <rect x="134" y="42" width="6" height="6" fill="#ffcf24" />
+  <rect x="140" y="42" width="6" height="6" fill="#ffcf24" />
+  <rect x="146" y="42" width="6" height="6" fill="#a855f7" />
+  <rect x="38" y="48" width="6" height="6" fill="#a855f7" />
+  <rect x="44" y="48" width="6" height="6" fill="#06b6d4" />
+  <rect x="50" y="48" width="6" height="6" fill="#06b6d4" />
+  <rect x="56" y="48" width="6" height="6" fill="#06b6d4" />
+  <rect x="62" y="48" width="6" height="6" fill="#06b6d4" />
+  <rect x="68" y="48" width="6" height="6" fill="#06b6d4" />
+  <rect x="74" y="48" width="6" height="6" fill="#a855f7" />
+  <rect x="80" y="48" width="6" height="6" fill="#f97316" />
+  <rect x="86" y="48" width="6" height="6" fill="#f97316" />
+  <rect x="92" y="48" width="6" height="6" fill="#f97316" />
+  <rect x="98" y="48" width="6" height="6" fill="#f97316" />
+  <rect x="104" y="48" width="6" height="6" fill="#a855f7" />
+  <rect x="110" y="48" width="6" height="6" fill="#06b6d4" />
+  <rect x="116" y="48" width="6" height="6" fill="#06b6d4" />
+  <rect x="122" y="48" width="6" height="6" fill="#06b6d4" />
+  <rect x="128" y="48" width="6" height="6" fill="#06b6d4" />
+  <rect x="134" y="48" width="6" height="6" fill="#06b6d4" />
+  <rect x="140" y="48" width="6" height="6" fill="#a855f7" />
+  <rect x="44" y="54" width="6" height="6" fill="#a855f7" />
+  <rect x="50" y="54" width="6" height="6" fill="#06b6d4" />
+  <rect x="56" y="54" width="6" height="6" fill="#06b6d4" />
+  <rect x="62" y="54" width="6" height="6" fill="#06b6d4" />
+  <rect x="68" y="54" width="6" height="6" fill="#06b6d4" />
+  <rect x="74" y="54" width="6" height="6" fill="#a855f7" />
+  <rect x="80" y="54" width="6" height="6" fill="#f97316" />
+  <rect x="86" y="54" width="6" height="6" fill="#f97316" />
+  <rect x="92" y="54" width="6" height="6" fill="#f97316" />
+  <rect x="98" y="54" width="6" height="6" fill="#f97316" />
+  <rect x="104" y="54" width="6" height="6" fill="#a855f7" />
+  <rect x="110" y="54" width="6" height="6" fill="#06b6d4" />
+  <rect x="116" y="54" width="6" height="6" fill="#06b6d4" />
+  <rect x="122" y="54" width="6" height="6" fill="#06b6d4" />
+  <rect x="128" y="54" width="6" height="6" fill="#06b6d4" />
+  <rect x="134" y="54" width="6" height="6" fill="#a855f7" />
+  <rect x="44" y="60" width="6" height="6" fill="#a855f7" />
+  <rect x="50" y="60" width="6" height="6" fill="#06b6d4" />
+  <rect x="56" y="60" width="6" height="6" fill="#06b6d4" />
+  <rect x="62" y="60" width="6" height="6" fill="#06b6d4" />
+  <rect x="68" y="60" width="6" height="6" fill="#06b6d4" />
+  <rect x="74" y="60" width="6" height="6" fill="#a855f7" />
+  <rect x="80" y="60" width="6" height="6" fill="#f97316" />
+  <rect x="86" y="60" width="6" height="6" fill="#f97316" />
+  <rect x="92" y="60" width="6" height="6" fill="#f97316" />
+  <rect x="98" y="60" width="6" height="6" fill="#f97316" />
+  <rect x="104" y="60" width="6" height="6" fill="#a855f7" />
+  <rect x="110" y="60" width="6" height="6" fill="#06b6d4" />
+  <rect x="116" y="60" width="6" height="6" fill="#06b6d4" />
+  <rect x="122" y="60" width="6" height="6" fill="#06b6d4" />
+  <rect x="128" y="60" width="6" height="6" fill="#06b6d4" />
+  <rect x="134" y="60" width="6" height="6" fill="#a855f7" />
+  <rect x="38" y="66" width="6" height="6" fill="#a855f7" />
+  <rect x="44" y="66" width="6" height="6" fill="#06b6d4" />
+  <rect x="50" y="66" width="6" height="6" fill="#06b6d4" />
+  <rect x="56" y="66" width="6" height="6" fill="#06b6d4" />
+  <rect x="62" y="66" width="6" height="6" fill="#06b6d4" />
+  <rect x="68" y="66" width="6" height="6" fill="#06b6d4" />
+  <rect x="74" y="66" width="6" height="6" fill="#a855f7" />
+  <rect x="80" y="66" width="6" height="6" fill="#f97316" />
+  <rect x="86" y="66" width="6" height="6" fill="#f97316" />
+  <rect x="92" y="66" width="6" height="6" fill="#f97316" />
+  <rect x="98" y="66" width="6" height="6" fill="#f97316" />
+  <rect x="104" y="66" width="6" height="6" fill="#a855f7" />
+  <rect x="110" y="66" width="6" height="6" fill="#06b6d4" />
+  <rect x="116" y="66" width="6" height="6" fill="#06b6d4" />
+  <rect x="122" y="66" width="6" height="6" fill="#06b6d4" />
+  <rect x="128" y="66" width="6" height="6" fill="#06b6d4" />
+  <rect x="134" y="66" width="6" height="6" fill="#06b6d4" />
+  <rect x="140" y="66" width="6" height="6" fill="#a855f7" />
+  <rect x="32" y="72" width="6" height="6" fill="#a855f7" />
+  <rect x="38" y="72" width="6" height="6" fill="#ffcf24" />
+  <rect x="44" y="72" width="6" height="6" fill="#ffcf24" />
+  <rect x="50" y="72" width="6" height="6" fill="#06b6d4" />
+  <rect x="56" y="72" width="6" height="6" fill="#06b6d4" />
+  <rect x="62" y="72" width="6" height="6" fill="#06b6d4" />
+  <rect x="68" y="72" width="6" height="6" fill="#a855f7" />
+  <rect x="110" y="72" width="6" height="6" fill="#a855f7" />
+  <rect x="116" y="72" width="6" height="6" fill="#06b6d4" />
+  <rect x="122" y="72" width="6" height="6" fill="#06b6d4" />
+  <rect x="128" y="72" width="6" height="6" fill="#06b6d4" />
+  <rect x="134" y="72" width="6" height="6" fill="#ffcf24" />
+  <rect x="140" y="72" width="6" height="6" fill="#ffcf24" />
+  <rect x="146" y="72" width="6" height="6" fill="#a855f7" />
+  <rect x="26" y="78" width="6" height="6" fill="#a855f7" />
+  <rect x="32" y="78" width="6" height="6" fill="#ffcf24" />
+  <rect x="38" y="78" width="6" height="6" fill="#ffcf24" />
+  <rect x="44" y="78" width="6" height="6" fill="#ffcf24" />
+  <rect x="50" y="78" width="6" height="6" fill="#ffcf24" />
+  <rect x="56" y="78" width="6" height="6" fill="#ffcf24" />
+  <rect x="62" y="78" width="6" height="6" fill="#a855f7" />
+  <rect x="116" y="78" width="6" height="6" fill="#a855f7" />
+  <rect x="122" y="78" width="6" height="6" fill="#ffcf24" />
+  <rect x="128" y="78" width="6" height="6" fill="#ffcf24" />
+  <rect x="134" y="78" width="6" height="6" fill="#ffcf24" />
+  <rect x="140" y="78" width="6" height="6" fill="#ffcf24" />
+  <rect x="146" y="78" width="6" height="6" fill="#ffcf24" />
+  <rect x="152" y="78" width="6" height="6" fill="#a855f7" />
+  <rect x="26" y="84" width="6" height="6" fill="#a855f7" />
+  <rect x="32" y="84" width="6" height="6" fill="#a855f7" />
+  <rect x="38" y="84" width="6" height="6" fill="#a855f7" />
+  <rect x="44" y="84" width="6" height="6" fill="#a855f7" />
+  <rect x="50" y="84" width="6" height="6" fill="#a855f7" />
+  <rect x="56" y="84" width="6" height="6" fill="#a855f7" />
+  <rect x="122" y="84" width="6" height="6" fill="#a855f7" />
+  <rect x="128" y="84" width="6" height="6" fill="#a855f7" />
+  <rect x="134" y="84" width="6" height="6" fill="#a855f7" />
+  <rect x="140" y="84" width="6" height="6" fill="#a855f7" />
+  <rect x="146" y="84" width="6" height="6" fill="#a855f7" />
+  <rect x="152" y="84" width="6" height="6" fill="#a855f7" />
+
+  <!-- Styled Text -->
+  <text x="184" y="48" class="title">bow-agent</text>
+  <text x="184" y="74" class="subtitle">gated writes, shared agent</text>
+  <text x="184" y="96" class="metadata">CLAUDE AGENT SDK · ROLE-BASED MODES · SELF-HOSTED · GATED WORKFLOWS</text>
+</svg>
