@@ -62,7 +62,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '25mb' }));
 
 const activeClients = new Map<string, { lastSeen: Date; userAgent?: string }>();
 
@@ -810,9 +810,23 @@ app.post('/api/run', async (req, res) => {
           : 'plan';
     const isExecuting = runMode !== 'plan';
 
-    // QC/Reviewer Mode read-only → luôn ép Sonnet (nhẹ/rẻ), KHÔNG tin model client gửi.
-    // Tránh lỡ dùng Opus 4.8 khi client cũ/lỗi hoặc localStorage còn Opus.
-    const effectiveModel = isQcMode || isReviewerMode ? 'claude-sonnet-5' : model;
+    // Routing model theo TÍNH CHẤT việc (ý "adaptive model routing" chọn lọc từ ruflo —
+    // việc rẻ dùng model rẻ). Ba bậc, ưu tiên từ trên xuống:
+    //  1. QC/Reviewer read-only → LUÔN Sonnet (nhẹ/rẻ), KHÔNG tin model client gửi (tránh
+    //     lỡ dùng Opus khi client cũ/localStorage còn Opus).
+    //  2. Mode 'plan' (chỉ HIỂU + LẬP KẾ HOẠCH, KHÔNG sửa file) → hạ Sonnet: lập kế hoạch
+    //     không cần Opus 4.8. Khi user duyệt & chuyển sang execute (manual/edit-auto/auto)
+    //     mới trả về Opus cho phần sửa code khó. Cắt token cho vòng plan-then-approve.
+    //  3. Còn lại (đang thực thi) → model client chọn (mặc định Opus 4.8).
+    // Admin bấm nút vẫn ghi đè được: nếu client GỬI model tường minh cho phiên plan mà admin
+    // muốn Opus, đặt BOW_PLAN_KEEP_MODEL=true để bỏ hạ bậc plan.
+    const planKeepsModel = process.env.BOW_PLAN_KEEP_MODEL === 'true';
+    const effectiveModel =
+      isQcMode || isReviewerMode
+        ? 'claude-sonnet-5'
+        : runMode === 'plan' && !planKeepsModel
+          ? 'claude-sonnet-5'
+          : model;
 
     // Multi-agent (reviewer/verifier/impact-scout): tốn token hơn (spawn agent con) nên CHỈ
     // admin localhost bật được. Non-admin gửi cờ lên cũng bị bỏ qua → single-agent như cũ.
