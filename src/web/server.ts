@@ -62,7 +62,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '25mb' }));
 
 const activeClients = new Map<string, { lastSeen: Date; userAgent?: string }>();
 
@@ -120,6 +120,14 @@ const simulateSessionLimit = process.env.BOW_SIMULATE_SESSION_LIMIT === 'true';
 // POST /api/qc-cwd (không cần restart) → lưu vào qcCwdOverride.
 let qcCwdOverride: string | null = null;
 const qcCwd = () => resolve(qcCwdOverride || process.env.BOW_QC_CWD || config.defaultCwd);
+
+// Mode Dev (mode gốc, cổng 4000): admin đổi source lúc chạy qua POST /api/qc-cwd (cổng 4000)
+// → lưu vào devCwdOverride, không cần restart. Trước đây Dev thiếu override riêng: nhánh ghi
+// rơi vào qcCwdOverride còn nhánh đọc (GET /api/config) lại đọc config.defaultCwd bất biến →
+// source Dev bị revert ngay vòng config kế tiếp ("nguồn dev không chọn được"). devCwd() vá
+// bằng cách cho Dev một override riêng như 5 mode kia.
+let devCwdOverride: string | null = null;
+const devCwd = () => resolve(devCwdOverride || config.defaultCwd);
 
 // Collab Mode: cộng tác viên (CTV) qua LAN code gần như dev, nhưng lệnh HỦY HOẠI
 // (rm -rf, deploy, ghi ngoài repo…) phải được ADMIN (localhost) duyệt từ xa. Git
@@ -632,8 +640,8 @@ app.post('/api/run', async (req, res) => {
             : isDevOpsMode
               ? devopsCwd()
               : isAdmin
-                ? (cwd || config.defaultCwd)
-                : config.defaultCwd;
+                ? (cwd || devCwd())
+                : devCwd();
     const cleanIp = getCleanIp(req);
     // M11: guard kiểu — body do client gửi, ép về string để .trim() không ném TypeError
     // (trước đây {jiraRef:123} gây 500 + rò message lỗi nội bộ thay vì 400 đúng nghĩa).
@@ -802,9 +810,23 @@ app.post('/api/run', async (req, res) => {
           : 'plan';
     const isExecuting = runMode !== 'plan';
 
-    // QC/Reviewer Mode read-only → luôn ép Sonnet (nhẹ/rẻ), KHÔNG tin model client gửi.
-    // Tránh lỡ dùng Opus 4.8 khi client cũ/lỗi hoặc localStorage còn Opus.
-    const effectiveModel = isQcMode || isReviewerMode ? 'claude-sonnet-5' : model;
+    // Routing model theo TÍNH CHẤT việc (ý "adaptive model routing" chọn lọc từ ruflo —
+    // việc rẻ dùng model rẻ). Ba bậc, ưu tiên từ trên xuống:
+    //  1. QC/Reviewer read-only → LUÔN Sonnet (nhẹ/rẻ), KHÔNG tin model client gửi (tránh
+    //     lỡ dùng Opus khi client cũ/localStorage còn Opus).
+    //  2. Mode 'plan' (chỉ HIỂU + LẬP KẾ HOẠCH, KHÔNG sửa file) → hạ Sonnet: lập kế hoạch
+    //     không cần Opus 4.8. Khi user duyệt & chuyển sang execute (manual/edit-auto/auto)
+    //     mới trả về Opus cho phần sửa code khó. Cắt token cho vòng plan-then-approve.
+    //  3. Còn lại (đang thực thi) → model client chọn (mặc định Opus 4.8).
+    // Admin bấm nút vẫn ghi đè được: nếu client GỬI model tường minh cho phiên plan mà admin
+    // muốn Opus, đặt BOW_PLAN_KEEP_MODEL=true để bỏ hạ bậc plan.
+    const planKeepsModel = process.env.BOW_PLAN_KEEP_MODEL === 'true';
+    const effectiveModel =
+      isQcMode || isReviewerMode
+        ? 'claude-sonnet-5'
+        : runMode === 'plan' && !planKeepsModel
+          ? 'claude-sonnet-5'
+          : model;
 
     // Multi-agent (reviewer/verifier/impact-scout): tốn token hơn (spawn agent con) nên CHỈ
     // admin localhost bật được. Non-admin gửi cờ lên cũng bị bỏ qua → single-agent như cũ.
@@ -1092,8 +1114,8 @@ app.get('/api/config', async (req, res) => {
   const isAdmin = isAdminReq(req);
 
   // Source bị khoá theo mode: QC → qcCwd, Reviewer → reviewerCwd, Collab → collabCwd, BA → baCwd,
-  // DevOps → devopsCwd.
-  const effectiveCwd = isQcMode ? qcCwd() : isReviewerMode ? reviewerCwd() : isCollabMode ? collabCwd() : isBaMode ? baCwd() : isDevOpsMode ? devopsCwd() : config.defaultCwd;
+  // DevOps → devopsCwd, còn lại (Dev) → devCwd (đọc devCwdOverride do admin đổi lúc chạy).
+  const effectiveCwd = isQcMode ? qcCwd() : isReviewerMode ? reviewerCwd() : isCollabMode ? collabCwd() : isBaMode ? baCwd() : isDevOpsMode ? devopsCwd() : devCwd();
   // Cổng client LAN quảng bá cho đồng nghiệp. HAI kiến trúc:
   //  - Dev (Vite): frontend chạy ở BOW_WEB_PORT (5173/5174…) và PROXY /api về backend qua
   //    localhost → backend thấy mọi client là 127.0.0.1 (mất phân quyền IP). CHỈ dùng khi tự
@@ -1110,7 +1132,7 @@ app.get('/api/config', async (req, res) => {
   // Khi active=false, defaultCwd/repoName chỉ là giá trị cấu hình fallback để hiển thị —
   // client KHÔNG được mở SSE/fetch tới cổng đó (tránh spam ERR_CONNECTION_REFUSED).
   const modes = {
-    dev: { repoName: basename(config.defaultCwd), defaultCwd: config.defaultCwd, active: currentPort === 4000 },
+    dev: { repoName: basename(devCwd()), defaultCwd: devCwd(), active: currentPort === 4000 },
     qc: { repoName: basename(qcCwd()), defaultCwd: qcCwd(), active: currentPort === 4001 },
     collab: { repoName: basename(collabCwd()), defaultCwd: collabCwd(), active: currentPort === 4002 },
     ba: { repoName: basename(baCwd()), defaultCwd: baCwd(), active: currentPort === 4003 },
@@ -1167,22 +1189,35 @@ app.get('/api/config', async (req, res) => {
 // Helper to save active profile to .env
 function saveActiveProfileToEnv(profileName: string): void {
   const envPath = join(process.cwd(), '.env');
-  const dirName = profileName === 'default' ? '.claude' : `.claude-${profileName}`;
-  const fullPath = join(os.homedir(), dirName);
-  
+
   let content = '';
   if (fs.existsSync(envPath)) {
     content = fs.readFileSync(envPath, 'utf8');
   }
-  
+
+  // Profile 'default' = login MẶC ĐỊNH của máy (~/.claude). PHẢI để CLAUDE_CONFIG_DIR TRỐNG,
+  // KHÔNG ghi path tường minh: Claude Code tính Keychain key theo config dir, nên ép
+  // CLAUDE_CONFIG_DIR=~/.claude (dù đúng là thư mục mặc định) lại trỏ tới một Keychain key
+  // KHÁC với entry mặc định đang giữ token còn hạn → "Not logged in". Chỉ khi biến này vắng
+  // mặt, CLI mới dùng đúng login mặc định (đã auto-refresh). Profile phụ (.claude-xxx) mới set path.
+  if (profileName === 'default') {
+    // Gỡ hẳn mọi dòng CLAUDE_CONFIG_DIR (kể cả dòng trống thừa nó để lại).
+    content = content.replace(/^CLAUDE_CONFIG_DIR=.*\n?/gm, '');
+    fs.writeFileSync(envPath, content, 'utf8');
+    // Đồng bộ tiến trình đang chạy: bỏ biến để loadActiveProfileToken/SDK dùng login mặc định ngay.
+    delete process.env.CLAUDE_CONFIG_DIR;
+    return;
+  }
+
+  const fullPath = join(os.homedir(), `.claude-${profileName}`);
   const lineToSet = `CLAUDE_CONFIG_DIR=${fullPath}`;
-  
+
   if (content.includes('CLAUDE_CONFIG_DIR=')) {
     content = content.replace(/CLAUDE_CONFIG_DIR=.*/g, lineToSet);
   } else {
     content += (content.endsWith('\n') ? '' : '\n') + lineToSet + '\n';
   }
-  
+
   fs.writeFileSync(envPath, content, 'utf8');
 }
 
@@ -1208,7 +1243,10 @@ app.post('/api/profiles', requireAdmin, (req, res) => {
     }
   }
 
-  process.env.CLAUDE_CONFIG_DIR = fullPath;
+  // Profile 'default' = login mặc định máy → PHẢI GỠ CLAUDE_CONFIG_DIR (xem saveActiveProfileToEnv:
+  // set path tường minh trỏ nhầm Keychain key → "Not logged in"). Profile phụ mới set path.
+  if (pName === 'default') delete process.env.CLAUDE_CONFIG_DIR;
+  else process.env.CLAUDE_CONFIG_DIR = fullPath;
   logAudit(`ADMIN chuyển profile Claude → ${pName}`, '127.0.0.1');
 
   // Ghi hoặc xoá token.txt
@@ -1216,6 +1254,18 @@ app.post('/api/profiles', requireAdmin, (req, res) => {
   if (typeof token === 'string') {
     const trimmedToken = token.trim();
     if (trimmedToken) {
+      // CHẶN OAuth access token (`sk-ant-oat…`): token.txt là snapshot TĨNH không refresh,
+      // còn OAuth sống ngắn (~vài giờ) → lưu vào sẽ 401 sau khi hết hạn (xem loadActiveProfileToken).
+      // Muốn dùng gói Claude → đăng nhập qua nút Login (OAuth theo thư mục, tự refresh). token.txt
+      // CHỈ dành cho API key dài hạn (`sk-ant-api…`).
+      if (trimmedToken.startsWith('sk-ant-oat')) {
+        res.status(400).json({
+          error:
+            'Không lưu OAuth token vào token.txt (loại này hết hạn sau vài giờ và không tự làm mới → sẽ lỗi 401). ' +
+            'Dùng nút "Đăng nhập" để login qua Claude CLI (tự làm mới), hoặc dán API key dài hạn (sk-ant-api…).',
+        });
+        return;
+      }
       try {
         fs.writeFileSync(tokenFile, trimmedToken, 'utf8');
         logAudit(`ADMIN ghi token cho profile Claude → ${pName}`, '127.0.0.1');
@@ -1511,12 +1561,14 @@ app.post('/api/qc-cwd', requireAdmin, (req, res) => {
     return;
   }
   // Ghi vào override đúng theo mode tiến trình đang chạy: BA → baCwdOverride, Reviewer →
-  // reviewerCwdOverride, DevOps → devopsCwdOverride, còn lại → qcCwdOverride (dùng chung QC/dev —
-  // GET /api/config đọc theo mode).
+  // reviewerCwdOverride, DevOps → devopsCwdOverride, QC → qcCwdOverride, Dev → devCwdOverride.
+  // Mỗi mode có override riêng để GET /api/config đọc lại đúng bản đã đổi (trước đây Dev mượn
+  // qcCwdOverride nên đọc/ghi lệch nhau → source Dev không đổi được).
   if (isBaMode) baCwdOverride = dir;
   else if (isReviewerMode) reviewerCwdOverride = dir;
   else if (isDevOpsMode) devopsCwdOverride = dir;
-  else qcCwdOverride = dir;
+  else if (isQcMode) qcCwdOverride = dir;
+  else devCwdOverride = dir; // mode Dev (mode gốc): ghi vào override RIÊNG, không mượn qcCwdOverride.
   logAudit(`ADMIN đổi source → ${dir}`, '127.0.0.1');
   res.json({ ok: true, cwd: dir, repoName: basename(dir) });
 });

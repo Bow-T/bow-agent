@@ -1,6 +1,19 @@
 import type { AgentDefinition } from '@anthropic-ai/claude-agent-sdk';
 
 /**
+ * Model cho subagent — CỐ Ý rẻ hơn Opus của phiên chính (ý "complexity-aware dispatch"
+ * chọn lọc từ ruflo, hiện thực native bằng field model của Agent SDK — KHÔNG bê framework).
+ * Việc read-only (rà soát/kiểm chứng/quét call-site) không cần model đỉnh; hạ xuống đây
+ * cắt token/chi phí mỗi lần bật --subagents mà không đổi hành vi ghi (mọi thay đổi thật
+ * vẫn do agent chính Opus làm & qua onApproval).
+ *  - SUBAGENT_MODEL: reviewer/verifier — cần suy luận, dùng Sonnet 5.
+ *  - SCOUT_MODEL: impact-scout — thuần grep, dùng Haiku 4.5 (rẻ/nhanh nhất).
+ * Ghi đè được qua env để A/B (vd đặt 'inherit' để so với Opus). Rỗng → mặc định dưới.
+ */
+const SUBAGENT_MODEL = process.env.BOW_SUBAGENT_MODEL || 'claude-sonnet-5';
+const SCOUT_MODEL = process.env.BOW_SCOUT_MODEL || 'claude-haiku-4-5-20251001';
+
+/**
  * Subagent CHUẨN của bow-agent — bộ "vai trò chuyên biệt" (mượn ý role-specialization
  * của CrewAI, hiện thực bằng Options.agents của Claude Agent SDK, KHÔNG bê framework).
  *
@@ -43,7 +56,10 @@ const reviewer: AgentDefinition = {
     'kế hoạch, hoặc trước commit để soi diff. Chỉ đọc — không sửa file.',
   tools: ['Read', 'Grep', 'Glob', 'Bash'],
   disallowedTools: READONLY_DENY,
-  model: 'inherit',
+  // Phản biện cần suy luận sâu (bắt call-site sót, giả định sai) → Sonnet 5 (đủ mạnh,
+  // rẻ hơn Opus phiên chính ~5×). Đây là "complexity-aware dispatch": việc rà soát
+  // read-only không cần model đỉnh. impact-scout (chỉ grep) hạ tiếp xuống Haiku dưới.
+  model: SUBAGENT_MODEL,
   effort: 'high',
   maxTurns: 12,
   permissionMode: 'plan', // an toàn: subagent này không được thực thi thay đổi
@@ -66,7 +82,9 @@ const verifier: AgentDefinition = {
     'thành. Được chạy lệnh kiểm chứng (test/analyze/git diff) nhưng không sửa file / commit.',
   tools: ['Read', 'Grep', 'Glob', 'Bash'],
   disallowedTools: READONLY_DENY,
-  model: 'inherit',
+  // Verifier chạy test/analyze + trace runtime — cần đọc-hiểu chuỗi luồng nhưng không
+  // cần Opus. Sonnet 5 đủ, rẻ hơn nhiều so với để inherit Opus của phiên chính.
+  model: SUBAGENT_MODEL,
   effort: 'high',
   maxTurns: 15,
   // 'plan' KHÔNG chặn Bash (test/analyze vẫn chạy được) nhưng chặn Edit/Write —
@@ -90,7 +108,9 @@ const impactScout: AgentDefinition = {
     'đổi signature/enum/status/schema/cột DB dùng nhiều nơi. Chỉ đọc, trả về checklist site.',
   tools: ['Read', 'Grep', 'Glob'],
   disallowedTools: READONLY_DENY,
-  model: 'inherit',
+  // Impact-scout thuần grep/liệt-kê call-site — việc máy móc nhất trong bộ. Haiku 4.5
+  // đủ nhanh & chính xác cho quét blast radius, rẻ nhất → dùng cho vòng lặp grep dày.
+  model: SCOUT_MODEL,
   effort: 'medium',
   maxTurns: 10,
   permissionMode: 'plan',

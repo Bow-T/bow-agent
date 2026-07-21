@@ -26,6 +26,28 @@ export default defineConfig({
       '/api': {
         target: `http://localhost:${apiPort}`,
         xfwd: true,
+        // Backend (tsx transpile server.ts) lên CHẬM hơn Vite vài giây → trong cửa sổ đó
+        // mọi /api bị ECONNREFUSED và Vite mặc định trả 500 khó hiểu. Bắt lỗi proxy để
+        // trả 503 kèm message rõ ràng: "backend đang khởi động, thử lại" thay vì 500.
+        configure: (proxy) => {
+          proxy.on('error', (err, _req, res) => {
+            const connRefused = (err as NodeJS.ErrnoException).code === 'ECONNREFUSED';
+            // res có thể là ServerResponse (HTTP) hoặc Socket (WebSocket upgrade) — chỉ
+            // ghi JSON khi là HTTP response chưa gửi header.
+            if ('writeHead' in res && !res.headersSent) {
+              res.writeHead(connRefused ? 503 : 502, { 'Content-Type': 'application/json' });
+              res.end(
+                JSON.stringify({
+                  error: connRefused
+                    ? `Backend (cổng ${apiPort}) chưa sẵn sàng — có thể đang khởi động hoặc đã tắt. Đợi vài giây rồi thử lại.`
+                    : `Lỗi proxy tới backend cổng ${apiPort}: ${err.message}`,
+                })
+              );
+            } else if ('destroy' in res) {
+              res.destroy();
+            }
+          });
+        },
       },
     },
   },
