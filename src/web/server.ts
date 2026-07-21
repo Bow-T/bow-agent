@@ -121,6 +121,14 @@ const simulateSessionLimit = process.env.BOW_SIMULATE_SESSION_LIMIT === 'true';
 let qcCwdOverride: string | null = null;
 const qcCwd = () => resolve(qcCwdOverride || process.env.BOW_QC_CWD || config.defaultCwd);
 
+// Mode Dev (mode gốc, cổng 4000): admin đổi source lúc chạy qua POST /api/qc-cwd (cổng 4000)
+// → lưu vào devCwdOverride, không cần restart. Trước đây Dev thiếu override riêng: nhánh ghi
+// rơi vào qcCwdOverride còn nhánh đọc (GET /api/config) lại đọc config.defaultCwd bất biến →
+// source Dev bị revert ngay vòng config kế tiếp ("nguồn dev không chọn được"). devCwd() vá
+// bằng cách cho Dev một override riêng như 5 mode kia.
+let devCwdOverride: string | null = null;
+const devCwd = () => resolve(devCwdOverride || config.defaultCwd);
+
 // Collab Mode: cộng tác viên (CTV) qua LAN code gần như dev, nhưng lệnh HỦY HOẠI
 // (rm -rf, deploy, ghi ngoài repo…) phải được ADMIN (localhost) duyệt từ xa. Git
 // được tự do. Không đổi được MCP/workspace config (như QC Mode). Khác QC Mode ở
@@ -632,8 +640,8 @@ app.post('/api/run', async (req, res) => {
             : isDevOpsMode
               ? devopsCwd()
               : isAdmin
-                ? (cwd || config.defaultCwd)
-                : config.defaultCwd;
+                ? (cwd || devCwd())
+                : devCwd();
     const cleanIp = getCleanIp(req);
     // M11: guard kiểu — body do client gửi, ép về string để .trim() không ném TypeError
     // (trước đây {jiraRef:123} gây 500 + rò message lỗi nội bộ thay vì 400 đúng nghĩa).
@@ -1092,8 +1100,8 @@ app.get('/api/config', async (req, res) => {
   const isAdmin = isAdminReq(req);
 
   // Source bị khoá theo mode: QC → qcCwd, Reviewer → reviewerCwd, Collab → collabCwd, BA → baCwd,
-  // DevOps → devopsCwd.
-  const effectiveCwd = isQcMode ? qcCwd() : isReviewerMode ? reviewerCwd() : isCollabMode ? collabCwd() : isBaMode ? baCwd() : isDevOpsMode ? devopsCwd() : config.defaultCwd;
+  // DevOps → devopsCwd, còn lại (Dev) → devCwd (đọc devCwdOverride do admin đổi lúc chạy).
+  const effectiveCwd = isQcMode ? qcCwd() : isReviewerMode ? reviewerCwd() : isCollabMode ? collabCwd() : isBaMode ? baCwd() : isDevOpsMode ? devopsCwd() : devCwd();
   // Cổng client LAN quảng bá cho đồng nghiệp. HAI kiến trúc:
   //  - Dev (Vite): frontend chạy ở BOW_WEB_PORT (5173/5174…) và PROXY /api về backend qua
   //    localhost → backend thấy mọi client là 127.0.0.1 (mất phân quyền IP). CHỈ dùng khi tự
@@ -1110,7 +1118,7 @@ app.get('/api/config', async (req, res) => {
   // Khi active=false, defaultCwd/repoName chỉ là giá trị cấu hình fallback để hiển thị —
   // client KHÔNG được mở SSE/fetch tới cổng đó (tránh spam ERR_CONNECTION_REFUSED).
   const modes = {
-    dev: { repoName: basename(config.defaultCwd), defaultCwd: config.defaultCwd, active: currentPort === 4000 },
+    dev: { repoName: basename(devCwd()), defaultCwd: devCwd(), active: currentPort === 4000 },
     qc: { repoName: basename(qcCwd()), defaultCwd: qcCwd(), active: currentPort === 4001 },
     collab: { repoName: basename(collabCwd()), defaultCwd: collabCwd(), active: currentPort === 4002 },
     ba: { repoName: basename(baCwd()), defaultCwd: baCwd(), active: currentPort === 4003 },
@@ -1539,12 +1547,14 @@ app.post('/api/qc-cwd', requireAdmin, (req, res) => {
     return;
   }
   // Ghi vào override đúng theo mode tiến trình đang chạy: BA → baCwdOverride, Reviewer →
-  // reviewerCwdOverride, DevOps → devopsCwdOverride, còn lại → qcCwdOverride (dùng chung QC/dev —
-  // GET /api/config đọc theo mode).
+  // reviewerCwdOverride, DevOps → devopsCwdOverride, QC → qcCwdOverride, Dev → devCwdOverride.
+  // Mỗi mode có override riêng để GET /api/config đọc lại đúng bản đã đổi (trước đây Dev mượn
+  // qcCwdOverride nên đọc/ghi lệch nhau → source Dev không đổi được).
   if (isBaMode) baCwdOverride = dir;
   else if (isReviewerMode) reviewerCwdOverride = dir;
   else if (isDevOpsMode) devopsCwdOverride = dir;
-  else qcCwdOverride = dir;
+  else if (isQcMode) qcCwdOverride = dir;
+  else devCwdOverride = dir; // mode Dev (mode gốc): ghi vào override RIÊNG, không mượn qcCwdOverride.
   logAudit(`ADMIN đổi source → ${dir}`, '127.0.0.1');
   res.json({ ok: true, cwd: dir, repoName: basename(dir) });
 });
