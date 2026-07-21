@@ -624,7 +624,6 @@ a { color: var(--brass); text-underline-offset: 2px; }
   position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
   background: var(--brass);
 }
-/* Chấm trạng thái đang chạy (agent hoạt động ở tab này). */
 .tab-bar-dot {
   width: 7px; height: 7px; border-radius: 50%;
   flex-shrink: 0;
@@ -633,7 +632,6 @@ a { color: var(--brass); text-underline-offset: 2px; }
 .tab-bar-dot.live { background: var(--brass); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brass) 25%, transparent); animation: tab-pulse 1.4s ease-in-out infinite; }
 @keyframes tab-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
 .tab-bar-title { overflow: hidden; text-overflow: ellipsis; }
-/* Nút đóng tab — chỉ hiện khi hover/active để đỡ rối. */
 .tab-bar-close {
   display: inline-grid; place-items: center;
   width: 16px; height: 16px; border-radius: 4px;
@@ -645,7 +643,6 @@ a { color: var(--brass); text-underline-offset: 2px; }
 .tab-bar-item:hover .tab-bar-close,
 .tab-bar-item.active .tab-bar-close { opacity: 1; }
 .tab-bar-close:hover { background: color-mix(in srgb, var(--ink) 14%, transparent); color: var(--ink); }
-/* Nút thêm tab mới. */
 .tab-bar-add {
   display: inline-grid; place-items: center;
   width: 34px; flex-shrink: 0;
@@ -657,15 +654,18 @@ a { color: var(--brass); text-underline-offset: 2px; }
 }
 .tab-bar-add:hover { color: var(--ink); background: color-mix(in srgb, var(--surface) 92%, transparent); }
 
-/* Vỏ per-tab: thừa hưởng layout cột của .app (main-layout flex:1 + composer đáy).
-   Tab nền ẩn bằng [hidden] nhưng vẫn mounted → SSE/timer/state của nó vẫn sống. */
+/* Bọc 1 tab hội thoại (TaskPane). Nằm giữa .app (flex column) và .main-layout — phải là
+   flex column tự giãn để .main-layout bên trong vẫn fill như khi chưa tách. [hidden] ẩn tab
+   không hoạt động (tab nền vẫn mounted → SSE/timer vẫn chạy). */
 .task-pane {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
 }
-.task-pane[hidden] { display: none; }
+.task-pane[hidden] {
+  display: none;
+}
 
 .main-layout {
   display: flex;
@@ -1501,7 +1501,33 @@ a { color: var(--brass); text-underline-offset: 2px; }
   overflow-x: auto;
   line-height: 1.55;
 }
+.md pre.has-copy { position: relative; }
 .md pre code { background: transparent; border: none; padding: 0; font-size: 12.5px; }
+
+/* Nút Copy trên mỗi khối code (giống Claude VSCode) — khỏi bôi đen thủ công.
+   Ẩn mờ, rõ khi rê chuột vào khối; màn cảm ứng (không hover) thì luôn hiện. */
+.code-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 3px 9px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms var(--ease), color 120ms var(--ease), border-color 120ms var(--ease);
+}
+.md pre:hover .code-copy,
+.code-copy:focus-visible { opacity: 0.9; }
+.code-copy:hover { opacity: 1; color: var(--ink); border-color: var(--brass); }
+.code-copy.copied { opacity: 1; color: var(--teal); border-color: var(--teal); }
+@media (hover: none) { .code-copy { opacity: 0.75; } }
 .md table { border-collapse: collapse; margin: 0 0 12px; font-size: 13px; display: block; overflow-x: auto; }
 .md th, .md td { border: 1px solid var(--hairline); padding: 6px 11px; text-align: left; }
 .md th {
