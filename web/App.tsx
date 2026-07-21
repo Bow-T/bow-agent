@@ -264,6 +264,88 @@ function getAdminApiOrigins(): string[] {
   return API_PORTS.map(p => `http://localhost:${p}`);
 }
 
+// ── Multi-tab: nhiều tác vụ/hội thoại chạy SONG SONG trong cùng một trang ─────
+// Mỗi tab là một instance <TaskPane> độc lập (state/SSE/session riêng). Danh sách
+// tab + tab đang mở lưu ở App; state per-tab của mỗi pane lưu localStorage key theo
+// tabId (tabKey) để các tab không đè lên nhau.
+
+/** Một tab đang mở — chỉ metadata (nội dung nằm trong TaskPane + localStorage theo id). */
+export interface Tab {
+  id: string;
+  /** Tiêu đề hiển thị trên thanh tab (lấy từ câu hỏi đầu; rỗng = "Tác vụ mới"). */
+  title: string;
+}
+
+/** Key localStorage của MỘT tab: base + ':' + tabId. Tab đầu (migrate) dùng id 'legacy'. */
+export const tabKey = (base: string, tabId: string) => `${base}:${tabId}`;
+
+/** id cố định cho tab đầu tiên — để migrate dữ liệu 1-tab cũ (key không suffix) idempotent. */
+export const LEGACY_TAB_ID = 'legacy';
+
+/** Các base-key per-tab (state riêng từng hội thoại) — dùng cho migrate + dọn khi đóng tab. */
+const PER_TAB_KEYS = [
+  'bow-chat-items',
+  'bow-conversation-id',
+  'bow-active-conv-id',
+  'bow-session-id',
+  'bow-session-baseline',
+  'bow-task',
+] as const;
+
+/**
+ * Nạp danh sách tab từ localStorage. Lần ĐẦU bật multi-tab (chưa có 'bow-tabs'):
+ * migrate dữ liệu 1-tab cũ (key KHÔNG suffix) sang tab 'legacy' rồi trả về [legacy].
+ */
+function loadTabs(): Tab[] {
+  try {
+    const raw = localStorage.getItem('bow-tabs');
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr) && arr.length > 0) return arr as Tab[];
+    }
+  } catch {
+    /* parse lỗi → rơi xuống nhánh migrate */
+  }
+  // Copy state 1-tab cũ sang key ':legacy' (idempotent — không đè nếu đã có).
+  for (const k of PER_TAB_KEYS) {
+    const v = localStorage.getItem(k);
+    if (v != null && localStorage.getItem(tabKey(k, LEGACY_TAB_ID)) == null) {
+      localStorage.setItem(tabKey(k, LEGACY_TAB_ID), v);
+    }
+  }
+  // Tiêu đề tab đầu suy từ chat cũ (câu user đầu tiên) nếu có.
+  let title = '';
+  try {
+    const rawItems = localStorage.getItem(tabKey('bow-chat-items', LEGACY_TAB_ID));
+    if (rawItems) {
+      const items = JSON.parse(rawItems) as ChatItem[];
+      const firstUser = items.find((it) => it.kind === 'user')?.text ?? '';
+      title = firstUser.replace(/\s+/g, ' ').trim().slice(0, 40);
+    }
+  } catch {
+    /* bỏ qua — tiêu đề rỗng là chấp nhận được */
+  }
+  return [{ id: LEGACY_TAB_ID, title }];
+}
+
+/** Tab đang mở lần trước (rỗng/không hợp lệ → tab đầu của danh sách). */
+function loadActiveTabId(tabs: Tab[]): string {
+  const saved = localStorage.getItem('bow-active-tab');
+  if (saved && tabs.some((t) => t.id === saved)) return saved;
+  return tabs[0]?.id ?? LEGACY_TAB_ID;
+}
+
+/** Xoá mọi key localStorage của một tab (gọi khi đóng tab, tránh rác). */
+function clearTabKeys(tabId: string): void {
+  for (const k of PER_TAB_KEYS) {
+    try {
+      localStorage.removeItem(tabKey(k, tabId));
+    } catch {
+      /* bỏ qua */
+    }
+  }
+}
+
 export function App() {
   const [cfg, setCfg] = useState<{
     defaultCwd: string;

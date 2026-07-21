@@ -582,6 +582,91 @@ a { color: var(--brass); text-underline-offset: 2px; }
 }
 
 /* ───────────────────────────  Layout  ─────────────────────────── */
+/* ── Thanh tab (multi-tab: nhiều tác vụ song song) ─────────────────────────── */
+.tab-bar {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  height: 34px;
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  background-image: var(--grain);
+  border-bottom: 1px solid var(--hairline);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+.tab-bar-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px 0 13px;
+  max-width: 220px;
+  min-width: 96px;
+  border: none;
+  border-right: 1px solid var(--hairline);
+  background: transparent;
+  color: color-mix(in srgb, var(--ink) 62%, transparent);
+  font-family: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  white-space: nowrap;
+  position: relative;
+  transition: background 0.12s, color 0.12s;
+}
+.tab-bar-item:hover { color: var(--ink); background: color-mix(in srgb, var(--surface) 92%, transparent); }
+.tab-bar-item.active {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+}
+.tab-bar-item.active::after {
+  content: '';
+  position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+  background: var(--brass);
+}
+/* Chấm trạng thái đang chạy (agent hoạt động ở tab này). */
+.tab-bar-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--ink) 35%, transparent);
+}
+.tab-bar-dot.live { background: var(--brass); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brass) 25%, transparent); animation: tab-pulse 1.4s ease-in-out infinite; }
+@keyframes tab-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
+.tab-bar-title { overflow: hidden; text-overflow: ellipsis; }
+/* Nút đóng tab — chỉ hiện khi hover/active để đỡ rối. */
+.tab-bar-close {
+  display: inline-grid; place-items: center;
+  width: 16px; height: 16px; border-radius: 4px;
+  border: none; background: transparent;
+  color: color-mix(in srgb, var(--ink) 55%, transparent);
+  cursor: pointer; flex-shrink: 0;
+  opacity: 0; transition: opacity 0.12s, background 0.12s;
+}
+.tab-bar-item:hover .tab-bar-close,
+.tab-bar-item.active .tab-bar-close { opacity: 1; }
+.tab-bar-close:hover { background: color-mix(in srgb, var(--ink) 14%, transparent); color: var(--ink); }
+/* Nút thêm tab mới. */
+.tab-bar-add {
+  display: inline-grid; place-items: center;
+  width: 34px; flex-shrink: 0;
+  border: none; border-right: 1px solid var(--hairline);
+  background: transparent;
+  color: color-mix(in srgb, var(--ink) 60%, transparent);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.tab-bar-add:hover { color: var(--ink); background: color-mix(in srgb, var(--surface) 92%, transparent); }
+
+/* Vỏ per-tab: thừa hưởng layout cột của .app (main-layout flex:1 + composer đáy).
+   Tab nền ẩn bằng [hidden] nhưng vẫn mounted → SSE/timer/state của nó vẫn sống. */
+.task-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.task-pane[hidden] { display: none; }
+
 .main-layout {
   display: flex;
   flex: 1;
