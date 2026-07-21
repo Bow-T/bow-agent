@@ -53,15 +53,46 @@ export function loadActiveProfileToken(): void {
 loadActiveProfileToken();
 
 /**
- * Có credential Claude Code CLI đã login sẵn không (~/.claude tồn tại)?
+ * Có credential Claude Code CLI đã login sẵn không?
  * Hỗ trợ các biến môi trường ANTHROPIC_API_KEY hoặc CLAUDE_CODE_OAUTH_TOKEN.
+ *
+ * Lưu ý phân biệt profile:
+ * - Profile DEFAULT (không set CLAUDE_CONFIG_DIR, hoặc trỏ ~/.claude): CLI có thể lưu login
+ *   trong Keychain (macOS) → KHÔNG kiểm được bằng file. Chỉ cần thư mục tồn tại là coi có login,
+ *   giữ nguyên hành vi cũ (login mặc định máy chạy tốt, đừng phá).
+ * - Profile PHỤ (CLAUDE_CONFIG_DIR set tường minh sang ~/.claude-<name>): login luôn ghi ra
+ *   file .credentials.json (OAuth) hoặc token.txt (API key) TRONG thư mục đó. Thư mục rỗng =
+ *   ĐÃ TẠO nhưng CHƯA login xong → phải trả false, nếu không cổng hasAuth cho qua rồi mới nổ
+ *   500 "Not logged in" khó hiểu ở tầng SDK. Xem hasClaudeCliLogin.
  */
 function hasClaudeCliLogin(): boolean {
   if (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN) {
     return true;
   }
-  const configDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
-  return existsSync(configDir);
+  const configDir = process.env.CLAUDE_CONFIG_DIR;
+  const defaultDir = join(homedir(), '.claude');
+  // Profile default (biến vắng mặt hoặc trỏ ~/.claude): tin thư mục tồn tại (có thể login qua Keychain).
+  if (!configDir || configDir === defaultDir) {
+    return existsSync(defaultDir);
+  }
+  // Profile phụ: thư mục phải tồn tại VÀ có bằng chứng login thật (không chỉ .claude.json rỗng).
+  if (!existsSync(configDir)) return false;
+  if (existsSync(join(configDir, '.credentials.json')) || existsSync(join(configDir, 'token.txt'))) {
+    return true;
+  }
+  // Trên macOS/Windows, CLI có thể lưu login trong Keychain và chỉ ghi thông tin account vào .claude.json
+  const jsonPath = getClaudeJsonPath();
+  if (existsSync(jsonPath)) {
+    try {
+      const configData = JSON.parse(readFileSync(jsonPath, 'utf8'));
+      if (configData && configData.oauthAccount) {
+        return true;
+      }
+    } catch {
+      // bỏ qua nếu lỗi parse
+    }
+  }
+  return false;
 }
 
 /**

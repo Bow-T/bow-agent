@@ -277,8 +277,10 @@ function findClaudeCodeExecutable(workspaceRoot: string): string | undefined {
 export async function runAgent(opts: RunOptions): Promise<string | null> {
   // Cần auth: đã login Claude Code CLI (~/.claude). Agent SDK spawn `claude` dùng login đó.
   if (!config.hasAuth) {
+    const cfgDir = process.env.CLAUDE_CONFIG_DIR;
+    const which = cfgDir ? ` (profile: ${cfgDir})` : '';
     throw new Error(
-      'Chưa đăng nhập Claude CLI. Chạy `claude` rồi /login (dùng gói Claude sẵn có, không cần API key).',
+      `Chưa đăng nhập Claude CLI${which}. Đăng nhập lại profile này trong web, hoặc chạy \`claude\` rồi /login (dùng gói Claude sẵn có, không cần API key).`,
     );
   }
 

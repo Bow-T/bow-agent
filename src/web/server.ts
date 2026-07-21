@@ -1358,15 +1358,28 @@ app.post('/api/profiles/login/start', requireAdmin, (req, res) => {
   }
 
   let child;
+  const binary = getClaudeBinaryPath();
   try {
-    const binary = getClaudeBinaryPath();
     const envPath = process.env.PATH || '';
     const pathsToPrepend = ['/opt/homebrew/bin', '/usr/local/bin'];
     const newPath = [...pathsToPrepend, envPath.split(':')].flat().filter(Boolean).join(':');
 
+    // Env SẠCH cho login: gỡ mọi biến auth khỏi process.env server trước khi truyền cho con.
+    // Vì sao: server sống lâu, đổi profile qua lại + chạy task qua SDK tích lũy token/base-url của
+    // profile CŨ vào process.env. `claude auth login` thừa hưởng token rác đó → conflict → THOÁT
+    // MÃ 1 KHÔNG OUTPUT (đúng lỗi đã gặp: login chết ngay, server sạch thì login OK). Login tạo
+    // token mới, KHÔNG cần token có sẵn → cứ gỡ hết cho chắc. Đây là chốt chặn class lỗi "env bẩn".
+    const cleanEnv = { ...process.env };
+    for (const k of [
+      'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_BASE_URL',
+      'ANTHROPIC_BEDROCK_BASE_URL', 'ANTHROPIC_VERTEX_BASE_URL', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX',
+    ]) {
+      delete cleanEnv[k];
+    }
+
     child = spawn(binary, ['auth', 'login', '--claudeai'], {
       env: {
-        ...process.env,
+        ...cleanEnv,
         PATH: newPath,
         CLAUDE_CONFIG_DIR: fullPath,
       },
@@ -1380,6 +1393,7 @@ app.post('/api/profiles/login/start', requireAdmin, (req, res) => {
 
   let url = '';
   let output = '';
+  let stderrBuf = '';
   let urlSent = false;
 
   const handleChunk = (chunk: any) => {
@@ -1394,7 +1408,7 @@ app.post('/api/profiles/login/start', requireAdmin, (req, res) => {
   };
 
   child.stdout.on('data', handleChunk);
-  child.stderr.on('data', handleChunk);
+  child.stderr.on('data', (chunk: any) => { stderrBuf += chunk.toString(); handleChunk(chunk); });
 
   const timeoutId = setTimeout(() => {
     if (!urlSent) {
@@ -1415,10 +1429,18 @@ app.post('/api/profiles/login/start', requireAdmin, (req, res) => {
     activeLogins.delete(pName);
   });
 
-  child.on('close', (code) => {
+  child.on('close', (code, signal) => {
     clearTimeout(timeoutId);
     activeLogins.delete(pName);
     if (!urlSent && !res.headersSent) {
+      // Tiến trình chết TRƯỚC khi in URL. Log ra server (stdout+stderr đã gộp vào `output`) để
+      // không mất manh mối — message JSON có thể là "Không có output." nếu CLI chết trước khi kịp in.
+      console.error(
+        `[login/start] profile=${pName} binary=${binary} exit=${code} signal=${signal} pid=${child.pid}\n` +
+        `CLAUDE_CONFIG_DIR=${fullPath} cwd=${process.cwd()}\n` +
+        `stderr riêng:\n${stderrBuf.trim() || '(stderr rỗng)'}\n` +
+        `stdout+stderr gộp:\n${output.trim() || '(rỗng — tiến trình thoát trước khi in bất kỳ output nào)'}`
+      );
       res.status(500).json({
         error: `Tiến trình Claude CLI thoát sớm với mã ${code}. Chi tiết: ${output.trim() || 'Không có output.'}`
       });
