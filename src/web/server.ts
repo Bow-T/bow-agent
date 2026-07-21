@@ -1167,22 +1167,35 @@ app.get('/api/config', async (req, res) => {
 // Helper to save active profile to .env
 function saveActiveProfileToEnv(profileName: string): void {
   const envPath = join(process.cwd(), '.env');
-  const dirName = profileName === 'default' ? '.claude' : `.claude-${profileName}`;
-  const fullPath = join(os.homedir(), dirName);
-  
+
   let content = '';
   if (fs.existsSync(envPath)) {
     content = fs.readFileSync(envPath, 'utf8');
   }
-  
+
+  // Profile 'default' = login MẶC ĐỊNH của máy (~/.claude). PHẢI để CLAUDE_CONFIG_DIR TRỐNG,
+  // KHÔNG ghi path tường minh: Claude Code tính Keychain key theo config dir, nên ép
+  // CLAUDE_CONFIG_DIR=~/.claude (dù đúng là thư mục mặc định) lại trỏ tới một Keychain key
+  // KHÁC với entry mặc định đang giữ token còn hạn → "Not logged in". Chỉ khi biến này vắng
+  // mặt, CLI mới dùng đúng login mặc định (đã auto-refresh). Profile phụ (.claude-xxx) mới set path.
+  if (profileName === 'default') {
+    // Gỡ hẳn mọi dòng CLAUDE_CONFIG_DIR (kể cả dòng trống thừa nó để lại).
+    content = content.replace(/^CLAUDE_CONFIG_DIR=.*\n?/gm, '');
+    fs.writeFileSync(envPath, content, 'utf8');
+    // Đồng bộ tiến trình đang chạy: bỏ biến để loadActiveProfileToken/SDK dùng login mặc định ngay.
+    delete process.env.CLAUDE_CONFIG_DIR;
+    return;
+  }
+
+  const fullPath = join(os.homedir(), `.claude-${profileName}`);
   const lineToSet = `CLAUDE_CONFIG_DIR=${fullPath}`;
-  
+
   if (content.includes('CLAUDE_CONFIG_DIR=')) {
     content = content.replace(/CLAUDE_CONFIG_DIR=.*/g, lineToSet);
   } else {
     content += (content.endsWith('\n') ? '' : '\n') + lineToSet + '\n';
   }
-  
+
   fs.writeFileSync(envPath, content, 'utf8');
 }
 
@@ -1208,7 +1221,10 @@ app.post('/api/profiles', requireAdmin, (req, res) => {
     }
   }
 
-  process.env.CLAUDE_CONFIG_DIR = fullPath;
+  // Profile 'default' = login mặc định máy → PHẢI GỠ CLAUDE_CONFIG_DIR (xem saveActiveProfileToEnv:
+  // set path tường minh trỏ nhầm Keychain key → "Not logged in"). Profile phụ mới set path.
+  if (pName === 'default') delete process.env.CLAUDE_CONFIG_DIR;
+  else process.env.CLAUDE_CONFIG_DIR = fullPath;
   logAudit(`ADMIN chuyển profile Claude → ${pName}`, '127.0.0.1');
 
   // Ghi hoặc xoá token.txt
@@ -1216,6 +1232,18 @@ app.post('/api/profiles', requireAdmin, (req, res) => {
   if (typeof token === 'string') {
     const trimmedToken = token.trim();
     if (trimmedToken) {
+      // CHẶN OAuth access token (`sk-ant-oat…`): token.txt là snapshot TĨNH không refresh,
+      // còn OAuth sống ngắn (~vài giờ) → lưu vào sẽ 401 sau khi hết hạn (xem loadActiveProfileToken).
+      // Muốn dùng gói Claude → đăng nhập qua nút Login (OAuth theo thư mục, tự refresh). token.txt
+      // CHỈ dành cho API key dài hạn (`sk-ant-api…`).
+      if (trimmedToken.startsWith('sk-ant-oat')) {
+        res.status(400).json({
+          error:
+            'Không lưu OAuth token vào token.txt (loại này hết hạn sau vài giờ và không tự làm mới → sẽ lỗi 401). ' +
+            'Dùng nút "Đăng nhập" để login qua Claude CLI (tự làm mới), hoặc dán API key dài hạn (sk-ant-api…).',
+        });
+        return;
+      }
       try {
         fs.writeFileSync(tokenFile, trimmedToken, 'utf8');
         logAudit(`ADMIN ghi token cho profile Claude → ${pName}`, '127.0.0.1');

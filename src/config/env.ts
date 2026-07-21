@@ -15,8 +15,16 @@ function optional(key: string): string | undefined {
 }
 
 /**
- * Tự động tải token (API Key hoặc OAuth Token) từ file token.txt của profile Claude đang chạy
- * và thiết lập vào process.env tương ứng để SDK và CLI tự động sử dụng.
+ * Tự động tải token từ file token.txt của profile Claude đang chạy và thiết lập vào
+ * process.env tương ứng để SDK và CLI tự dùng.
+ *
+ * CHỈ nhận API key dài hạn (`sk-ant-api…`) từ token.txt. OAuth access token của login
+ * Claude Code (`sk-ant-oat…`) CỐ Ý bị bỏ qua vì token.txt là snapshot TĨNH không bao giờ
+ * refresh, còn OAuth access token sống ngắn (~vài giờ) → sau khi hết hạn, ép nó qua
+ * CLAUDE_CODE_OAUTH_TOKEN khiến CLI dùng token chết → 401 "Invalid authentication
+ * credentials", trong khi login-of-directory (Keychain/`.credentials.json` của CLAUDE_CONFIG_DIR)
+ * VẪN còn hạn nhờ CLI tự refresh. Bỏ qua OAuth ở đây = để CLI tự đọc login gốc thư mục đã
+ * refresh, khỏi phải re-login mỗi vài giờ. Muốn ghim token bền → dùng API key (sk-ant-api).
  */
 export function loadActiveProfileToken(): void {
   const configDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
@@ -24,24 +32,19 @@ export function loadActiveProfileToken(): void {
   if (existsSync(tokenFile)) {
     try {
       const token = readFileSync(tokenFile, 'utf8').trim();
-      if (token) {
-        // Phân loại token: CHỈ API key thật (`sk-ant-api…`) mới là ANTHROPIC_API_KEY.
-        // OAuth access token của login Claude Code có tiền tố `sk-ant-oat…` — phải đi qua
-        // CLAUDE_CODE_OAUTH_TOKEN, KHÔNG nhét vào ANTHROPIC_API_KEY (SDK sẽ hiểu sai auth).
-        if (token.startsWith('sk-ant-api')) {
-          process.env.ANTHROPIC_API_KEY = token;
-          delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
-        } else {
-          process.env.CLAUDE_CODE_OAUTH_TOKEN = token;
-          delete process.env.ANTHROPIC_API_KEY;
-        }
+      // CHỈ API key thật (`sk-ant-api…`) mới ghim vào env. OAuth (`sk-ant-oat…`) rơi xuống
+      // nhánh dưới (xóa env) để CLI tự dùng login-of-directory đã auto-refresh.
+      if (token && token.startsWith('sk-ant-api')) {
+        process.env.ANTHROPIC_API_KEY = token;
+        delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
         return;
       }
     } catch (e) {
       console.error('Lỗi khi đọc token.txt cho profile:', e);
     }
   }
-  // Nếu không có token.txt, xóa biến môi trường để dùng auth gốc của CLI
+  // Không có API key trong token.txt (rỗng / OAuth / thiếu file) → xóa biến môi trường để
+  // CLI dùng auth gốc của thư mục profile (Keychain/.credentials.json, tự refresh).
   delete process.env.ANTHROPIC_API_KEY;
   delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
 }
