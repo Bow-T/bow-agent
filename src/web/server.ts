@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve, basename } from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
-import { config, loadActiveProfileToken } from '../config/env.js';
+import { config, loadActiveProfileToken, hasProfileAuth } from '../config/env.js';
 import { runAgent, fetchUsageSnapshot, type RunOptions } from '../core/runner.js';
 import { buildTaskBrief } from '../input/task.js';
 import { pdfToText } from '../input/pdf.js';
@@ -440,6 +440,8 @@ interface RunParams {
   /** Bật multi-agent (reviewer/verifier/impact-scout). Chỉ admin. Mặc định tắt. */
   useSubagents?: boolean;
   model?: string;
+  /** Tài khoản Claude cho lượt chạy (per-tab). Runner dựng env riêng, không đổi env server. */
+  claudeProfile?: string;
   isExecuting: boolean;
   routeToAdmin: boolean;
   /** Siết duyệt ghi: MỌI thao tác ghi/side-effect phải qua onApproval (→ admin). Bật cho
@@ -511,6 +513,7 @@ function runAgentSession(session: ReturnType<typeof createSession>, params: RunP
     onApproval: params.isExecuting ? approvalHandler : undefined,
     onQuestion: (questions) => session.requestQuestion(questions),
     model: params.model,
+    claudeProfile: params.claudeProfile,
     resumeSessionId: params.resumeSessionId,
     onSessionId: (id) => {
       conversationId = id;
@@ -618,6 +621,7 @@ app.post('/api/run', async (req, res) => {
       language,
       cwd,
       model,
+      claudeProfile,
       stack,
       useSubagents,
       conversationId,
@@ -832,6 +836,14 @@ app.post('/api/run', async (req, res) => {
     // admin localhost bật được. Non-admin gửi cờ lên cũng bị bỏ qua → single-agent như cũ.
     const allowSubagents = isAdmin && useSubagents === true;
 
+    // Tài khoản Claude per-tab: CHỈ admin localhost được tự chọn tài khoản để chạy. Khách LAN
+    // (QC/Collab/BA/Reviewer/DevOps) gửi cờ lên cũng bị BỎ QUA → dùng tài khoản env server —
+    // tránh khách chạy bằng gói/quyền của tài khoản admin khác. undefined = theo env server.
+    const effectiveClaudeProfile =
+      isAdmin && typeof claudeProfile === 'string' && claudeProfile.trim()
+        ? claudeProfile.trim()
+        : undefined;
+
     // Cổng duyệt cho phiên này. CTV Collab hoặc DevOps (không phải admin localhost): MỌI thao
     // tác ghi được ĐỊNH TUYẾN lên ADMIN qua adminBus (routeToAdmin) và runner siết duyệt toàn bộ
     // (requireApprovalForWrites). Với DevOps, đây là cách "deploy/apply phải admin duyệt": lệnh
@@ -869,6 +881,7 @@ app.post('/api/run', async (req, res) => {
         stack: typeof stack === 'string' ? stack : undefined,
         useSubagents: allowSubagents,
         model: effectiveModel,
+        claudeProfile: effectiveClaudeProfile,
         isExecuting,
         routeToAdmin,
         requireApprovalForWrites,
@@ -1037,8 +1050,9 @@ app.post('/api/stop/:id', (req, res) => {
   res.json({ ok: Boolean(session) });
 });
 
-// Helper to list all Claude profiles
-function listClaudeProfiles(): { name: string; tokenSet: boolean }[] {
+// Helper to list all Claude profiles. hasAuth per-profile (thuần, không theo env server) để UI
+// biết TỪNG tài khoản đã login chưa — cần cho chọn tài khoản per-tab (tab dùng account khác env).
+function listClaudeProfiles(): { name: string; tokenSet: boolean; hasAuth: boolean }[] {
   const home = os.homedir();
   try {
     const files = fs.readdirSync(home);
@@ -1059,10 +1073,11 @@ function listClaudeProfiles(): { name: string; tokenSet: boolean }[] {
       return {
         name: pName,
         tokenSet: fs.existsSync(tokenFile),
+        hasAuth: hasProfileAuth(pName),
       };
     });
   } catch {
-    return [{ name: 'default', tokenSet: false }];
+    return [{ name: 'default', tokenSet: false, hasAuth: hasProfileAuth('default') }];
   }
 }
 
@@ -1650,8 +1665,12 @@ app.get('/api/active-clients', requireAdmin, (_req, res) => {
  */
 app.get('/api/usage', async (req, res) => {
   const model = typeof req.query.model === 'string' ? req.query.model : undefined;
+  // Tài khoản của tab (per-tab) — CHỈ admin localhost mới đọc hạn mức tài khoản tuỳ chọn.
+  // Khách LAN gửi lên bị bỏ qua → đọc theo tài khoản env server như cũ.
+  const claudeProfile =
+    isAdminReq(req) && typeof req.query.claudeProfile === 'string' ? req.query.claudeProfile : undefined;
   try {
-    const usage = await fetchUsageSnapshot(model);
+    const usage = await fetchUsageSnapshot(model, claudeProfile);
     if (!usage) {
       res.status(503).json({ error: 'Không đọc được dữ liệu usage (chưa login Claude CLI hoặc SDK không hỗ trợ).' });
       return;

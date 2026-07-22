@@ -41,9 +41,10 @@ import {
 
 /**
  * TaskPane — MỘT tab hội thoại độc lập (1 conversation/session). Nhận cấu hình global
- * (mode/model/profile/cwd…) qua props từ App; giữ RIÊNG state per-tab (task/items/session/
- * pending/questions/running…) + logic run/stream/SSE. BƯỚC 1: App mount đúng 1 instance với
- * tabId="legacy" nên hành vi y hệt bản single-view cũ.
+ * (mode/cwd/skill…) qua props từ App; giữ RIÊNG state per-tab: model/effort/profile (mỗi
+ * tab 1 setup chạy khác nhau, lưu localStorage theo tabKey) + task/items/session/pending/
+ * questions/running… + logic run/stream/SSE. Tab "legacy" đọc key gốc không hậu tố nên
+ * tương thích ngược dữ liệu single-view cũ.
  */
 export interface TaskPaneProps {
   tabId: string;
@@ -52,9 +53,6 @@ export interface TaskPaneProps {
   // ── Cấu hình global (chỉ đọc) ──
   cfg: Cfg | null;
   mode: Mode;
-  profile: string;
-  selectedModel: string;
-  effort: string;
   useSubagents: boolean;
   language: 'vi' | 'en';
   selectedMcps: string[];
@@ -75,12 +73,10 @@ export interface TaskPaneProps {
   ba: boolean;
   devops: boolean;
   taskHeight: number | null;
-  usage: UsageSnapshot | null;
   // ── Handlers / setters global ──
   setCfg: React.Dispatch<React.SetStateAction<Cfg | null>>;
   setSelectedMcps: React.Dispatch<React.SetStateAction<string[]>>;
   setAuthModal: React.Dispatch<React.SetStateAction<AuthModalState | null>>;
-  setUsage: React.Dispatch<React.SetStateAction<UsageSnapshot | null>>;
   setAccumulatedCost: React.Dispatch<React.SetStateAction<number>>;
   openPicker: (initialPath: string, target?: 'cwd' | 'dev-cwd' | 'qc-cwd' | 'collab-cwd' | 'ba-cwd' | 'reviewer-cwd' | 'devops-cwd') => void;
   openWsPanel: () => void;
@@ -91,16 +87,13 @@ export interface TaskPaneProps {
   syncSkillsNow: () => void;
   setTaskHeight: React.Dispatch<React.SetStateAction<number | null>>;
   setMode: React.Dispatch<React.SetStateAction<Mode>>;
-  setProfile: React.Dispatch<React.SetStateAction<string>>;
-  setSelectedModel: React.Dispatch<React.SetStateAction<string>>;
-  setEffort: React.Dispatch<React.SetStateAction<string>>;
   setStack: React.Dispatch<React.SetStateAction<string>>;
   setUseSubagents: React.Dispatch<React.SetStateAction<boolean>>;
   /**
    * Báo lên App phần state per-tab mà UI GLOBAL cần đọc (header đồng hồ lượt chạy + panel
    * Lịch sử tô cuộc đang mở). Bước 1: 1 tab nên App chỉ mirror của tab hiển thị.
    */
-  onStateChange: (s: { running: boolean; runStartedAt: number | null; lastRunMs: number | null; activeConvId: string | null; title: string }) => void;
+  onStateChange: (s: { running: boolean; runStartedAt: number | null; lastRunMs: number | null; activeConvId: string | null; title: string; model: string; claudeProfile: string; usage: UsageSnapshot | null; usageLoading: boolean }) => void;
 }
 
 /**
@@ -114,19 +107,19 @@ export interface TaskPaneHandle {
   openConversation: (id: string) => Promise<{ ok: boolean; error?: string }>;
   /** Cuộc đang mở vừa bị xoá → dọn tab về trạng thái mới trống. */
   resetForDeleted: () => void;
+  /** Làm mới hạn mức gói của TÀI KHOẢN tab này (nút "Làm mới" trong panel usage của App gọi). */
+  refreshUsage: () => void;
 }
 
 export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskPane(props, ref) {
   const {
-    tabId, visible, cfg, mode, profile, selectedModel, effort, useSubagents, language,
+    tabId, visible, cfg, mode, useSubagents, language,
     selectedMcps, stack, cwd, theme, accent, detected, currentWs, skillStacks, skillStatus,
-    skillSyncing, skillSyncMsg, readonlyShare, taskHeight, usage,
-    setCfg, setSelectedMcps, setAuthModal, setUsage, setAccumulatedCost, openPicker, openWsPanel,
+    skillSyncing, skillSyncMsg, readonlyShare, taskHeight,
+    setCfg, setSelectedMcps, setAuthModal, setAccumulatedCost, openPicker, openWsPanel,
     changeActiveCwd, showClaudePrompt, showClaudeAlert, syncSkillsNow, setTaskHeight,
-    setMode, setProfile, setSelectedModel, setEffort, setStack, setUseSubagents, onStateChange,
+    setMode, setStack, setUseSubagents, onStateChange,
   } = props;
-  // usage là prop chỉ-đọc, giữ để bước 2 tách context sang TaskPane (chưa render trực tiếp).
-  void usage;
 
   // ── Khoá localStorage per-tab (legacy = key gốc, tab khác thêm ':<tabId>') ──
   const K = {
@@ -136,10 +129,36 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
     session: tabKey('bow-session-id', tabId),
     baseline: tabKey('bow-session-baseline', tabId),
     task: tabKey('bow-task', tabId),
+    // Cấu hình chạy PER-TAB (mỗi tab 1 model/effort/profile riêng). Tab legacy giữ key
+    // gốc không hậu tố → tương thích ngược dữ liệu single-view cũ.
+    model: tabKey('bow-selectedModel', tabId),
+    effort: tabKey('bow-effort', tabId),
+    profile: tabKey('bow-profile', tabId),
+    claudeProfile: tabKey('bow-claudeProfile', tabId),
   };
 
   // ── State/refs PER-TAB ──
   const [task, setTask] = useState(() => localStorage.getItem(K.task) || '');
+  // Cấu hình chạy per-tab: model / effort / profile. QC Mode read-only → mặc định Sonnet
+  // (nhẹ/rẻ) khi chưa có lựa chọn lưu; các mode khác mặc định Opus.
+  const [selectedModel, setSelectedModel] = useState(
+    () => localStorage.getItem(K.model) || (cfg?.isQcMode ? 'claude-sonnet-5' : 'claude-opus-4-8')
+  );
+  const [effort, setEffort] = useState(() => localStorage.getItem(K.effort) || 'high');
+  const [profile, setProfile] = useState(() => localStorage.getItem(K.profile) || 'auto');
+  // Tài khoản Claude PER-TAB (mỗi tab chạy 1 tài khoản riêng). Khởi tạo: lựa chọn đã lưu của
+  // tab, nếu chưa có thì theo tài khoản server đang set (cfg.currentClaudeProfile) hoặc 'default'.
+  const [selectedClaudeProfile, setSelectedClaudeProfile] = useState(
+    () => localStorage.getItem(K.claudeProfile) || cfg?.currentClaudeProfile || 'default'
+  );
+  // Tài khoản mà TAB NÀY chọn đã đăng nhập chưa (theo hasAuth per-profile từ /api/config).
+  // Không dùng cfg.hasAuth (global theo env server) vì tab có thể chọn tài khoản khác.
+  const tabProfileAuthed =
+    cfg?.claudeProfiles?.find((p) => p.name === selectedClaudeProfile)?.hasAuth ?? cfg?.hasAuth ?? false;
+  // Hạn mức gói PER-TAB: mỗi tab đọc hạn mức của ĐÚNG tài khoản nó chạy (SESSION/Weekly theo
+  // account + context của chính cuộc này). App hiển thị usage của tab đang mở (báo qua onStateChange).
+  const [usage, setUsage] = useState<UsageSnapshot | null>(null);
+  const [usageLoading, setUsageLoading] = useState(false);
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const [cameraInfo, setCameraInfo] = useState<CameraInfo | null>(null);
   const neuralBrainRef = useRef<NeuralBrainHandle>(null);
@@ -189,6 +208,52 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
 
   // ── Đồng bộ localStorage per-tab ──
   useEffect(() => { localStorage.setItem(K.task, task); }, [K.task, task]);
+  useEffect(() => { localStorage.setItem(K.model, selectedModel); }, [K.model, selectedModel]);
+  useEffect(() => { localStorage.setItem(K.effort, effort); }, [K.effort, effort]);
+  useEffect(() => { localStorage.setItem(K.profile, profile); }, [K.profile, profile]);
+  useEffect(() => { localStorage.setItem(K.claudeProfile, selectedClaudeProfile); }, [K.claudeProfile, selectedClaudeProfile]);
+  // Khi cfg về mà tab CHƯA có lựa chọn tài khoản lưu riêng → theo tài khoản server đang set.
+  useEffect(() => {
+    if (cfg?.currentClaudeProfile && !localStorage.getItem(K.claudeProfile)) {
+      setSelectedClaudeProfile(cfg.currentClaudeProfile);
+    }
+  }, [cfg?.currentClaudeProfile, K.claudeProfile]);
+  // QC Mode LUÔN chạy Sonnet ở backend → ép UI khớp khi cfg về (nếu chưa có lựa chọn lưu
+  // riêng cho tab này). Chỉ chạy khi thực sự là QC để không đè lựa chọn ở Dev.
+  useEffect(() => {
+    if (cfg?.isQcMode && !localStorage.getItem(K.model)) setSelectedModel('claude-sonnet-5');
+  }, [cfg?.isQcMode, K.model]);
+
+  /**
+   * Làm mới hạn mức gói của ĐÚNG tài khoản tab này qua /api/usage (độc lập lượt chạy). Chỉ
+   * cập nhật rateLimits/subscription; GIỮ context window cũ (đến từ event 'usage' của lượt chạy
+   * — /api/usage đọc phiên trống nên context không phản ánh hội thoại thật). Per-tab: gửi model +
+   * claudeProfile của chính tab để mỗi tab thấy hạn mức của tài khoản riêng, không lẫn nhau.
+   */
+  const refreshUsage = () => {
+    setUsageLoading(true);
+    apiFetch(`/api/usage?model=${encodeURIComponent(selectedModel)}&claudeProfile=${encodeURIComponent(selectedClaudeProfile)}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((d: { usage: UsageSnapshot }) => {
+        setUsage((prev) => ({
+          ...d.usage,
+          contextTokens: prev ? prev.contextTokens : d.usage.contextTokens,
+          contextMaxTokens: prev ? prev.contextMaxTokens : d.usage.contextMaxTokens,
+          contextPercentage: prev ? prev.contextPercentage : d.usage.contextPercentage,
+        }));
+      })
+      .catch(() => {})
+      .finally(() => setUsageLoading(false));
+  };
+  // Nạp hạn mức khi tab mount VÀ mỗi khi đổi tài khoản/model của tab (số hạn mức đổi theo account).
+  useEffect(() => {
+    refreshUsage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedClaudeProfile, selectedModel]);
+
+  // Expose refreshUsage cho App (nút "Làm mới" trong panel usage global gọi tab đang mở).
+  const refreshUsageRef = useRef(refreshUsage);
+  refreshUsageRef.current = refreshUsage;
   useEffect(() => {
     if (conversationId) localStorage.setItem(K.conv, conversationId);
     else localStorage.removeItem(K.conv);
@@ -333,6 +398,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
     getActiveConvId: () => activeConvId,
     openConversation,
     resetForDeleted,
+    refreshUsage: () => refreshUsageRef.current(),
   }));
 
   // Kéo giãn ô nhập: App giữ state taskHeight (global), TaskPane gọi setTaskHeight (prop)
@@ -637,6 +703,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
       language,
       cwd: cwd.trim() || undefined,
       model: selectedModel,
+      claudeProfile: selectedClaudeProfile,
       useSubagents,
     };
 
@@ -659,6 +726,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
           language,
           cwd: cwd.trim() || undefined,
           model: selectedModel,
+          claudeProfile: selectedClaudeProfile,
           useSubagents,
           conversationId: conversationId || undefined,
           resumeContext: sentResumeContext || undefined,
@@ -1189,9 +1257,9 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
   // Báo state per-tab (running/đồng hồ + cuộc đang mở + tiêu đề) lên App cho header,
   // panel Lịch sử, và NHÃN TAB (title = câu user đầu tiên của cuộc).
   useEffect(() => {
-    onStateChange({ running, runStartedAt, lastRunMs, activeConvId, title: deriveTitle(items) });
+    onStateChange({ running, runStartedAt, lastRunMs, activeConvId, title: deriveTitle(items), model: selectedModel, claudeProfile: selectedClaudeProfile, usage, usageLoading });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onStateChange, running, runStartedAt, lastRunMs, activeConvId, items]);
+  }, [onStateChange, running, runStartedAt, lastRunMs, activeConvId, items, selectedModel, selectedClaudeProfile, usage, usageLoading]);
 
   return (
     <div className="task-pane" hidden={!visible}>
@@ -1874,7 +1942,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
               {language === 'vi' ? 'Tài khoản:' : 'Account:'}
               <PixelSelect
-                value={cfg.currentClaudeProfile || 'default'}
+                value={selectedClaudeProfile}
                 disabled={running}
                 onDelete={async (profileToDelete) => {
                   setTimeout(async () => {
@@ -1903,6 +1971,8 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
                             setSelectedMcps(newCfg.mcpServers);
                           }
                         }
+                        // Nếu tab đang chọn tài khoản vừa xoá → lùi về 'default'.
+                        if (selectedClaudeProfile === profileToDelete) setSelectedClaudeProfile('default');
                         await showClaudeAlert('Thành công', `Đã xóa tài khoản 'claude-${profileToDelete}'.`);
                       } else {
                         const err = await res.json();
@@ -1939,6 +2009,8 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
                               setSelectedMcps(newCfg.mcpServers);
                             }
                           }
+                          // Tab này chuyển sang dùng tài khoản vừa tạo (per-tab, không đụng tab khác).
+                          setSelectedClaudeProfile(cleaned);
                           setAuthModal({
                             profile: cleaned,
                             mode: 'select',
@@ -1952,28 +2024,11 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
                       }
                     }, 100);
                   } else {
-                    try {
-                      const res = await apiFetch('/api/profiles', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ profile: newProfile }),
-                      });
-                      if (res.ok) {
-                        const configRes = await apiFetch('/api/config');
-                        if (configRes.ok) {
-                          const newCfg = await configRes.json();
-                          setCfg(newCfg);
-                          if (newCfg.mcpServers) {
-                            setSelectedMcps(newCfg.mcpServers);
-                          }
-                        }
-                      } else {
-                        const err = await res.json();
-                        await showClaudeAlert('Lỗi', `Lỗi: ${err.error || 'Không thể chuyển đổi'}`);
-                      }
-                    } catch (e) {
-                      console.error('Lỗi khi chuyển profile Claude:', e);
-                    }
+                    // Chọn tài khoản = CHỈ đổi cho TAB NÀY (per-tab). KHÔNG gọi /api/profiles để
+                    // switch env server nữa — runner nhận claudeProfile trong body /api/run và
+                    // dựng CLAUDE_CONFIG_DIR riêng cho query của tab này. Nhờ đó mỗi tab chạy 1
+                    // tài khoản khác nhau song song, không giẫm lên nhau.
+                    setSelectedClaudeProfile(newProfile);
                   }
                 }}
                 options={[
@@ -1986,21 +2041,21 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
                   { value: '__new__', label: '+ Thêm tài khoản...' },
                 ]}
               />
-              {cfg.hasAuth ? (
-                <span title="Đã đăng nhập" style={{ color: '#00e676', fontWeight: 'bold', fontSize: '13px', cursor: 'help' }}>✓</span>
+              {tabProfileAuthed ? (
+                <span title={`Tài khoản 'claude-${selectedClaudeProfile}' đã đăng nhập`} style={{ color: '#00e676', fontWeight: 'bold', fontSize: '13px', cursor: 'help' }}>✓</span>
               ) : (
-                <span title="Chưa đăng nhập! Vui lòng cấu hình token hoặc chọn Đăng nhập." style={{ color: '#ff1744', fontWeight: 'bold', fontSize: '13px', cursor: 'help' }}>⚠️</span>
+                <span title={`Tài khoản 'claude-${selectedClaudeProfile}' CHƯA đăng nhập! Bấm khoá để đăng nhập hoặc cài token.`} style={{ color: '#ff1744', fontWeight: 'bold', fontSize: '13px', cursor: 'help' }}>⚠️</span>
               )}
               {/* Nút cài đặt đăng nhập rút thành icon (khoá) — nhãn dài "Cài đặt Login" đưa vào tooltip.
                   Chưa auth thì tô nổi (.allow) để mời người dùng bấm đăng nhập. */}
               <button
                 type="button"
-                className={`btn icon-only${cfg.hasAuth ? '' : ' allow'}`}
+                className={`btn icon-only${tabProfileAuthed ? '' : ' allow'}`}
                 disabled={running}
-                title={cfg.hasAuth ? 'Cài đặt đăng nhập / đổi token' : 'Chưa đăng nhập — bấm để đăng nhập hoặc cài token'}
+                title={tabProfileAuthed ? `Cài đặt đăng nhập / đổi token cho 'claude-${selectedClaudeProfile}'` : `Tài khoản 'claude-${selectedClaudeProfile}' chưa đăng nhập — bấm để đăng nhập hoặc cài token`}
                 onClick={() => {
                   setAuthModal({
-                    profile: cfg.currentClaudeProfile || 'default',
+                    profile: selectedClaudeProfile,
                     mode: 'select',
                   });
                 }}

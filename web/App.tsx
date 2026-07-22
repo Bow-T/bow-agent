@@ -77,6 +77,9 @@ export function tabKey(base: string, tabId: string): string {
   return tabId === LEGACY_TAB_ID ? base : `${base}:${tabId}`;
 }
 
+/** Cấu hình chạy per-tab (model/effort/profile/tài khoản) — tab mới KẾ THỪA từ tab đang mở. */
+const RUN_CFG_KEYS = ['bow-selectedModel', 'bow-effort', 'bow-profile', 'bow-claudeProfile'] as const;
+
 /** Các base-key state per-tab — dùng để dọn rác khi đóng tab. */
 const PER_TAB_KEYS = [
   'bow-chat-items',
@@ -85,7 +88,21 @@ const PER_TAB_KEYS = [
   'bow-session-id',
   'bow-session-baseline',
   'bow-task',
+  ...RUN_CFG_KEYS,
 ] as const;
+
+/** Sao chép cấu hình chạy (model/effort/profile) từ tab nguồn sang tab đích — để tab mới
+ *  mở ra kế thừa đúng model/effort/profile đang dùng thay vì bị reset về mặc định. */
+function inheritRunCfg(fromTabId: string, toTabId: string): void {
+  for (const base of RUN_CFG_KEYS) {
+    try {
+      const v = localStorage.getItem(tabKey(base, fromTabId));
+      if (v !== null) localStorage.setItem(tabKey(base, toTabId), v);
+    } catch {
+      /* bỏ qua */
+    }
+  }
+}
 
 /**
  * Nạp danh sách tab từ localStorage 'bow-tabs'. Lần đầu bật multi-tab (chưa có) →
@@ -148,7 +165,7 @@ export type Cfg = {
   isBaMode?: boolean;
   isDevOpsMode?: boolean;
   isAdmin?: boolean;
-  claudeProfiles?: { name: string; tokenSet: boolean }[];
+  claudeProfiles?: { name: string; tokenSet: boolean; hasAuth?: boolean }[];
   currentClaudeProfile?: string;
   hasAuth?: boolean;
   tokenSet?: boolean;
@@ -395,8 +412,15 @@ interface PaneState {
   lastRunMs: number | null;
   activeConvId: string | null;
   title: string;
+  /** Model per-tab (tab tự quản) — UI global cần cho panel /api/usage của tab đang mở. */
+  model: string;
+  /** Tài khoản Claude per-tab — panel /api/usage đọc hạn mức ĐÚNG tài khoản tab đang mở. */
+  claudeProfile: string;
+  /** Hạn mức gói + context của TÀI KHOẢN tab này (per-tab). App hiển thị của tab đang mở. */
+  usage: UsageSnapshot | null;
+  usageLoading: boolean;
 }
-const EMPTY_PANE_STATE: PaneState = { running: false, runStartedAt: null, lastRunMs: null, activeConvId: null, title: '' };
+const EMPTY_PANE_STATE: PaneState = { running: false, runStartedAt: null, lastRunMs: null, activeConvId: null, title: '', model: 'claude-opus-4-8', claudeProfile: 'default', usage: null, usageLoading: false };
 
 export function App() {
   // ── Multi-tab: nhiều conversation/session chạy SONG SONG, mỗi tab một <TaskPane> ──
@@ -428,12 +452,14 @@ export function App() {
     });
   }, []);
 
-  /** Mở một tab mới (trống) và chuyển tới nó. */
+  /** Mở một tab mới (trống) và chuyển tới nó. Kế thừa model/effort/profile của tab đang mở
+   *  (ghi localStorage TRƯỚC khi tab mới mount để TaskPane đọc đúng ngay từ khởi tạo). */
   const newTab = useCallback(() => {
     const id = crypto.randomUUID();
+    inheritRunCfg(activeTabId, id);
     setTabs((prev) => [...prev, { id, title: '' }]);
     setActiveTabId(id);
-  }, []);
+  }, [activeTabId]);
 
   /** Đóng một tab: gỡ khỏi danh sách (TaskPane unmount tự đóng SSE + stop session),
    *  dọn key localStorage của nó. Không cho đóng tab cuối (giữ UI không rỗng). */
@@ -468,9 +494,8 @@ export function App() {
     const valid: Mode[] = ['plan', 'manual', 'edit-auto', 'auto'];
     return (valid as string[]).includes(saved ?? '') ? (saved as Mode) : 'plan';
   });
-  const [profile, setProfile] = useState(() => localStorage.getItem('bow-profile') || 'auto');
-  const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem('bow-selectedModel') || 'claude-opus-4-8');
-  const [effort, setEffort] = useState(() => localStorage.getItem('bow-effort') || 'high');
+  // model/effort/profile/tài khoản NAY LÀ PER-TAB (mỗi <TaskPane> tự quản, lưu localStorage
+  // theo tabKey; usage cũng do tab tự đọc). App chỉ hiển thị của tab đang mở qua activePane.
   // Đội agent (multi-agent): bật reviewer/verifier/impact-scout. Chỉ admin. Mặc định tắt.
   const [useSubagents, setUseSubagents] = useState(() => localStorage.getItem('bow-subagents') === '1');
   const [language, setLanguage] = useState<'vi' | 'en'>(() => {
@@ -494,10 +519,12 @@ export function App() {
   const [skillSyncing, setSkillSyncing] = useState(false); // đang chạy Đồng bộ thủ công
   const [skillSyncMsg, setSkillSyncMsg] = useState(''); // kết quả lần đồng bộ gần nhất (hiện qua toast + tooltip badge)
   const [accumulatedCost, setAccumulatedCost] = useState(0);
-  // Snapshot hạn mức gói + context window (đến từ event 'usage' trong lượt chạy, hoặc
-  // /api/usage khi mở trang). null = chưa có dữ liệu.
-  const [usage, setUsage] = useState<UsageSnapshot | null>(null);
-  const [usageLoading, setUsageLoading] = useState(false);
+  // Hạn mức gói + context window NAY LÀ PER-TAB (mỗi TaskPane tự đọc /api/usage cho ĐÚNG tài
+  // khoản của nó + giữ context của cuộc đó, báo lên qua onStateChange). App chỉ HIỂN THỊ của
+  // tab đang mở → không lẫn số giữa các account. Nút "Làm mới" gọi refreshUsage của tab active.
+  const usage = activePane.usage;
+  const usageLoading = activePane.usageLoading;
+  const refreshUsage = () => activePaneRef()?.refreshUsage();
   // Panel usage đầy đủ (liệt kê MỌI cửa sổ hạn mức: Session 5h, Weekly 7d, per-model).
   // Mở khi bấm ô Session trên header. false = đóng.
   const [usagePanelOpen, setUsagePanelOpen] = useState(false);
@@ -545,9 +572,7 @@ export function App() {
   // Đồng bộ hóa cấu hình composer vào localStorage (per-tab task/conversationId đã dời sang TaskPane)
   useEffect(() => { localStorage.setItem('bow-cwd', cwd); }, [cwd]);
   useEffect(() => { localStorage.setItem('bow-mode', mode); }, [mode]);
-  useEffect(() => { localStorage.setItem('bow-profile', profile); }, [profile]);
-  useEffect(() => { localStorage.setItem('bow-selectedModel', selectedModel); }, [selectedModel]);
-  useEffect(() => { localStorage.setItem('bow-effort', effort); }, [effort]);
+  // model/effort/profile: đồng bộ localStorage do chính TaskPane lo (per-tab).
   useEffect(() => { localStorage.setItem('bow-subagents', useSubagents ? '1' : '0'); }, [useSubagents]);
   useEffect(() => { localStorage.setItem('bow-language', language); }, [language]);
   useEffect(() => { localStorage.setItem('bow-selectedMcps', JSON.stringify(selectedMcps)); }, [selectedMcps]);
@@ -770,30 +795,6 @@ export function App() {
   const chatScrollRef = useRef<HTMLDivElement | null>(null); // khung tin để auto-cuộn xuống đáy
 
   useEffect(() => { try { localStorage.setItem(CHAT_NICKNAME_KEY, chatNickname); } catch {} }, [chatNickname]);
-
-  /**
-   * Làm mới snapshot hạn mức gói qua /api/usage (độc lập lượt chạy). Chỉ cập nhật phần
-   * rateLimits/subscription; GIỮ context window cũ (đến từ event 'usage' trong lượt chạy
-   * — /api/usage đọc từ phiên trống nên context không phản ánh hội thoại thật).
-   */
-  const refreshUsage = () => {
-    setUsageLoading(true);
-    apiFetch(`/api/usage?model=${encodeURIComponent(selectedModel)}`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-      .then((d: { usage: UsageSnapshot }) => {
-        setUsage((prev) => ({
-          ...d.usage,
-          // Luôn kế thừa context từ prev (kể cả null sau khi reset cuộc mới) — /api/usage
-          // đọc phiên trống nên context của nó không đáng tin; chỉ event 'usage' của lượt
-          // chạy mới đặt số thật. Không dùng `??` để tránh nạp lại context phiên trống.
-          contextTokens: prev ? prev.contextTokens : d.usage.contextTokens,
-          contextMaxTokens: prev ? prev.contextMaxTokens : d.usage.contextMaxTokens,
-          contextPercentage: prev ? prev.contextPercentage : d.usage.contextPercentage,
-        }));
-      })
-      .catch(() => {})
-      .finally(() => setUsageLoading(false));
-  };
 
   /** Tải danh sách MCP từ backend (che token). */
   const loadMcpList = () => {
@@ -1289,6 +1290,7 @@ export function App() {
     try {
       // Tạo tab mới rồi chờ pane của nó mount xong mới gọi openConversation qua handle.
       const tabId = crypto.randomUUID();
+      inheritRunCfg(activeTabId, tabId); // kế thừa model/effort/profile của tab đang mở
       setTabs((prev) => [...prev, { id: tabId, title: '' }]);
       setActiveTabId(tabId);
       setHistPanelOpen(false);
@@ -1825,12 +1827,8 @@ export function App() {
         if (c.defaultCwd && (sharedMode || !localStorage.getItem('bow-cwd'))) {
           setCwd(c.defaultCwd);
         }
-        // QC Mode chỉ hỏi đáp read-only → LUÔN dùng Sonnet (nhẹ/rẻ), bất kể
-        // localStorage. Backend cũng ép Sonnet ở mode này nên UI phải khớp để không
-        // hiển thị Opus mà thực chất chạy Sonnet.
-        if (c.isQcMode) {
-          setSelectedModel('claude-sonnet-5');
-        }
+        // QC Mode → mặc định Sonnet: nay do TaskPane tự default theo cfg.isQcMode (model
+        // là state per-tab). App không còn giữ selectedModel global nên không set ở đây.
         if (c.mcpServers) {
           const saved = localStorage.getItem('bow-selectedMcps');
           if (!saved) {
@@ -1839,8 +1837,7 @@ export function App() {
         }
       })
       .catch(() => {});
-    // Nạp hạn mức gói ngay khi mở trang (trước khi chạy task nào).
-    refreshUsage();
+    // Hạn mức gói: mỗi TaskPane TỰ nạp khi mount (cho ĐÚNG tài khoản của tab), App không gọi ở đây.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -2456,9 +2453,6 @@ export function App() {
           visible={t.id === activeTabId}
           cfg={cfg}
           mode={mode}
-          profile={profile}
-          selectedModel={selectedModel}
-          effort={effort}
           useSubagents={useSubagents}
           language={language}
           selectedMcps={selectedMcps}
@@ -2479,11 +2473,9 @@ export function App() {
           ba={ba}
           devops={devops}
           taskHeight={taskHeight}
-          usage={usage}
           setCfg={setCfg}
           setSelectedMcps={setSelectedMcps}
           setAuthModal={setAuthModal}
-          setUsage={setUsage}
           setAccumulatedCost={setAccumulatedCost}
           openPicker={openPicker}
           openWsPanel={openWsPanel}
@@ -2494,9 +2486,6 @@ export function App() {
           syncSkillsNow={syncSkillsNow}
           setTaskHeight={setTaskHeight}
           setMode={setMode}
-          setProfile={setProfile}
-          setSelectedModel={setSelectedModel}
-          setEffort={setEffort}
           setStack={setStack}
           setUseSubagents={setUseSubagents}
           onStateChange={(s) => reportPaneState(t.id, s)}
