@@ -2341,15 +2341,6 @@ a { color: var(--brass); text-underline-offset: 2px; }
 }
 .cfg-chip.profile-badge strong { font-weight: 700; }
 
-/* Hàng từ gợi ý nhanh (Quick Prompts) nằm ngay trên ô nhập */
-.composer-quick-prompts {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin: 2px 0 6px;
-}
-
 /* ── Popover cấu hình: chứa nguyên .controls cũ, bung LÊN TRÊN composer ── */
 .composer-config-pop {
   display: none;

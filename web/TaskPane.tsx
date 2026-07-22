@@ -1361,6 +1361,9 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
               theme={theme}
               accent={accent}
               onCamera={setCameraInfo}
+              // Dừng vẽ khi tab ẩn hoặc sidebar đóng — mỗi tab một canvas, không pause thì
+              // mọi tab nền đều đốt CPU vẽ galaxy vô hình.
+              paused={!visible || !sidebarOpen}
             />
             {/* Dấu định vị 4 góc — khung ngắm kính thiên văn */}
             <span className="viewport-corner tl" />
@@ -2387,37 +2390,8 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
           <span className="composer-resize-grip" />
         </div>
 
-        {/* Hàng từ gợi ý nhanh (Quick Prompts) giúp điền mẫu vào ô nhập nhanh chóng */}
-        {!running && (
-          <div className="composer-quick-prompts">
-            {(readonlyShare ? QUICK_PROMPTS.filter((qp) => qp.label === 'Giải thích codebase') : QUICK_PROMPTS).map((qp) => {
-              const isVi = language === 'vi';
-              let label = qp.label;
-              let text = qp.text;
-              if (!isVi) {
-                if (qp.label === 'Sửa bug từ Jira') { label = 'Fix bug from Jira'; text = 'Fix bug from Jira ticket: '; }
-                else if (qp.label === 'Làm theo đề xuất') { label = 'Follow proposal'; text = 'Implement proposal: '; }
-                else if (qp.label === 'Giải thích codebase') { label = 'Explain codebase'; text = 'Explain codebase architecture and main flow.'; }
-                else if (qp.label === 'Viết test') { label = 'Write tests'; text = 'Write unit tests for: '; }
-                else if (qp.label === 'Review & rà lỗi') { label = 'Review code'; text = 'Review code and find potential bugs/improvements.'; }
-                else if (qp.label === 'Sinh commit / PR') { label = 'Generate commit/PR'; text = 'Generate git commit message and PR description.'; }
-                else if (qp.label === 'Refactor / dọn code') { label = 'Refactor code'; text = 'Refactor code to improve readability and structure.'; }
-              }
-              return (
-                <button
-                  key={qp.label}
-                  type="button"
-                  className="quick-prompt-chip"
-                  onClick={() => applyQuickPrompt({ text })}
-                  title={text}
-                >
-                  <Icon name={qp.icon} size={13} /> {label}
-                </button>
-              );
-            })}
-          </div>
-        )}
-
+        {/* Quick prompts KHÔNG còn ở composer — đã dời hẳn lên empty state giữa vùng chat
+            (theo mockup đã duyệt); có hội thoại rồi thì composer sạch, chỉ chip + ô nhập. */}
         <div className="composer-input">
           <textarea
             ref={taskRef}
