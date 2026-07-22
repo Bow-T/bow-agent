@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { NeuralBrain, type CameraInfo, type NeuralBrainHandle } from './NeuralBrain.js';
-import { ModeSelect } from './ModeSelect.js';
+import { ModeSelect, modeDef } from './ModeSelect.js';
 import { PixelSelect } from './PixelSelect.js';
 import { Markdown } from './Markdown.js';
 import { QuestionCard } from './QuestionCard.js';
@@ -163,6 +163,23 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
   const [cameraInfo, setCameraInfo] = useState<CameraInfo | null>(null);
   const neuralBrainRef = useRef<NeuralBrainHandle>(null);
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
+  const [configPopOpen, setConfigPopOpen] = useState(false);
+  const configPopRef = useRef<HTMLDivElement | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const starChartRef = useRef<HTMLDivElement | null>(null);
+  const logRef = useRef<HTMLDivElement | null>(null);
+
+  // Đóng popover cấu hình khi click ngoài
+  useEffect(() => {
+    if (!configPopOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (configPopRef.current && !configPopRef.current.contains(e.target as Node)) {
+        setConfigPopOpen(false);
+      }
+    };
+    window.addEventListener('pointerdown', onPointerDown);
+    return () => window.removeEventListener('pointerdown', onPointerDown);
+  }, [configPopOpen]);
   const [expandedChatGroups, setExpandedChatGroups] = useState<Set<string>>(new Set());
   const [docs, setDocs] = useState<DocAttachment[]>([]);
   const [pdfs, setPdfs] = useState<{ name: string; base64: string }[]>([]);
@@ -1264,12 +1281,46 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
   return (
     <div className="task-pane" hidden={!visible}>
       <div className="main-layout">
-        <aside className="sidebar-pipeline">
+        {/* Rail thu gọn 44px bên trái */}
+        <div className="m-rail">
+          <button
+            type="button"
+            className={`m-iconbtn${sidebarOpen ? ' on' : ''}`}
+            onClick={() => setSidebarOpen((o) => !o)}
+            title={sidebarOpen ? (language === 'vi' ? 'Thu gọn sidebar (mở rộng chat thêm 300px)' : 'Collapse sidebar (expand chat by +300px)') : (language === 'vi' ? 'Mở rộng sidebar' : 'Expand sidebar')}
+          >
+            ☰
+          </button>
+          <button
+            type="button"
+            className="m-iconbtn"
+            onClick={() => {
+              if (!sidebarOpen) setSidebarOpen(true);
+              starChartRef.current?.scrollIntoView({ behavior: 'smooth' });
+            }}
+            title={language === 'vi' ? 'Cuộn tới Bản đồ sao' : 'Scroll to Star Chart'}
+          >
+            ✦
+          </button>
+          <button
+            type="button"
+            className="m-iconbtn"
+            onClick={() => {
+              if (!sidebarOpen) setSidebarOpen(true);
+              logRef.current?.scrollIntoView({ behavior: 'smooth' });
+            }}
+            title={language === 'vi' ? 'Cuộn tới Nhật ký hoạt động' : 'Scroll to Activity Log'}
+          >
+            ≡
+          </button>
+        </div>
+
+        <aside className={`sidebar-pipeline${sidebarOpen ? '' : ' closed'}`}>
           {/* Usage (Session 5hr + Context) đã chuyển lên header cho gọn. */}
           {(() => {
             const liveCount = agentNodes.filter((n) => n.active).length;
             return (
-              <div className="sidebar-pipeline-title star-chart-title">
+              <div ref={starChartRef} className="sidebar-pipeline-title star-chart-title">
                 <span>{language === 'vi' ? 'Bản đồ sao' : 'Star Chart'}</span>
                 <span
                   className={`star-status${running ? ' live' : ''}`}
@@ -1367,7 +1418,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
             );
           })()}
 
-          <div className="sidebar-pipeline-title" style={{ marginTop: '4px', borderTop: 'var(--bd-thin) solid var(--outline)', paddingTop: '12px' }}>
+          <div ref={logRef} className="sidebar-pipeline-title" style={{ marginTop: '4px', borderTop: 'var(--bd-thin) solid var(--outline)', paddingTop: '12px' }}>
             {language === 'vi' ? 'Nhật ký hoạt động' : 'Activity Log'}
           </div>
 
@@ -1559,21 +1610,52 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
           >
         {items.length === 0 && !running && (
           <div className="empty">
-            {language === 'vi' ? (
-              <>
-                Nhập đề tài / task, dán Jira ticket hoặc URL board, kéo-thả tài liệu &amp; ảnh
-                (wireframe) vào đây.
-                <br />
-                Agent tự nhận diện <b>source</b> từ thư mục repo.
-              </>
-            ) : (
-              <>
-                Enter task / topic, paste Jira ticket or board URL, drag &amp; drop documents &amp; images
-                (wireframe) here.
-                <br />
-                Agent automatically detects <b>source</b> from the repository.
-              </>
-            )}
+            <h3 className="empty-title">
+              {language === 'vi' ? 'Giao việc cho agent — bắt đầu từ một câu mô tả' : 'Assign tasks to agent — start with a description'}
+            </h3>
+            <p className="empty-sub">
+              {language === 'vi'
+                ? 'Nhập đề tài, dán Jira ticket hoặc URL board, kéo-thả tài liệu & ảnh wireframe vào ô bên dưới.'
+                : 'Enter topic, paste Jira ticket or board URL, drag & drop documents & wireframe images below.'}
+            </p>
+            <div className="empty-steps">
+              <div className="empty-step">
+                <b>1</b>{language === 'vi' ? 'Chọn repo nguồn' : 'Select repo source'}
+              </div>
+              <div className="empty-step">
+                <b>2</b>{language === 'vi' ? 'Mô tả việc cần làm' : 'Describe the task'}
+              </div>
+              <div className="empty-step">
+                <b>3</b>{language === 'vi' ? 'Duyệt kế hoạch & thay đổi' : 'Review plan & changes'}
+              </div>
+            </div>
+            <div className="quick-prompts">
+              {(readonlyShare ? QUICK_PROMPTS.filter((qp) => qp.label === 'Giải thích codebase') : QUICK_PROMPTS).map((qp) => {
+                const isVi = language === 'vi';
+                let label = qp.label;
+                let text = qp.text;
+                if (!isVi) {
+                  if (qp.label === 'Sửa bug từ Jira') { label = 'Fix bug from Jira'; text = 'Fix bug from Jira ticket: '; }
+                  else if (qp.label === 'Làm theo đề xuất') { label = 'Follow proposal'; text = 'Implement proposal: '; }
+                  else if (qp.label === 'Giải thích codebase') { label = 'Explain codebase'; text = 'Explain codebase architecture and main flow.'; }
+                  else if (qp.label === 'Viết test') { label = 'Write tests'; text = 'Write unit tests for: '; }
+                  else if (qp.label === 'Review & rà lỗi') { label = 'Review code'; text = 'Review code and find potential bugs/improvements.'; }
+                  else if (qp.label === 'Sinh commit / PR') { label = 'Generate commit/PR'; text = 'Generate git commit message and PR description.'; }
+                  else if (qp.label === 'Refactor / dọn code') { label = 'Refactor code'; text = 'Refactor code to improve readability and structure.'; }
+                }
+                return (
+                  <button
+                    key={qp.label}
+                    type="button"
+                    className="quick-prompt-chip"
+                    onClick={() => applyQuickPrompt({ text })}
+                    title={text}
+                  >
+                    <Icon name={qp.icon} size={15} /> {label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
         {(() => {
@@ -1825,7 +1907,68 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
           onFiles(e.dataTransfer.files);
         }}
       >
-        <div className="controls">
+        {/* Hàng chip tóm tắt cấu hình + popover config đầy đủ */}
+        {(() => {
+          const modeLabel = modeDef(mode, language).label;
+          const modelLabel = selectedModel === 'claude-opus-4-8' ? 'Opus 4.8' : selectedModel === 'claude-sonnet-5' ? 'Sonnet 5' : selectedModel === 'claude-haiku-4-5-20251001' ? 'Haiku 4.5' : selectedModel === 'claude-fable-5' ? 'Fable 5' : selectedModel;
+          const effortLabel = effort === 'high' ? (language === 'vi' ? 'Cao' : 'High') : effort === 'low' ? (language === 'vi' ? 'Thấp' : 'Low') : effort === 'medium' ? (language === 'vi' ? 'Trung bình' : 'Med') : effort === 'xhigh' ? (language === 'vi' ? 'Rất cao' : 'Xhigh') : (language === 'vi' ? 'Tối đa' : 'Max');
+
+          return (
+            <div className="composer-cfg-row">
+              <button
+                type="button"
+                className={`cfg-chip cfg-summary${configPopOpen ? ' open' : ''}`}
+                onClick={() => setConfigPopOpen((o) => !o)}
+                title={language === 'vi' ? 'Bấm để mở/đóng bảng cấu hình phiên chạy đầy đủ' : 'Click to toggle full run configuration panel'}
+              >
+                <Icon name="gear" size={13} />
+                ⚙ <b>{modelLabel}</b> · {modeLabel} · {effortLabel}
+              </button>
+
+              {cfg?.claudeProfiles && cfg.claudeProfiles.length > 0 && (
+                <button
+                  type="button"
+                  className="cfg-chip"
+                  onClick={() => {
+                    setAuthModal({ profile: selectedClaudeProfile, mode: 'select' });
+                  }}
+                  title={language === 'vi' ? `Tài khoản '${selectedClaudeProfile}' (bấm để xem/đổi)` : `Account '${selectedClaudeProfile}'`}
+                >
+                  <span className={`cfg-auth ${tabProfileAuthed ? 'ok' : 'bad'}`}>
+                    👤 {selectedClaudeProfile === 'default' ? 'default' : `claude-${selectedClaudeProfile}`}
+                  </span>
+                  {tabProfileAuthed ? ' ✓' : ' ⚠️'}
+                </button>
+              )}
+
+              {!readonlyShare && (
+                <button
+                  type="button"
+                  className="cfg-chip"
+                  onClick={() => { if (!running && cfg?.isAdmin) openPicker(cwd); }}
+                  title={cwd || 'Chưa chọn thư mục repo (cwd)'}
+                >
+                  📁 {cwd.trim() ? (cwd.trim().split('/').filter(Boolean).pop() ?? cwd) : 'Chọn repo'}
+                </button>
+              )}
+
+              {!readonlyShare && profile === 'auto' && detected && detected.profile !== 'none' && (
+                <span
+                  className="cfg-chip profile-badge"
+                  title={language === 'vi' ? `Kiến thức repo (~${detected.profileChars ? Math.round(detected.profileChars / 1000) + 'K' : '?'} ký tự)` : `Repo knowledge (~${detected.profileChars ? Math.round(detected.profileChars / 1000) + 'K' : '?'} chars)`}
+                >
+                  <strong>{detected.profile}</strong>
+                  {detected.profileChars ? ` ~${Math.round(detected.profileChars / 1000)}K` : ''}
+                </span>
+              )}
+            </div>
+          );
+        })()}
+
+        <div style={{ position: 'relative' }}>
+          {/* Popover chứa 2 control-row đầy đủ bung lên trên */}
+          <div ref={configPopRef} className={`composer-config-pop${configPopOpen ? ' open' : ''}`}>
+            <div className="controls">
           {/* Hàng 1 — CẤU HÌNH CHẠY: chế độ, model, profile, stack skill.
               Nhóm theo chức năng (xuống hàng có chủ đích) cho gọn thay vì 1 hàng dài. */}
           <div className="control-row" data-group={language === 'vi' ? 'Cấu hình' : 'Config'}>
@@ -2111,7 +2254,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
           {!readonlyShare && (
             <div
               className="cwd-container"
-              style={{ display: 'flex', gap: '6px', alignItems: 'stretch', marginLeft: 'auto', flexShrink: 0 }}
+              style={{ display: 'flex', gap: '6px', alignItems: 'center', flexShrink: 0 }}
               title={cwd || 'Chưa chọn thư mục repo (cwd)'}
             >
               {cfg?.isAdmin ? (
@@ -2149,6 +2292,8 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
           )}
           </div>
         </div>
+      </div>
+      </div>
 
         {/* Chỉ hiện khi repo CHƯA có profile — để mời "Sinh profile cho repo này".
             Khi đã có profile, thông tin tên+cỡ đã nằm gọn ở badge Hàng Agent nên ẩn hẳn dòng này. */}
@@ -2208,52 +2353,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
           </div>
         )}
 
-        {!running && (
-          <div className="quick-prompts">
-            {/* QC Mode (read-only): chỉ giữ gợi ý "Giải thích codebase" —
-                ẩn các gợi ý hướng tới sửa/thực thi (Sửa bug, Làm theo đề xuất). */}
-            {(readonlyShare ? QUICK_PROMPTS.filter((qp) => qp.label === 'Giải thích codebase') : QUICK_PROMPTS).map((qp) => {
-              const isVi = language === 'vi';
-              let label = qp.label;
-              let text = qp.text;
-              if (!isVi) {
-                if (qp.label === 'Sửa bug từ Jira') {
-                  label = 'Fix Jira bug';
-                  text = 'Read and resolve Jira ticket: ';
-                } else if (qp.label === 'Làm theo đề xuất') {
-                  label = 'Follow proposal';
-                  text = 'Analyze the problem, propose a solution, and present a plan for review before executing.';
-                } else if (qp.label === 'Giải thích codebase') {
-                  label = 'Explain codebase';
-                  text = 'Read and explain the structure of this project: main modules, data flow, and key points to note.';
-                } else if (qp.label === 'Viết test') {
-                  label = 'Write tests';
-                  text = 'Write unit/widget tests for the changed code (or specified module), following the project conventions.';
-                } else if (qp.label === 'Review & rà lỗi') {
-                  label = 'Review & debug';
-                  text = 'Review code to find bugs, potential errors, and fragile points, and propose specific fixes.';
-                } else if (qp.label === 'Sinh commit / PR') {
-                  label = 'Create commit / PR';
-                  text = 'Summarize current changes and compose a commit message + PR description according to project conventions.';
-                } else if (qp.label === 'Refactor / dọn code') {
-                  label = 'Refactor code';
-                  text = 'Propose and perform refactoring for specified code, preserving the original behavior.';
-                }
-              }
-              return (
-                <button
-                  key={qp.label}
-                  type="button"
-                  className="quick-prompt-chip"
-                onClick={() => applyQuickPrompt({ text })}
-                title={text}
-              >
-                <Icon name={qp.icon} size={15} /> {label}
-              </button>
-              );
-            })}
-          </div>
-        )}
+
 
         {/* Tay kéo giãn ô nhập: kéo lên = cao ra, xuống = thấp lại; bấm đúp = trả về
             mặc định. Đặt trong luồng ngay trên ô nhập nên không che phần đầu khung. */}
@@ -2267,6 +2367,37 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
         >
           <span className="composer-resize-grip" />
         </div>
+
+        {/* Hàng từ gợi ý nhanh (Quick Prompts) giúp điền mẫu vào ô nhập nhanh chóng */}
+        {!running && (
+          <div className="composer-quick-prompts">
+            {(readonlyShare ? QUICK_PROMPTS.filter((qp) => qp.label === 'Giải thích codebase') : QUICK_PROMPTS).map((qp) => {
+              const isVi = language === 'vi';
+              let label = qp.label;
+              let text = qp.text;
+              if (!isVi) {
+                if (qp.label === 'Sửa bug từ Jira') { label = 'Fix bug from Jira'; text = 'Fix bug from Jira ticket: '; }
+                else if (qp.label === 'Làm theo đề xuất') { label = 'Follow proposal'; text = 'Implement proposal: '; }
+                else if (qp.label === 'Giải thích codebase') { label = 'Explain codebase'; text = 'Explain codebase architecture and main flow.'; }
+                else if (qp.label === 'Viết test') { label = 'Write tests'; text = 'Write unit tests for: '; }
+                else if (qp.label === 'Review & rà lỗi') { label = 'Review code'; text = 'Review code and find potential bugs/improvements.'; }
+                else if (qp.label === 'Sinh commit / PR') { label = 'Generate commit/PR'; text = 'Generate git commit message and PR description.'; }
+                else if (qp.label === 'Refactor / dọn code') { label = 'Refactor code'; text = 'Refactor code to improve readability and structure.'; }
+              }
+              return (
+                <button
+                  key={qp.label}
+                  type="button"
+                  className="quick-prompt-chip"
+                  onClick={() => applyQuickPrompt({ text })}
+                  title={text}
+                >
+                  <Icon name={qp.icon} size={13} /> {label}
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         <div className="composer-input">
           <textarea

@@ -510,6 +510,8 @@ export const NeuralBrain = forwardRef<NeuralBrainHandle, {
   accent?: string;
   /** Phát ra ngoài toạ độ RA/DEC + zoom + mục tiêu mỗi khi camera đổi (throttle trong draw). */
   onCamera?: (info: CameraInfo) => void;
+  /** Tạm dừng animation loop (tab ẩn / sidebar đóng) — đỡ CPU; resume tự nối lại. */
+  paused?: boolean;
 }>(function NeuralBrain({
   active,
   steps,
@@ -518,9 +520,11 @@ export const NeuralBrain = forwardRef<NeuralBrainHandle, {
   theme,
   accent,
   onCamera,
+  paused,
 }, ref) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const activeRef = useRef(active);
+  const pausedRef = useRef(!!paused);
   const stepsRef = useRef(steps);
   const selRef = useRef(selectedId);
   const themeRef = useRef(theme);
@@ -534,6 +538,7 @@ export const NeuralBrain = forwardRef<NeuralBrainHandle, {
   // Bảng màu 6 loại thiên thể (--step-*) — cùng cơ chế cache/observer với accent ở trên.
   const stepColorsRef = useRef(readStepColors());
   activeRef.current = active;
+  pausedRef.current = !!paused;
   stepsRef.current = steps;
   selRef.current = selectedId;
   themeRef.current = theme;
@@ -680,6 +685,12 @@ export const NeuralBrain = forwardRef<NeuralBrainHandle, {
     canvas.addEventListener('wheel', onWheel, { passive: false });
 
     const draw = () => {
+      // Paused (tab ẩn / sidebar đóng): bỏ qua toàn bộ tính toán + vẽ, chỉ giữ nhịp RAF
+      // chờ resume. Chi phí ~0 (một so sánh boolean mỗi frame của tab đang hiện).
+      if (pausedRef.current) {
+        raf = requestAnimationFrame(draw);
+        return;
+      }
       const W = canvas.width;
       const H = canvas.height;
       t += 0.012; // slow, cosmic speed

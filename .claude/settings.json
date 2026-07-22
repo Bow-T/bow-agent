@@ -1,4 +1,11 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(awk 'NR>=2560 && NR<=3966 && \\(/modal-title/ || /className=\"modal-overlay/ || /PanelOpen &&/ || /Open && \\\\\\(/ || /usagePanelOpen/ || /claudeModal &&/ || /authModal &&/\\)' /Users/tuannguyen/GitProject/bow-agent/web/App.tsx)",
+      "Bash(grep -nE '^\\\\.|^\\\\s{0,2}[.#][a-zA-Z][^{]*\\\\{|@media|@keyframes|grid-template|display:\\\\s*\\(grid|flex\\)' /Users/tuannguyen/GitProject/bow-agent/web/styles.css)",
+      "Bash(grep -nE '^\\\\.\\(chat-container|chat|composer|controls|control-row|task|quick-prompts|chat-action-dock|approval|bubble|empty|field|composer-input|composer-bar|attachments|detected\\)[ ,{:.]' /Users/tuannguyen/GitProject/bow-agent/web/styles.css)"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       {
@@ -16,8 +23,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cd \"$CLAUDE_PROJECT_DIR\" 2>/dev/null || exit 0; git rev-parse --git-dir >/dev/null 2>&1 || exit 0; dirty=$(git status --porcelain 2>/dev/null); ahead=$(git rev-list --count @{u}..HEAD 2>/dev/null); if [ -n \"$dirty\" ]; then n=$(printf \"%s\\n\" \"$dirty\" | grep -c .); printf '{\"systemMessage\": \"📝 Có %s file thay đổi chưa commit — nhớ commit/push nếu xong việc.\"}' \"$n\"; elif [ -n \"$ahead\" ] && [ \"$ahead\" -gt 0 ]; then printf '{\"systemMessage\": \"⬆️ Có %s commit chưa push lên origin — nhớ git push.\"}' \"$ahead\"; fi",
-            "suppressOutput": true
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" 2>/dev/null || exit 0; git rev-parse --git-dir >/dev/null 2>&1 || exit 0; dirty=$(git status --porcelain 2>/dev/null); ahead=$(git rev-list --count @{u}..HEAD 2>/dev/null); if [ -n \"$dirty\" ]; then n=$(printf \"%s\\n\" \"$dirty\" | grep -c .); printf '{\"systemMessage\": \"📝 Có %s file thay đổi chưa commit — nhớ commit/push nếu xong việc.\"}' \"$n\"; elif [ -n \"$ahead\" ] && [ \"$ahead\" -gt 0 ]; then printf '{\"systemMessage\": \"⬆️ Có %s commit chưa push lên origin — nhớ git push.\"}' \"$ahead\"; fi"
           }
         ]
       }

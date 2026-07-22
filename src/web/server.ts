@@ -1664,6 +1664,7 @@ app.get('/api/active-clients', requireAdmin, (_req, res) => {
  * ở đây phản ánh phiên trống nên UI chỉ dùng phần rateLimits. Trả 503 nếu không đọc được.
  */
 app.get('/api/usage', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
   const model = typeof req.query.model === 'string' ? req.query.model : undefined;
   // Tài khoản của tab (per-tab) — CHỈ admin localhost mới đọc hạn mức tài khoản tuỳ chọn.
   // Khách LAN gửi lên bị bỏ qua → đọc theo tài khoản env server như cũ.
@@ -1672,7 +1673,12 @@ app.get('/api/usage', async (req, res) => {
   try {
     const usage = await fetchUsageSnapshot(model, claudeProfile);
     if (!usage) {
-      res.status(503).json({ error: 'Không đọc được dữ liệu usage (chưa login Claude CLI hoặc SDK không hỗ trợ).' });
+      // Nêu rõ tài khoản trong message để khi đổi account rồi "Làm mới" fail, UI hiện
+      // đúng nguyên nhân thay vì câu chung chung khó lần.
+      const who = claudeProfile && claudeProfile !== 'default' ? ` của tài khoản "${claudeProfile}"` : '';
+      res.status(503).json({
+        error: `Không đọc được hạn mức${who} — tài khoản chưa đăng nhập, đăng nhập lỗi, hoặc đọc snapshot quá 30s.`,
+      });
       return;
     }
     res.json({ usage });

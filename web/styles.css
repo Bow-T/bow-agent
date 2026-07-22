@@ -117,42 +117,44 @@
 [data-theme='figma'] {
   color-scheme: dark;
 
-  --bg: #1e1e1e;          /* canvas xám than Figma */
-  --surface: #2c2c2c;     /* panel/toolbar nổi trên canvas */
-  --surface-2: #383838;   /* inset/hover (Figma menu hover) */
-  --surface-3: #444444;
+  --bg: #0c0c0c;          /* Pitch Obsidian Dark (#0c0c0c) */
+  --surface: #141414;     /* Kinetic Dark Card */
+  --surface-2: #1e1e1e;   /* Kinetic Inset / Hover */
+  --surface-3: #262626;
 
-  --ink: #ffffff;         /* chữ chính trắng */
-  --ink-2: #d4d4d4;       /* chữ phụ */
-  --muted: #8c8c8c;       /* chữ mờ (Figma text-secondary dark) */
+  --ink: #ffffff;         /* Chữ trắng */
+  --ink-2: #d4d4d4;       /* Chữ phụ */
+  --muted: #888888;       /* Chữ mờ #888888 */
 
-  --brass: #5551ff;       /* FIGMA PRIMARY — tím-xanh (nút chính, selection) */
-  --brass-bright: #7b78ff;/* fill / hover sáng hơn */
-  --brass-soft: rgba(85, 81, 255, 0.28);
-  --on-brass: #ffffff;    /* chữ trắng trên khối tím */
+  --brass: #e2ff00;       /* ELECTRIC NEON LIME-YELLOW (#e2ff00 - Màu chủ đạo!) */
+  --brass-bright: #ebff4d;/* Hover sáng hơn */
+  --brass-soft: rgba(226, 255, 0, 0.28);
+  --on-brass: #000000;    /* Chữ đen tuyền trên nền Neon Lime */
 
-  --teal: #0d99ff;        /* accent phụ = Figma blue (link, focus ring phụ) */
-  --danger: #f24822;      /* đỏ Figma (error/destructive) */
-  --danger-soft: rgba(242, 72, 34, 0.22);
+  --teal: #38bdf8;
+  --danger: #ff4d4d;
+  --danger-soft: rgba(255, 77, 77, 0.2);
 
-  --hairline: rgba(255, 255, 255, 0.1);  /* viền hairline trắng mờ (Figma border dark) */
-  --hairline-2: rgba(255, 255, 255, 0.06);
-  --graticule: rgba(255, 255, 255, 0.05);
+  --hairline: rgba(255, 255, 255, 0.1);
+  --hairline-2: rgba(255, 255, 255, 0.05);
+  --graticule: rgba(255, 255, 255, 0.04);
 
-  --bd-thin: 1px;         /* hairline 1px — tool UI mảnh */
-  --glass: 100%;          /* panel đục (Figma không dùng kính mờ) */
+  --bd-thin: 1px;
+  --glass: 100%;
   --glow-a: transparent;
   --glow-b: transparent;
   --highlight: transparent;
   --grain: none;
   --viewport-glow: none;
 
-  --grid: rgba(255, 255, 255, 0.07);    /* dot-grid canvas Figma (chấm trắng mờ) */
-  --depth: 0 4px 14px rgba(0, 0, 0, 0.35);  /* shadow MỀM nhẹ (panel elevation) */
-  --viewport-bg: #1a1a1a; /* màn viewport = canvas tối hơn panel một nấc */
+  --grid: rgba(255, 255, 255, 0.05);
+  --depth: 0 8px 30px rgba(0, 0, 0, 0.5);
+  --viewport-bg: #090909;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);  /* Kinetic spring motion physics */
 
-  --r: 6px;               /* bo góc MỀM (input/nút Figma) */
-  --r-lg: 13px;           /* panel/modal lớn (Figma floating panel) */
+  --r: 2px;
+  --r-lg: 4px;
+  --r-lg: 12px;
 
   /* Màu THIÊN THỂ — viewport Figma là canvas TỐI, trung tính phải SÁNG. Palette đa sắc
    * kiểu tool UI: tím primary cho tool, blue cho result, đỏ Figma cho lỗi, xanh lá Figma
@@ -501,6 +503,113 @@ a { color: var(--brass); text-underline-offset: 2px; }
   gap: 4px;
   color: var(--muted);
   font-size: 12px;
+}
+
+/* ── Header Redesign: Pill Trạng thái & Pill Tài nguyên gộp ── */
+.m-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 4px 10px;
+  border: var(--bd-thin) solid var(--hairline);
+  border-radius: 99px;
+  color: #00b060;
+  background: var(--surface-2);
+  white-space: nowrap;
+}
+.m-status i {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: status-pulse 1.6s ease-in-out infinite;
+}
+@keyframes status-pulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .m-status i { animation: none; } }
+
+.m-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  padding: 4px 12px;
+  background: var(--surface-2);
+  border: var(--bd-thin) solid var(--hairline);
+  border-radius: 99px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color var(--fast), color var(--fast);
+}
+.m-meter:hover { border-color: var(--brass); color: var(--ink); }
+.m-meter b { color: var(--ink-2); font-weight: 600; }
+.m-meter .bar {
+  width: 52px; height: 5px;
+  border-radius: 3px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  overflow: hidden;
+  display: inline-block;
+  vertical-align: middle;
+}
+.m-meter .bar i {
+  display: block;
+  height: 100%;
+  background: var(--brass);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+/* ── Side Rail 44px (Activity Bar thu gọn) ── */
+.m-rail {
+  width: 44px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 0;
+  border-right: var(--bd-thin) solid var(--hairline);
+  background: var(--surface);
+  z-index: 2;
+}
+.m-rail .m-iconbtn {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r);
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 15px;
+  transition: background-color var(--fast), color var(--fast);
+}
+.m-rail .m-iconbtn:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+.m-rail .m-iconbtn.on {
+  background: rgba(85, 81, 255, 0.16);
+  color: var(--brass-bright);
+}
+
+.sidebar-pipeline {
+  transition: width 0.25s ease, opacity 0.2s ease, margin 0.25s ease, padding 0.25s ease;
+}
+.sidebar-pipeline.closed {
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: none !important;
+  opacity: 0 !important;
+  overflow: hidden !important;
 }
 
 /* Nút icon phẳng */
@@ -1251,13 +1360,59 @@ a { color: var(--brass); text-underline-offset: 2px; }
 
 .empty {
   margin: auto;
-  max-width: 460px;
+  max-width: 580px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
   text-align: center;
   color: var(--muted);
   font-size: 14px;
   line-height: 1.7;
+  padding: 24px 16px;
 }
 .empty b { color: var(--brass); font-weight: 600; }
+.empty-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  text-wrap: balance;
+}
+.empty-sub { margin: 0; max-width: 460px; }
+.empty-steps {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 2px;
+}
+.empty-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 13px;
+  background: var(--surface);
+  border: var(--bd-thin) solid var(--hairline);
+  border-radius: var(--r);
+  font-size: 12.5px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.empty-step b {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 19px; height: 19px;
+  border-radius: 50%;
+  background: var(--brass-soft);
+  color: var(--brass);
+  font-size: 11px;
+  font-weight: 700;
+}
+/* Quick prompts trong empty: canh giữa, bỏ margin lề của bản composer cũ. */
+.empty .quick-prompts { justify-content: center; margin: 4px 0 0; }
 
 /* Bong bóng */
 .bubble {
@@ -2069,7 +2224,7 @@ a { color: var(--brass); text-underline-offset: 2px; }
 .composer {
   flex-shrink: 0;
   margin: 0 14px 14px;
-  padding: 13px 13px 12px;
+  padding: 10px 12px 10px;
   background: var(--surface);
   background-image: var(--grain);
   border: 1px solid var(--hairline);
@@ -2077,7 +2232,7 @@ a { color: var(--brass); text-underline-offset: 2px; }
   box-shadow: var(--depth), inset 0 1px 0 var(--highlight);
   display: flex;
   flex-direction: column;
-  gap: 11px;
+  gap: 4px;
   position: relative;
   transition: border-color var(--med), box-shadow var(--med);
   /* KHÔNG đặt overflow ở đây: nhãn "INPUT CHANNEL" (::before) nằm nửa ngoài mép trên
@@ -2120,6 +2275,80 @@ a { color: var(--brass); text-underline-offset: 2px; }
   z-index: 2;
 }
 .composer:focus-within { border-color: var(--brass); }
+
+/* ── Hàng CHIP tóm tắt cấu hình (thay 2 hàng control luôn hiện) ──
+ * Chip tóm tắt (⚙ model · chế độ · nỗ lực) mở popover config; chip tài khoản/repo là lối
+ * tắt. Style bám token nên tự ăn cả 2 theme: brutal = viền ink + label mono HOA;
+ * figma = hairline mờ + Inter. */
+.composer-cfg-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.cfg-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--surface-2);
+  border: var(--bd-thin) solid var(--hairline);
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-2);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--fast), border-color var(--fast), color var(--fast);
+}
+.cfg-chip:hover:not(:disabled):not(.static) { border-color: var(--brass); color: var(--ink); }
+.cfg-chip.cfg-summary { background: var(--surface); }
+.cfg-chip.cfg-summary.open { border-color: var(--brass); background: var(--brass-soft); }
+.cfg-chip.cfg-summary b { font-weight: 700; color: var(--ink); }
+.cfg-chip.static { cursor: default; color: var(--muted); }
+.cfg-chip:disabled { opacity: 0.55; cursor: not-allowed; }
+.cfg-auth { font-weight: 700; }
+.cfg-auth.ok { color: #00b060; }
+.cfg-auth.bad { color: var(--danger); }
+
+/* Badge profile repo trong hàng chip composer */
+.cfg-chip.profile-badge {
+  color: var(--on-brass);
+  background: var(--brass);
+  border-color: var(--brass);
+  cursor: help;
+}
+.cfg-chip.profile-badge strong { font-weight: 700; }
+
+/* Hàng từ gợi ý nhanh (Quick Prompts) nằm ngay trên ô nhập */
+.composer-quick-prompts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 6px;
+}
+
+/* ── Popover cấu hình: chứa nguyên .controls cũ, bung LÊN TRÊN composer ── */
+.composer-config-pop {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  padding: 14px;
+  background: var(--surface);
+  background-image: var(--grain);
+  border: var(--bd-thin) solid var(--hairline);
+  border-radius: var(--r-lg);
+  box-shadow: var(--depth);
+}
+.composer-config-pop.open { display: block; }
 
 /* Hàng điều khiển: nhóm theo chức năng thành 2 hàng (.control-row) cho gọn —
    hàng 1 = cấu hình chạy (chế độ/model/profile/stack), hàng 2 = tài khoản/effort/agent + repo.
@@ -3469,6 +3698,139 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   margin-right: 2px;
 }
 
+/* ─────────────── Neo-Brutalism Theme Overrides (designprompts.dev) ─────────────── */
+[data-theme='brutal'] .empty-title {
+  font-family: var(--sans) !important;
+  font-size: 23px !important;
+  font-weight: 900 !important;
+  text-transform: uppercase !important;
+  color: #0a0a0a !important;
+  letter-spacing: -0.02em !important;
+}
+[data-theme='brutal'] .empty-sub {
+  font-family: var(--mono) !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  color: var(--muted) !important;
+}
+[data-theme='brutal'] .empty-step {
+  font-family: var(--sans) !important;
+  font-size: 13px !important;
+  font-weight: 800 !important;
+  background: #fffdf5 !important;
+  border: 2.5px solid #0a0a0a !important;
+  box-shadow: 4px 4px 0 0 #0a0a0a !important;
+  border-radius: 0 !important;
+  color: #0a0a0a !important;
+}
+[data-theme='brutal'] .empty-step b {
+  background: #ffcf24 !important;
+  color: #0a0a0a !important;
+  border: 1.5px solid #0a0a0a !important;
+  font-weight: 900 !important;
+}
+
+[data-theme='brutal'] .cfg-chip {
+  font-family: var(--mono) !important;
+  font-size: 11.5px !important;
+  font-weight: 800 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.04em !important;
+  border-radius: 0 !important;
+  border: 2px solid #0a0a0a !important;
+  box-shadow: 3px 3px 0 0 #0a0a0a !important;
+  background: #fffdf5 !important;
+  color: #0a0a0a !important;
+  transition: transform 100ms ease, box-shadow 100ms ease, background 100ms ease !important;
+}
+[data-theme='brutal'] .cfg-chip:hover {
+  transform: translate(-1.5px, -1.5px) !important;
+  box-shadow: 4.5px 4.5px 0 0 #0a0a0a !important;
+  background: #fdf3d6 !important;
+}
+[data-theme='brutal'] .quick-prompt-chip {
+  border: 2px solid #0a0a0a !important;
+  box-shadow: 2px 2px 0 0 #0a0a0a !important;
+  background: #fffdf5 !important;
+  color: #0a0a0a !important;
+  font-weight: 800 !important;
+  text-transform: uppercase !important;
+  font-size: 10px !important;
+  border-radius: 0 !important;
+}
+[data-theme='brutal'] .quick-prompt-chip:hover {
+  background: #ffcf24 !important;
+  box-shadow: 3px 3px 0 0 #0a0a0a !important;
+}
+[data-theme='brutal'] .cfg-chip:active {
+  transform: translate(1.5px, 1.5px) !important;
+  box-shadow: 1px 1px 0 0 #0a0a0a !important;
+}
+[data-theme='brutal'] .cfg-chip.cfg-summary {
+  background: #ffcf24 !important; /* Vivid Yellow */
+  color: #0a0a0a !important;
+}
+[data-theme='brutal'] .cfg-chip.cfg-summary b {
+  font-weight: 900 !important;
+}
+[data-theme='brutal'] .composer-config-pop {
+  left: 0 !important;
+  right: 0 !important;
+  width: auto !important;
+  max-width: 100% !important;
+  background: #fffdf5 !important;
+  border: 2.5px solid #0a0a0a !important;
+  box-shadow: 6px 6px 0 0 #0a0a0a !important;
+  border-radius: 0 !important;
+  padding: 16px !important;
+}
+
+[data-theme='brutal'] .m-status {
+  font-weight: 800 !important;
+  border: 2px solid #0a0a0a !important;
+  box-shadow: 2.5px 2.5px 0 0 #0a0a0a !important;
+  background: #fffdf5 !important;
+  color: #008a4b !important;
+  border-radius: 0 !important;
+}
+[data-theme='brutal'] .m-meter {
+  font-weight: 800 !important;
+  border: 2px solid #0a0a0a !important;
+  box-shadow: 3px 3px 0 0 #0a0a0a !important;
+  background: #fffdf5 !important;
+  color: #0a0a0a !important;
+  border-radius: 0 !important;
+}
+[data-theme='brutal'] .m-meter b {
+  color: #0a0a0a !important;
+  font-weight: 900 !important;
+}
+[data-theme='brutal'] .m-meter .bar {
+  border: 1.5px solid #0a0a0a !important;
+  background: #fdf3d6 !important;
+  border-radius: 0 !important;
+}
+[data-theme='brutal'] .m-meter .bar i {
+  background: #ffcf24 !important;
+  border-radius: 0 !important;
+}
+[data-theme='brutal'] .m-rail {
+  border-right: 2.5px solid #0a0a0a !important;
+  background: #fbf6e9 !important;
+}
+[data-theme='brutal'] .m-rail .m-iconbtn {
+  border: 2px solid #0a0a0a !important;
+  box-shadow: 2px 2px 0 0 #0a0a0a !important;
+  border-radius: 0 !important;
+  background: #fffdf5 !important;
+  color: #0a0a0a !important;
+  font-weight: 900 !important;
+}
+[data-theme='brutal'] .m-rail .m-iconbtn.on {
+  background: #ffcf24 !important;
+  box-shadow: 3px 3px 0 0 #0a0a0a !important;
+}
+
 
 /* ═══════════════════════════════  Figma · tinh chỉnh "tool UI dark"  ═══════════════════════════════
  * Chỉ áp khi data-theme=figma. Bắt vibe app Figma bản tối:
@@ -3603,30 +3965,42 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   outline: none;
 }
 
-/* Nút — bo mềm 6px, Inter medium, phẳng; hover sáng lên một nấc (không offset cứng). */
+/* Nút Kinetic — motion physics (cubic-bezier) + hover glow */
 [data-theme='figma'] .btn,
 [data-theme='figma'] .px-select-btn {
-  border: 1px solid transparent !important;
+  border: 1px solid var(--hairline) !important;
   border-radius: var(--r) !important;
   box-shadow: none !important;
   font-family: 'Inter', sans-serif !important;
-  font-weight: 500 !important;
+  font-weight: 600 !important;
   text-transform: none;
   letter-spacing: 0;
-  transition: background-color var(--fast), border-color var(--fast), color var(--fast) !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
 }
 [data-theme='figma'] .btn.run,
 [data-theme='figma'] .btn.allow,
 [data-theme='figma'] .btn.primary {
-  background: var(--brass) !important;              /* nút chính = tím primary Figma */
-  color: #ffffff !important;
-  border-color: var(--brass) !important;
+  background: #e2ff00 !important;
+  color: #000000 !important;
+  border-color: #e2ff00 !important;
+  font-weight: 800 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.06em !important;
+  box-shadow: 0 4px 16px rgba(226, 255, 0, 0.35) !important;
 }
 [data-theme='figma'] .btn.run:hover:not(:disabled),
 [data-theme='figma'] .btn.allow:hover:not(:disabled),
 [data-theme='figma'] .btn.primary:hover:not(:disabled) {
-  background: var(--brass-bright) !important;
-  border-color: var(--brass-bright) !important;
+  background: #ebff4d !important;
+  border-color: #ebff4d !important;
+  box-shadow: 0 8px 24px rgba(226, 255, 0, 0.55) !important;
+  transform: translateY(-2px) scale(1.02) !important;
+}
+[data-theme='figma'] .btn.run:active:not(:disabled),
+[data-theme='figma'] .btn.allow:active:not(:disabled),
+[data-theme='figma'] .btn.primary:active:not(:disabled) {
+  transform: translateY(1px) scale(0.98) !important;
+  box-shadow: 0 2px 8px rgba(226, 255, 0, 0.3) !important;
 }
 [data-theme='figma'] .btn.stop,
 [data-theme='figma'] .btn.deny {
@@ -3654,4 +4028,65 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   color: var(--teal) !important;
   text-decoration-thickness: 1px;
   text-underline-offset: 3px;
+}
+
+.extra-readouts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Figma Theme Overrides cho Header, Composer Chips, Popover & Empty State */
+[data-theme='figma'] .extra-readouts {
+  display: none !important;
+}
+[data-theme='figma'] .cfg-chip {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
+  font-size: 11.5px !important;
+  font-weight: 500 !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  border-radius: 99px !important;
+  border-color: transparent !important;
+  background: var(--surface-2) !important;
+  color: var(--ink-2) !important;
+}
+[data-theme='figma'] .cfg-chip:hover {
+  border-color: var(--hairline) !important;
+  color: var(--ink) !important;
+}
+[data-theme='figma'] .cfg-chip.cfg-summary {
+  background: transparent !important;
+  border: 1px solid var(--hairline) !important;
+}
+[data-theme='figma'] .cfg-chip.cfg-summary b {
+  font-weight: 600 !important;
+  color: var(--ink) !important;
+}
+[data-theme='figma'] .composer-config-pop {
+  left: 0 !important;
+  right: 0 !important;
+  width: auto !important;
+  max-width: 100% !important;
+  bottom: calc(100% + 8px) !important;
+  border-radius: var(--r-lg) !important;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55) !important;
+  background: var(--surface) !important;
+  border: 1px solid var(--hairline) !important;
+  padding: 16px !important;
+}
+[data-theme='figma'] .empty-title {
+  font-family: 'Inter', sans-serif !important;
+  font-size: 21px !important;
+  font-weight: 600 !important;
+}
+[data-theme='figma'] .empty-step {
+  font-family: 'Inter', sans-serif !important;
+  font-size: 12.5px !important;
+  border-radius: var(--r) !important;
+  border: 1px solid var(--hairline) !important;
+}
+[data-theme='figma'] .empty-step b {
+  background: rgba(85, 81, 255, 0.16) !important;
+  color: var(--brass-bright) !important;
 }

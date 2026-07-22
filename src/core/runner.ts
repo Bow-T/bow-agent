@@ -1491,6 +1491,10 @@ export async function fetchUsageSnapshot(model?: string, claudeProfile?: string)
   const done = new Promise<void>((r) => {
     release = r;
   });
+  // Timeout cứng: subprocess `claude` với profile login dở có thể KHÔNG BAO GIỜ ra
+  // 'system/init' → không có cái này, nút "Làm mới" của UI treo "Đang tải…" vô hạn.
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 30_000);
   // Prompt tối giản: chỉ để SDK khởi tạo session & mở transport. Ta KHÔNG chờ 'result'
   // (tránh gọi model) — đọc snapshot ngay sau 'system/init' rồi đóng.
   const q = query({
@@ -1499,6 +1503,7 @@ export async function fetchUsageSnapshot(model?: string, claudeProfile?: string)
       model: model ?? config.model,
       permissionMode: 'plan',
       pathToClaudeCodeExecutable: findClaudeCodeExecutable(config.defaultCwd),
+      abortController: abort,
       ...(perTabEnv ? { env: perTabEnv } : {}),
     },
   });
@@ -1514,6 +1519,7 @@ export async function fetchUsageSnapshot(model?: string, claudeProfile?: string)
   } catch {
     return null;
   } finally {
+    clearTimeout(timer);
     release();
   }
 }

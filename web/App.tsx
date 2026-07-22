@@ -432,7 +432,7 @@ export function App() {
   // thanh tab đọc mọi tab (chấm chạy + tiêu đề). TaskPane báo lên qua onStateChange.
   const [paneStates, setPaneStates] = useState<Record<string, PaneState>>({});
   const activePane = paneStates[activeTabId] ?? EMPTY_PANE_STATE;
-  const { running: paneRunning, runStartedAt: paneRunStartedAt, lastRunMs: paneLastRunMs, activeConvId: paneActiveConvId } = activePane;
+  const { running: paneRunning, runStartedAt: paneRunStartedAt, lastRunMs: paneLastRunMs, activeConvId: paneActiveConvId, usage: paneUsage, usageLoading: paneUsageLoading } = activePane;
   /** Handle của tab đang hiển thị (để History/xoá cuộc gọi imperative đúng pane). */
   const activePaneRef = () => paneRefs.current[activeTabId] ?? null;
 
@@ -445,7 +445,8 @@ export function App() {
     setPaneStates((prev) => {
       const cur = prev[tabId];
       if (cur && cur.running === s.running && cur.runStartedAt === s.runStartedAt &&
-          cur.lastRunMs === s.lastRunMs && cur.activeConvId === s.activeConvId && cur.title === s.title) {
+          cur.lastRunMs === s.lastRunMs && cur.activeConvId === s.activeConvId && cur.title === s.title &&
+          cur.usage === s.usage && cur.usageLoading === s.usageLoading) {
         return prev; // không đổi → tránh render thừa
       }
       return { ...prev, [tabId]: s };
@@ -2048,8 +2049,16 @@ export function App() {
           </span>
           <span className="brand-name">BOW</span>
           <span className="brand-tag">Observatory</span>
+          {/* Status pill hiển thị trạng thái chạy trực tiếp */}
+          <div className="m-status">
+            <i />
+            {paneRunning
+              ? `${language === 'vi' ? 'ĐANG CHẠY' : 'RUNNING'}${paneRunStartedAt != null ? ' · ' + fmtDuration(Date.now() - paneRunStartedAt) : ''}`
+              : (language === 'vi' ? 'SẴN SÀNG' : 'IDLE')}
+          </div>
         </div>
         <div className="obs-readouts">
+          <div className="extra-readouts">
           {cfg?.isAdmin ? (
             <div className="lan-url-wrap">
               <button
@@ -2254,55 +2263,33 @@ export function App() {
               )}
             </div>
           )}
-          {/* Hạn mức phiên 5 giờ (Session) — gọn trên header. Bấm để mở panel usage đầy đủ. */}
+          </div>
+          {/* Meter pill tài nguyên gộp: chi phí + hạn mức phiên 5h (%) + context window */}
           {!readonlyShare && (() => {
-            const s = usage?.rateLimits.find((w) => /session|5\s*h|5hr/i.test(w.label));
+            const s = paneUsage?.rateLimits.find((w) => /session|5\s*h|5hr/i.test(w.label));
             const pct = s && s.utilization != null ? Math.round(s.utilization) : null;
+            const hasCtx = paneUsage?.contextTokens != null && !!paneUsage.contextMaxTokens;
+            const usedCtx = hasCtx ? formatTokens(paneUsage!.contextTokens!) : null;
+            const maxCtx = hasCtx ? formatTokens(paneUsage!.contextMaxTokens!) : null;
+
             return (
               <button
-                className="readout readout-btn"
+                type="button"
+                className="m-meter"
                 title={
                   s
-                    ? `Hạn mức phiên (5hr) — ${formatResetIn(s.resetsAt)}. Bấm để xem tất cả hạn mức.`
-                    : 'Hạn mức sử dụng. Bấm để xem tất cả.'
+                    ? `Chi phí: $${accumulatedCost.toFixed(4)} · Hạn mức phiên (5hr): ${pct != null ? pct + '%' : '—'} · Ngữ cảnh: ${hasCtx ? usedCtx + '/' + maxCtx : '—'}. Bấm để mở panel chi tiết.`
+                    : 'Tài nguyên & Ngữ cảnh. Bấm để xem chi tiết.'
                 }
-                onClick={() => { setUsagePanelOpen(true); refreshUsage(); }}
-                disabled={usageLoading}
+                onClick={() => { setUsagePanelOpen(true); }}
               >
-                <span className="rl">Session</span>
-                <span
-                  className="rv"
-                  style={{ color: pct != null && pct >= 80 ? 'var(--danger)' : undefined }}
-                >
-                  {usageLoading ? '…' : pct != null ? `${pct}%` : '—'}
+                <span>$<b>{accumulatedCost.toFixed(4)}</b></span>
+                <span className="bar">
+                  <i style={{ width: `${Math.min(pct ?? 0, 100)}%` }} />
                 </span>
+                <span><b>{pct != null ? `${pct}%` : '—'}</b> {language === 'vi' ? 'phiên' : 'session'}</span>
+                <span><b>{hasCtx ? `${usedCtx}/${maxCtx}` : '—'}</b></span>
               </button>
-            );
-          })()}
-          {/* Context window — dung lượng token đã dùng / tối đa (vd 22.0k / 1M) của
-              hội thoại hiện tại, kèm % trong tooltip. */}
-          {!readonlyShare && (() => {
-            const has = usage?.contextTokens != null && !!usage.contextMaxTokens;
-            const pct = has && usage!.contextPercentage != null ? Math.round(usage!.contextPercentage) : null;
-            const used = has ? formatTokens(usage!.contextTokens!) : null;
-            const max = has ? formatTokens(usage!.contextMaxTokens!) : null;
-            return (
-              <span
-                className="readout"
-                title={
-                  has
-                    ? `Context window — đã dùng ${used} / ${max} token (${pct}%).`
-                    : 'Context window — chạy một task để đo.'
-                }
-              >
-                <span className="rl">{language === 'vi' ? 'Ngữ cảnh' : 'Context'}</span>
-                <span
-                  className="rv"
-                  style={{ color: pct != null && pct >= 80 ? 'var(--danger)' : undefined }}
-                >
-                  {has ? `${used} / ${max}` : '—'}
-                </span>
-              </span>
             );
           })()}
         </div>
