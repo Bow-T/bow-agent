@@ -98,6 +98,10 @@ const ICONS: Record<string, IconType> = {
   caretRight: ArrowRight2,
   caretDown: ArrowDown2,
   caretUp: ArrowUp2,
+  // Side Rail navigation
+  sidebar: Category,
+  starChart: Magicpen,
+  activityLog: DocumentText,
   // Approval / thông báo
   warning: Warning2,
   info: InfoCircle,

@@ -791,7 +791,8 @@ a { color: var(--brass); text-underline-offset: 2px; }
   background-image: var(--grain);
   backdrop-filter: blur(18px) saturate(1.2);
   border-right: 1px solid var(--hairline);
-  overflow: hidden;
+  overflow-y: auto;
+  scroll-behavior: smooth;
   position: relative;
 }
 .sidebar-pipeline::before {
@@ -816,12 +817,28 @@ a { color: var(--brass); text-underline-offset: 2px; }
   margin: 0;
   position: relative;
   z-index: 2;
+  transition: background-color var(--fast), box-shadow var(--fast);
 }
 .sidebar-pipeline-title::after {
   content: '';
   flex: 1;
   height: 1px;
   background: var(--hairline);
+}
+
+@keyframes title-flash-glow {
+  0% {
+    background-color: var(--brass);
+    color: #0a0a0a;
+    box-shadow: 0 0 16px var(--brass);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+.sidebar-pipeline-title.flash-highlight {
+  animation: title-flash-glow 1s ease-out;
+  border-radius: var(--r-sm);
 }
 
 /* ── Header Star Chart: chừa chỗ cho badge trạng thái ── */
@@ -3346,6 +3363,20 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 }
 [data-theme='brutal'] .sidebar-pipeline-title::after {
   display: none !important;
+}
+
+@keyframes title-flash-brutal {
+  0% {
+    background-color: #ffcf24 !important;
+    color: #0a0a0a !important;
+    box-shadow: 3px 3px 0 0 #0a0a0a !important;
+  }
+  100% {
+    background-color: #b8a4ff !important;
+  }
+}
+[data-theme='brutal'] .sidebar-pipeline-title.flash-highlight {
+  animation: title-flash-brutal 1s ease-out;
 }
 
 [data-theme='brutal'] .modal-header {

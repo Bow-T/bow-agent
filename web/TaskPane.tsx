@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { NeuralBrain, type CameraInfo, type NeuralBrainHandle } from './NeuralBrain.js';
 import { ModeSelect, modeDef } from './ModeSelect.js';
 import { PixelSelect } from './PixelSelect.js';
@@ -166,8 +166,30 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
   const [configPopOpen, setConfigPopOpen] = useState(false);
   const configPopRef = useRef<HTMLDivElement | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [activeRailTab, setActiveRailTab] = useState<'toggle' | 'chart' | 'log'>('chart');
+  const sidebarRef = useRef<HTMLElement | null>(null);
   const starChartRef = useRef<HTMLDivElement | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
+
+  const scrollToSection = useCallback((target: 'chart' | 'log') => {
+    setActiveRailTab(target);
+    const triggerEffect = () => {
+      const el = target === 'chart' ? starChartRef.current : logRef.current;
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        el.classList.remove('flash-highlight');
+        void el.offsetWidth;
+        el.classList.add('flash-highlight');
+        setTimeout(() => el.classList.remove('flash-highlight'), 1100);
+      }
+    };
+    if (!sidebarOpen) {
+      setSidebarOpen(true);
+      setTimeout(triggerEffect, 100);
+    } else {
+      triggerEffect();
+    }
+  }, [sidebarOpen]);
 
   // Đóng popover cấu hình khi click ngoài
   useEffect(() => {
@@ -1285,37 +1307,34 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
         <div className="m-rail">
           <button
             type="button"
-            className={`m-iconbtn${sidebarOpen ? ' on' : ''}`}
-            onClick={() => setSidebarOpen((o) => !o)}
+            className={`m-iconbtn${sidebarOpen && activeRailTab === 'toggle' ? ' on' : ''}`}
+            onClick={() => {
+              setActiveRailTab('toggle');
+              setSidebarOpen((o) => !o);
+            }}
             title={sidebarOpen ? (language === 'vi' ? 'Thu gọn sidebar (mở rộng chat thêm 300px)' : 'Collapse sidebar (expand chat by +300px)') : (language === 'vi' ? 'Mở rộng sidebar' : 'Expand sidebar')}
           >
-            ☰
+            <Icon name="sidebar" size={16} />
           </button>
           <button
             type="button"
-            className="m-iconbtn"
-            onClick={() => {
-              if (!sidebarOpen) setSidebarOpen(true);
-              starChartRef.current?.scrollIntoView({ behavior: 'smooth' });
-            }}
-            title={language === 'vi' ? 'Cuộn tới Bản đồ sao' : 'Scroll to Star Chart'}
+            className={`m-iconbtn${sidebarOpen && activeRailTab === 'chart' ? ' on' : ''}`}
+            onClick={() => scrollToSection('chart')}
+            title={language === 'vi' ? 'Bản đồ sao — Xem trực quan các agent & thiên thể' : 'Star Chart — View visual agent neural map'}
           >
-            ✦
+            <Icon name="starChart" size={16} />
           </button>
           <button
             type="button"
-            className="m-iconbtn"
-            onClick={() => {
-              if (!sidebarOpen) setSidebarOpen(true);
-              logRef.current?.scrollIntoView({ behavior: 'smooth' });
-            }}
-            title={language === 'vi' ? 'Cuộn tới Nhật ký hoạt động' : 'Scroll to Activity Log'}
+            className={`m-iconbtn${sidebarOpen && activeRailTab === 'log' ? ' on' : ''}`}
+            onClick={() => scrollToSection('log')}
+            title={language === 'vi' ? 'Nhật ký hoạt động — Xem chi tiết lệnh, file & log' : 'Activity Log — View execution logs & details'}
           >
-            ≡
+            <Icon name="activityLog" size={16} />
           </button>
         </div>
 
-        <aside className={`sidebar-pipeline${sidebarOpen ? '' : ' closed'}`}>
+        <aside ref={sidebarRef} className={`sidebar-pipeline${sidebarOpen ? '' : ' closed'}`}>
           {/* Usage (Session 5hr + Context) đã chuyển lên header cho gọn. */}
           {(() => {
             const liveCount = agentNodes.filter((n) => n.active).length;

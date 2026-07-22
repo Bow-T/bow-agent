@@ -627,7 +627,7 @@ export const NeuralBrain = forwardRef<NeuralBrainHandle, {
       rotXRef.current += dy * 0.006;
 
       // Bound pitch to prevent flipping upside down
-      const basePitch = Math.PI / 3.2;
+      const basePitch = Math.PI / 6.0;
       const minRotX = 0.05 - basePitch;
       const maxRotX = Math.PI / 2.05 - basePitch;
       rotXRef.current = Math.max(minRotX, Math.min(maxRotX, rotXRef.current));
@@ -655,7 +655,7 @@ export const NeuralBrain = forwardRef<NeuralBrainHandle, {
       rotYRef.current += dx * 0.007;
       rotXRef.current += dy * 0.007;
 
-      const basePitch = Math.PI / 3.2;
+      const basePitch = Math.PI / 6.0;
       const minRotX = 0.05 - basePitch;
       const maxRotX = Math.PI / 2.05 - basePitch;
       rotXRef.current = Math.max(minRotX, Math.min(maxRotX, rotXRef.current));
@@ -698,13 +698,25 @@ export const NeuralBrain = forwardRef<NeuralBrainHandle, {
       lastT = t;
       timeRef.current = t;
 
-      // Yêu cầu reset góc nhìn: kéo mềm các offset camera về 0. Hạ cờ khi đã đủ gần.
+      // Yêu cầu reset góc nhìn: kéo mềm các offset camera + zoom + pan về mặc định.
       if (resetReqRef.current) {
-        rotXRef.current *= 0.82;
-        rotYRef.current *= 0.82;
-        if (Math.abs(rotXRef.current) < 0.002 && Math.abs(rotYRef.current) < 0.002) {
+        rotXRef.current *= 0.8;
+        rotYRef.current *= 0.8;
+        zoomRef.current += (1.0 - zoomRef.current) * 0.2;
+        offsetXRef.current *= 0.8;
+        offsetYRef.current *= 0.8;
+        if (
+          Math.abs(rotXRef.current) < 0.002 &&
+          Math.abs(rotYRef.current) < 0.002 &&
+          Math.abs(zoomRef.current - 1.0) < 0.005 &&
+          Math.abs(offsetXRef.current) < 0.5 &&
+          Math.abs(offsetYRef.current) < 0.5
+        ) {
           rotXRef.current = 0;
           rotYRef.current = 0;
+          zoomRef.current = 1.0;
+          offsetXRef.current = 0;
+          offsetYRef.current = 0;
           resetReqRef.current = false;
         }
       }
@@ -728,10 +740,11 @@ export const NeuralBrain = forwardRef<NeuralBrainHandle, {
 
       const cx = W * 0.5;
       const cy = H * 0.5;
-      const scale = Math.min(W, H) * 0.44;
+      const scale = Math.min(W, H) * 0.45;
 
-      // Camera parameters for 3D rotation, including user drag rotation
-      const basePitch = Math.PI / 3.2 + Math.sin(t * 0.15) * 0.04;
+      // Camera parameters for 3D rotation: góc nghiêng mặc định vừa phải (Math.PI / 6.0 ~ 30°)
+      // để thiên hà tròn đầy, trực quan, không bị bóp nghẹt thành dải dẹp nghiêng chéo.
+      const basePitch = Math.PI / 6.0 + Math.sin(t * 0.15) * 0.02;
       const pitch = Math.max(0.05, Math.min(Math.PI / 2.05, basePitch + rotXRef.current));
       const yaw = t * 0.05 + rotYRef.current;
       const focalLength = 1.8;
