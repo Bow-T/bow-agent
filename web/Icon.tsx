@@ -16,6 +16,7 @@ import {
   Global,
   Wifi,
   Category,
+  Designtools,
   CloseSquare,
   TickCircle,
   CloseCircle,
@@ -76,7 +77,7 @@ const ICONS: Record<string, IconType> = {
   // Header / toolbar
   lang: Global,
   mcp: Wifi,
-  newsprint: DocumentText,  // phong cách Newsprint (trang báo giấy)
+  figma: Designtools,       // phong cách Figma (tool UI dark — dụng cụ thiết kế)
   brutal: Category,         // phong cách Neo Brutalism (khối lưới)
   close: CloseSquare,
   // Pipeline / trạng thái

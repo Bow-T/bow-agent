@@ -260,7 +260,7 @@ export type StepPalette = Record<string, [number, number, number]>;
 
 /**
  * Resolve các token --step-* thành RGB. KHÔNG hardcode màu ở đây — mọi giá trị đến từ CSS,
- * nên đổi theme (brutal/newsprint) hay đổi accent là galaxy đổi theo mà không phải sửa TS.
+ * nên đổi theme (brutal/figma) hay đổi accent là galaxy đổi theo mà không phải sửa TS.
  * Fallback chỉ dùng khi CSS chưa gắn (SSR/first paint) và cố ý trung tính, không phải palette cũ.
  */
 function readStepColors(): StepPalette {
@@ -330,11 +330,10 @@ const BLACK: [number, number, number] = [0, 0, 0];
  *
  * MÀU: 100% dẫn xuất từ `color` (màu của loại bước, đến từ §Step colors trong CSS) — không có
  * hằng màu nào ở đây. Điểm nhấn/lõi sáng lấy bằng cách trộn về phía "giấy" hay "mực" tuỳ theme,
- * nên trên nền kem (brutal) thiên thể tự đậm lại, trên nền mực (newsprint) thì tự sáng lên.
+ * nên trên nền kem (brutal) thiên thể tự đậm lại, trên canvas tối (figma) thì tự sáng lên.
  *
- * HÌNH DẠNG là kênh phân biệt chính, không phải màu: theme newsprint gần như đơn sắc (đỏ + mực)
- * nên nếu chỉ dựa vào màu thì 6 loại bước sẽ trùng nhau. Xoáy / hành tinh có vành / sao 4 cánh /
- * hố đen / mặt trời loé / pulsar phải giữ nguyên silhouette.
+ * HÌNH DẠNG vẫn là kênh phân biệt chính, không chỉ màu: xoáy / hành tinh có vành / sao 4 cánh /
+ * hố đen / mặt trời loé / pulsar phải giữ nguyên silhouette ở mọi theme.
  */
 function drawSpaceObject(
   ctx: CanvasRenderingContext2D,
@@ -355,8 +354,8 @@ function drawSpaceObject(
   const hot = isLight ? mix(color, BLACK, 0.75) : WHITE;
   const hotCSS = `rgb(${hot[0]}, ${hot[1]}, ${hot[2]})`;
   // "Hư vô" (chân trời sự kiện hố đen, đuôi gradient) = màu nền viewport của theme
-  // (khớp --viewport-bg: brutal = thẻ card kem, newsprint = khối đen mực).
-  const voidCSS = isLight ? '#fffdf5' : '#111111';
+  // (khớp --viewport-bg: brutal = thẻ card kem, figma = canvas tối #1a1a1a).
+  const voidCSS = isLight ? '#fffdf5' : '#1a1a1a';
   const fadeRGBA = isLight ? 'rgba(255,255,255,0)' : 'rgba(0,0,0,0)';
 
   switch (type) {
@@ -703,8 +702,8 @@ export const NeuralBrain = forwardRef<NeuralBrainHandle, {
       const st = stepsRef.current;
       const sel = selRef.current;
       const theme = themeRef.current;
-      // Hai theme thật: 'brutal' (kem) → nền SÁNG, galaxy vẽ bằng mực; 'newsprint' → viewport
-      // ĐEN mực (khối ảnh báo in đảo) → render TỐI (hạt trắng cộng sáng). isLight = nhánh nền
+      // Hai theme thật: 'brutal' (kem) → nền SÁNG, galaxy vẽ bằng mực; 'figma' → viewport
+      // canvas TỐI (tool UI dark) → render TỐI (hạt trắng cộng sáng). isLight = nhánh nền
       // sáng, dùng khắp draw để rẽ màu/blend mode. accentRGB đọc từ ref (đồng bộ qua observer).
       const isLight = theme === 'brutal';
       const accentRGB = accentRGBRef.current; // "r, g, b" — màu nhấn người dùng chọn

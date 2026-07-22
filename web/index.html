@@ -13,16 +13,17 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Playfair+Display:wght@600;700;800;900&family=Lora:ital,wght@0,400;0,500;1,400&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Inter:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
     <script>
       // Đặt phong cách + accent TRƯỚC khi trang vẽ, tránh nháy màu (FOUC) khi React chưa chạy.
-      // 2 phong cách: 'brutal' (Neo Brutalism, kem) & 'newsprint' (báo giấy editorial). Mặc định brutal.
+      // 2 phong cách: 'brutal' (Neo Brutalism, kem) & 'figma' (tool UI dark). Mặc định brutal.
       (function () {
         try {
           var t = localStorage.getItem('bow-theme');
-          if (t !== 'brutal' && t !== 'newsprint') t = 'brutal';
+          if (t === 'newsprint') t = 'figma'; // migrate tên theme cũ
+          if (t !== 'brutal' && t !== 'figma') t = 'brutal';
           document.documentElement.setAttribute('data-theme', t);
           var a = localStorage.getItem('bow-accent');
           if (a && a !== 'brass') document.documentElement.setAttribute('data-accent', a);

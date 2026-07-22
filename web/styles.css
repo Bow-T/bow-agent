@@ -105,89 +105,86 @@
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════════════
- * PHONG CÁCH 2 · NEWSPRINT — palette CHÍNH THỨC designprompts.dev/newsprint:
- *   • Background : #F9F9F7 (newsprint off-white — giấy báo ngả ấm, không trắng gắt)
- *   • Foreground : #111111 (ink black — đen sâu, KHÔNG #000 thuần)
- *   • Muted      : #E5E5E0 (divider grey)
- *   • Accent     : #CC0000 (editorial red — dùng CỰC ÍT: breaking news, CTA, hover)
- *   • Border     : #111111 (ink black)
- * Đặc trưng: báo giấy editorial, font SERIF (Playfair heading + Lora body, Inter cho UI label);
- * góc VUÔNG 0px; grid lines CELEBRATED (viền cột/section rõ); dot-grid 4×4 nền; FLAT không bóng
- * (hover = hard offset shadow 4px); 99% đen-trắng, đỏ chấm phá. Editorial authority, nghiêm túc. */
+ * PHONG CÁCH 2 · FIGMA DARK — giao diện app Figma bản tối:
+ *   • Background : #1E1E1E (canvas xám than Figma)
+ *   • Panel      : #2C2C2C (panel/toolbar nổi trên canvas)
+ *   • Foreground : #FFFFFF / #D4D4D4 (chữ chính/phụ)
+ *   • Accent     : #5551FF (tím-xanh Figma primary) · #0D99FF (blue phụ)
+ *   • Border     : hairline trắng mờ rgba(255,255,255,0.1) — KHÔNG viền đậm
+ * Đặc trưng: phẳng sạch, bo góc MỀM (6/13px như panel Figma), viền hairline mờ, shadow mềm
+ * rất nhẹ (elevation kiểu tool UI), font Inter, label 11px. Tool-UI tối giản, hiện đại. */
  /* ══════════════════════════════════════════════════════════════════════════════════════ */
-[data-theme='newsprint'] {
-  color-scheme: light;
+[data-theme='figma'] {
+  color-scheme: dark;
 
-  --bg: #f9f9f7;          /* newsprint off-white (giấy báo ngả ấm) */
-  --surface: #ffffff;     /* thẻ trắng (cột báo nổi trên giấy) */
-  --surface-2: #f2f2ee;   /* inset ngả giấy */
-  --surface-3: #e8e8e2;
+  --bg: #1e1e1e;          /* canvas xám than Figma */
+  --surface: #2c2c2c;     /* panel/toolbar nổi trên canvas */
+  --surface-2: #383838;   /* inset/hover (Figma menu hover) */
+  --surface-3: #444444;
 
-  --ink: #111111;         /* ink black (không #000 thuần) */
-  --ink-2: #262626;
-  --muted: #6b6b66;       /* xám mực nhạt */
+  --ink: #ffffff;         /* chữ chính trắng */
+  --ink-2: #d4d4d4;       /* chữ phụ */
+  --muted: #8c8c8c;       /* chữ mờ (Figma text-secondary dark) */
 
-  --brass: #cc0000;       /* EDITORIAL RED — accent chính, dùng cực ít */
-  --brass-bright: #e00000;/* fill / hover đỏ tươi hơn */
-  --brass-soft: rgba(204, 0, 0, 0.12);
-  --on-brass: #ffffff;    /* chữ trắng trên khối đỏ */
+  --brass: #5551ff;       /* FIGMA PRIMARY — tím-xanh (nút chính, selection) */
+  --brass-bright: #7b78ff;/* fill / hover sáng hơn */
+  --brass-soft: rgba(85, 81, 255, 0.28);
+  --on-brass: #ffffff;    /* chữ trắng trên khối tím */
 
-  --teal: #111111;        /* accent phụ = ink (newsprint gần như không màu thứ 2) */
-  --danger: #cc0000;      /* nút hủy/lỗi = editorial red */
-  --danger-soft: rgba(204, 0, 0, 0.1);
+  --teal: #0d99ff;        /* accent phụ = Figma blue (link, focus ring phụ) */
+  --danger: #f24822;      /* đỏ Figma (error/destructive) */
+  --danger-soft: rgba(242, 72, 34, 0.22);
 
-  --hairline: #111111;    /* viền INK — grid lines celebrated */
-  --hairline-2: #e5e5e0;  /* divider grey (kẻ phụ) */
-  --graticule: rgba(17, 17, 17, 0.06);
+  --hairline: rgba(255, 255, 255, 0.1);  /* viền hairline trắng mờ (Figma border dark) */
+  --hairline-2: rgba(255, 255, 255, 0.06);
+  --graticule: rgba(255, 255, 255, 0.05);
 
-  --bd-thin: 1px;         /* hairline 1px (section rule dày dùng riêng ở override) */
-  --glass: 100%;          /* đục — giấy phẳng */
+  --bd-thin: 1px;         /* hairline 1px — tool UI mảnh */
+  --glass: 100%;          /* panel đục (Figma không dùng kính mờ) */
   --glow-a: transparent;
   --glow-b: transparent;
   --highlight: transparent;
   --grain: none;
   --viewport-glow: none;
 
-  --grid: rgba(17, 17, 17, 0.06);       /* dot-grid ink mờ */
-  --depth: none;          /* FLAT — không bóng (hover mới có hard offset) */
-  --viewport-bg: #111111; /* màn viewport ĐEN mực (khối ảnh báo in đảo) */
+  --grid: rgba(255, 255, 255, 0.07);    /* dot-grid canvas Figma (chấm trắng mờ) */
+  --depth: 0 4px 14px rgba(0, 0, 0, 0.35);  /* shadow MỀM nhẹ (panel elevation) */
+  --viewport-bg: #1a1a1a; /* màn viewport = canvas tối hơn panel một nấc */
 
-  --r: 0px;               /* góc VUÔNG khắp nơi */
-  --r-lg: 0px;
+  --r: 6px;               /* bo góc MỀM (input/nút Figma) */
+  --r-lg: 13px;           /* panel/modal lớn (Figma floating panel) */
 
-  /* Màu THIÊN THỂ — viewport newsprint là khối ĐEN mực, nên trung tính phải SÁNG (giấy), KHÔNG
-   * dùng --ink như brutal (mực trên mực = vô hình). Theme gần như đơn sắc: đỏ editorial chấm phá,
-   * còn lại là các sắc giấy. Phân biệt loại bước chủ yếu bằng HÌNH DẠNG thiên thể — đúng tinh thần
-   * báo in. Vẫn phải tách LỖI khỏi tool: --danger ≡ --brass ≡ #cc0000 ở theme này nên nếu map
-   * thẳng thì lỗi trông y hệt tool → lỗi dùng đỏ thẫm hơn để còn đọc ra được. */
-  --step-start: #f9f9f7;   /* giấy */
-  --step-tool: var(--brass);        /* đỏ editorial */
-  --step-result: #ff8a8a;  /* đỏ nhạt/hồng giấy — tách khỏi tool mà vẫn cùng họ đỏ */
-  --step-error: #8c0000;   /* đỏ THẪM — lỗi, tách hẳn khỏi đỏ editorial của tool */
-  --step-approval: var(--brass);
-  --step-thinking: #e5e5e0;         /* xám giấy */
-  --step-default: #a8a8a2;
+  /* Màu THIÊN THỂ — viewport Figma là canvas TỐI, trung tính phải SÁNG. Palette đa sắc
+   * kiểu tool UI: tím primary cho tool, blue cho result, đỏ Figma cho lỗi, xanh lá Figma
+   * cho approval — đúng bảng màu semantic của Figma (purple/blue/red/green). */
+  --step-start: #ffffff;            /* trắng — điểm khởi hành trên canvas tối */
+  --step-tool: var(--brass);        /* tím primary */
+  --step-result: var(--teal);       /* blue Figma */
+  --step-error: var(--danger);      /* đỏ Figma */
+  --step-approval: #14ae5c;         /* xanh lá Figma (success) */
+  --step-thinking: #ffcd29;         /* vàng Figma (component/warning) */
+  --step-default: #8c8c8c;
 }
 
-/* Nền: brutal = chấm bi lớn; newsprint = dot-grid 4×4 ink (đúng SVG chính thức của họ). */
+/* Nền: brutal = chấm bi lớn; figma = dot-grid canvas thưa (chấm nhỏ mờ như canvas Figma). */
 .app {
   background-image: radial-gradient(var(--grid) 1.4px, transparent 1.6px);
   background-size: 22px 22px;
   background-position: 0 0;
 }
-[data-theme='newsprint'] .app {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4' viewBox='0 0 4 4'%3E%3Cpath fill='%23111111' fill-opacity='0.05' d='M1 3h1v1H1V3zm2-2h1v1H3V1z'%3E%3C/path%3E%3C/svg%3E");
-  background-size: 4px 4px;
+[data-theme='figma'] .app {
+  background-image: radial-gradient(var(--grid) 1px, transparent 1.2px);
+  background-size: 24px 24px;
 }
 
 /* ───────────────────────────  Accent · màu nhấn chọn ở header  ───────────────────────────
- * CHỈ áp cho phong cách BRUTAL (Newsprint khóa đỏ editorial + ink, dùng cực ít màu). Mỗi selector
- * bọc :not([data-theme='newsprint']). Ghi đè --brass / --brass-bright / --brass-soft / --on-brass.
+ * CHỈ áp cho phong cách BRUTAL (Figma dark khóa tím primary #5551FF — đúng brand tool UI). Mỗi
+ * selector bọc :not([data-theme='figma']). Ghi đè --brass / --brass-bright / --brass-soft / --on-brass.
  * Vàng #FFD93D + Tím #C4B5FD là màu chính thức designprompts (secondary + muted) → chữ ĐEN.
  * Các màu đậm (coral/lá/hồng/cam) → chữ TRẮNG. 'brass' (vàng #ffd93d) = mặc định ở block brutal. */
 
 /* ── Coral (hot red) — landing --coral #FF5A5A ── */
-:root:not([data-theme='newsprint'])[data-accent='blue'] {
+:root:not([data-theme='figma'])[data-accent='blue'] {
   --brass: #ff5a5a;
   --brass-bright: #ff7676;
   --brass-soft: rgba(255, 90, 90, 0.28);
@@ -195,7 +192,7 @@
 }
 
 /* ── Xanh lá (green) ── */
-:root:not([data-theme='newsprint'])[data-accent='teal'] {
+:root:not([data-theme='figma'])[data-accent='teal'] {
   --brass: #22c55e;
   --brass-bright: #3dd674;
   --brass-soft: rgba(34, 197, 94, 0.28);
@@ -203,7 +200,7 @@
 }
 
 /* ── Tím (lavender) — landing --lav #B8A4FF ── */
-:root:not([data-theme='newsprint'])[data-accent='purple'] {
+:root:not([data-theme='figma'])[data-accent='purple'] {
   --brass: #b8a4ff;
   --brass-bright: #cbbcff;
   --brass-soft: rgba(184, 164, 255, 0.34);
@@ -211,7 +208,7 @@
 }
 
 /* ── Hồng (pink) ── */
-:root:not([data-theme='newsprint'])[data-accent='pink'] {
+:root:not([data-theme='figma'])[data-accent='pink'] {
   --brass: #ff6bb0;
   --brass-bright: #ff8bc2;
   --brass-soft: rgba(255, 107, 176, 0.28);
@@ -219,7 +216,7 @@
 }
 
 /* ── Lam (blue) ── */
-:root:not([data-theme='newsprint'])[data-accent='red'] {
+:root:not([data-theme='figma'])[data-accent='red'] {
   --brass: #3b82f6;
   --brass-bright: #5c98f8;
   --brass-soft: rgba(59, 130, 246, 0.28);
@@ -227,7 +224,7 @@
 }
 
 /* ── Cam (orange) ── */
-:root:not([data-theme='newsprint'])[data-accent='orange'] {
+:root:not([data-theme='figma'])[data-accent='orange'] {
   --brass: #ff9a3c;
   --brass-bright: #ffb063;
   --brass-soft: rgba(255, 154, 60, 0.28);
@@ -907,7 +904,7 @@ a { color: var(--brass); text-underline-offset: 2px; }
 }
 /* Chấm chú giải bám §Step colors — CÙNG nguồn màu với canvas galaxy, không hardcode lại.
  * Viền ink giữ chấm luôn đọc được cả khi màu trùng nền (VD --step-start = --ink trên brutal,
- * hay --step-start = giấy trên newsprint). box-sizing: border-box để viền không nở chấm ra 9px. */
+ * hay --step-start = trắng trên figma). box-sizing: border-box để viền không nở chấm ra 9px. */
 .star-legend-item i {
   width: 7px; height: 7px;
   box-sizing: border-box;
@@ -3430,7 +3427,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 /* ───────────────  Neo Brutalism · STICKER decorative (badge sao ★ + shape)  ───────────────
  * "Sticker/collage board" đặc trưng designprompts: các badge dán như sticker giấy, xoay nhẹ,
  * khối vuông viền đen bóng cứng. Badge ★ ghim góc trên-phải panel chính (giống ảnh mẫu). Chỉ
- * áp cho brutal — không hiện ở newsprint. Dùng ::after (::before của panel là double-frame/tắt). */
+ * áp cho brutal — không hiện ở figma. Dùng ::after (::before của panel là double-frame/tắt). */
 
 /* Badge NGÔI SAO ★ — khối vuông coral, sao trắng, viền đen, bóng cứng, xoay 6°. Ghim góc TRÊN-PHẢI
  * BÊN TRONG panel (panel có overflow:hidden nên không ló ra ngoài được — đặt sát mép trong). */
@@ -3472,171 +3469,189 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   margin-right: 2px;
 }
 
-/* ═══════════════════════════════  Newsprint · tinh chỉnh "editorial báo giấy"  ═══════════════════════════════
- * Chỉ áp khi data-theme=newsprint. Bắt vibe báo giấy:
- * 1. Font SERIF: Playfair (brand/heading — high-contrast authoritative) + Lora (body); label Inter/mono in HOA.
- * 2. Góc VUÔNG 0px. Grid lines CELEBRATED: viền ink rõ, HEAVY 3px bottom rule cho section (mép cột báo).
- * 3. FLAT không bóng; HOVER = hard offset shadow 4px ink (đúng chính thức). Đỏ editorial dùng CỰC ÍT.
- * 4. Nút chính = ĐEN mực invert; CTA-đỏ (stop/deny) = editorial red; secondary trắng viền đen.
- * 5. Viewport panel ĐEN mực (khối ảnh báo in đảo) — điểm nhấn.
+
+/* ═══════════════════════════════  Figma · tinh chỉnh "tool UI dark"  ═══════════════════════════════
+ * Chỉ áp khi data-theme=figma. Bắt vibe app Figma bản tối:
+ * 1. Font Inter toàn cục (UI sans hiện đại); label nhỏ 11px, KHÔNG in hoa, KHÔNG serif.
+ * 2. Bo góc MỀM: 6px control, 13px panel nổi (đúng floating panel Figma). Viền hairline trắng mờ.
+ * 3. Shadow MỀM nhẹ cho panel nổi (elevation); hover = surface sáng lên một nấc, KHÔNG offset cứng.
+ * 4. Nút chính = tím primary #5551FF; destructive = đỏ Figma; secondary = surface viền hairline.
+ * 5. Viewport = canvas tối hơn panel một nấc — đúng cảm giác canvas Figma.
  */
 
-/* Brand + heading = Playfair serif authoritative; label UI = mono in HOA spaced. */
-[data-theme='newsprint'] .brand-name {
-  font-family: 'Playfair Display', 'Times New Roman', serif;
-  font-weight: 700;
-  letter-spacing: 0.01em;
-  color: var(--ink);
-}
-[data-theme='newsprint'] .brand-tag {
-  color: var(--brass);   /* editorial red — điểm nhấn hiếm hoi */
-  font-family: var(--mono);
-  text-transform: uppercase;
-  letter-spacing: 0.2em;
-}
-[data-theme='newsprint'] .sidebar-pipeline-title,
-[data-theme='newsprint'] .modal-header {
-  font-family: var(--mono);
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.16em;
-  color: var(--ink);
-}
-[data-theme='newsprint'] .md h1,
-[data-theme='newsprint'] .md h2,
-[data-theme='newsprint'] .md h3,
-[data-theme='newsprint'] .md h4 {
-  font-family: 'Playfair Display', 'Times New Roman', serif;
-  font-weight: 700;
-  letter-spacing: 0;
-  color: var(--ink);
-}
-/* Body văn bản (bong bóng agent, markdown) = Lora serif — đọc dài kiểu báo. */
-[data-theme='newsprint'] .bubble.agent .md,
-[data-theme='newsprint'] .md p,
-[data-theme='newsprint'] .md li { font-family: 'Lora', Georgia, serif; }
-
-/* Vùng chứa chính = trắng, viền 1px ink, HEAVY 3px bottom rule (mép cột báo), KHÔNG bóng. */
-[data-theme='newsprint'] .chat-container {
-  border: none !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-}
-[data-theme='newsprint'] .sidebar-pipeline {
-  border: none !important;
-  border-right: 1px solid var(--hairline) !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-}
-[data-theme='newsprint'] .modal-content,
-[data-theme='newsprint'] .pixel-panel {
-  border: 1px solid var(--hairline) !important;
-  border-bottom-width: 3px !important;   /* heavy section rule (editorial) */
-  border-radius: 0 !important;
-  box-shadow: none !important;
-}
-[data-theme='newsprint'] .step-detail,
-[data-theme='newsprint'] .accent-menu,
-[data-theme='newsprint'] .lan-url-menu {
-  border: 1px solid var(--hairline) !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
+/* Toàn cục: Inter thay Space Grotesk khi ở theme figma (token --sans bị heading/mono kế thừa). */
+[data-theme='figma'] body,
+[data-theme='figma'] button,
+[data-theme='figma'] input,
+[data-theme='figma'] textarea,
+[data-theme='figma'] select {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
-/* Viewport galaxy — panel ĐEN mực inverted (khối ảnh báo in), viền ink, vuông. */
-[data-theme='newsprint'] .neural-net-container {
+/* Brand + heading = Inter semibold gọn; tag = tím primary chữ thường nhỏ. */
+[data-theme='figma'] .brand-name {
+  font-family: 'Inter', sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+[data-theme='figma'] .brand-tag {
+  color: var(--brass-bright);
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0.02em;
+}
+[data-theme='figma'] .sidebar-pipeline-title,
+[data-theme='figma'] .modal-header {
+  font-family: 'Inter', sans-serif;
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;      /* section label Figma: 11px HOA nhẹ, màu mờ */
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+[data-theme='figma'] .md h1,
+[data-theme='figma'] .md h2,
+[data-theme='figma'] .md h3,
+[data-theme='figma'] .md h4 {
+  font-family: 'Inter', sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+/* Vùng chứa chính = panel tối bo mềm, viền hairline, shadow elevation nhẹ. */
+[data-theme='figma'] .chat-container {
   border: 1px solid var(--hairline) !important;
-  border-radius: 0 !important;
+  border-radius: var(--r-lg) !important;
+  box-shadow: var(--depth) !important;
+  background: var(--surface) !important;
+}
+[data-theme='figma'] .sidebar-pipeline {
+  border: 1px solid var(--hairline) !important;
+  border-radius: var(--r-lg) !important;
+  box-shadow: var(--depth) !important;
+  background: var(--surface) !important;
+}
+[data-theme='figma'] .modal-content,
+[data-theme='figma'] .pixel-panel {
+  border: 1px solid var(--hairline) !important;
+  border-radius: var(--r-lg) !important;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5) !important;  /* modal nổi cao hơn panel thường */
+  background: var(--surface) !important;
+}
+[data-theme='figma'] .step-detail,
+[data-theme='figma'] .accent-menu,
+[data-theme='figma'] .lan-url-menu {
+  border: 1px solid var(--hairline) !important;
+  border-radius: var(--r) !important;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45) !important;  /* dropdown/context menu Figma */
+  background: var(--surface) !important;
+}
+
+/* Viewport galaxy — canvas tối hơn panel, bo mềm, viền hairline; live = viền tím primary. */
+[data-theme='figma'] .neural-net-container {
+  border: 1px solid var(--hairline) !important;
+  border-radius: var(--r) !important;
   box-shadow: none !important;
 }
-[data-theme='newsprint'] .neural-net-container.is-live { border-color: var(--brass) !important; }
-[data-theme='newsprint'] .viewport-corner { border-color: #ffffff !important; }
+[data-theme='figma'] .neural-net-container.is-live { border-color: var(--brass) !important; }
+[data-theme='figma'] .viewport-corner { border-color: rgba(255, 255, 255, 0.4) !important; }
 
-/* Bong bóng chat = viền ink, vuông. User thanh phải ĐỎ editorial (breaking-news accent). */
-[data-theme='newsprint'] .bubble.user {
-  background: var(--surface-2) !important;
-  border: 1px solid var(--hairline) !important;
-  border-right: 3px solid var(--brass) !important;
-  border-radius: 0 !important;
+/* Bong bóng chat = surface bo mềm viền hairline. User = nhuốm tím selection Figma. */
+[data-theme='figma'] .bubble.user {
+  background: rgba(85, 81, 255, 0.14) !important;   /* selection tint Figma */
+  border: 1px solid rgba(85, 81, 255, 0.45) !important;
+  border-radius: var(--r) !important;
   box-shadow: none !important;
   color: var(--ink) !important;
 }
-[data-theme='newsprint'] .bubble.user::before { color: var(--brass) !important; }
-[data-theme='newsprint'] .bubble.tool::before { color: var(--ink) !important; }
-[data-theme='newsprint'] .bubble.error {
-  border: 1px solid var(--brass) !important;
-  border-left: 3px solid var(--brass) !important;
-  border-radius: 0 !important;
-  color: var(--brass) !important;
+[data-theme='figma'] .bubble.user::before { color: var(--brass-bright) !important; }
+[data-theme='figma'] .bubble.tool::before { color: var(--muted) !important; }
+[data-theme='figma'] .bubble.error {
+  border: 1px solid var(--danger) !important;
+  border-radius: var(--r) !important;
+  color: #ff9c85 !important;                        /* đỏ Figma sáng lên cho nền tối */
+  background: var(--danger-soft) !important;
 }
 
-/* Composer + input = viền ink vuông, focus viền đỏ editorial. */
-[data-theme='newsprint'] .composer {
+/* Composer + input = surface-2 bo mềm; focus = ring tím primary (đúng focus Figma). */
+[data-theme='figma'] .composer {
   border: 1px solid var(--hairline) !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
+  border-radius: var(--r-lg) !important;
+  box-shadow: var(--depth) !important;
+  background: var(--surface) !important;
   margin: 0 16px 16px !important;
 }
-[data-theme='newsprint'] .composer-input,
-[data-theme='newsprint'] input,
-[data-theme='newsprint'] textarea,
-[data-theme='newsprint'] select {
-  background: var(--surface) !important;
-  border: 1px solid var(--hairline) !important;
-  border-radius: 0 !important;
+[data-theme='figma'] .composer-input,
+[data-theme='figma'] input,
+[data-theme='figma'] textarea,
+[data-theme='figma'] select {
+  background: var(--surface-2) !important;
+  border: 1px solid transparent !important;         /* Figma: input phẳng, viền chỉ hiện khi focus */
+  border-radius: var(--r) !important;
   color: var(--ink) !important;
 }
-[data-theme='newsprint'] .composer-input:focus-within,
-[data-theme='newsprint'] input:focus,
-[data-theme='newsprint'] textarea:focus,
-[data-theme='newsprint'] select:focus {
+[data-theme='figma'] .composer-input:focus-within,
+[data-theme='figma'] input:focus,
+[data-theme='figma'] textarea:focus,
+[data-theme='figma'] select:focus {
   border-color: var(--brass) !important;
-  box-shadow: inset 0 0 0 1px var(--brass) !important;
+  box-shadow: 0 0 0 1px var(--brass) !important;    /* focus ring 2px tím (1px border + 1px ring) */
+  outline: none;
 }
 
-/* Nút — vuông, label mono HOA, FLAT; hover = HARD OFFSET SHADOW 4px ink (đúng chính thức). */
-[data-theme='newsprint'] .btn,
-[data-theme='newsprint'] .px-select-btn {
-  border: 1px solid var(--hairline) !important;
-  border-radius: 0 !important;
+/* Nút — bo mềm 6px, Inter medium, phẳng; hover sáng lên một nấc (không offset cứng). */
+[data-theme='figma'] .btn,
+[data-theme='figma'] .px-select-btn {
+  border: 1px solid transparent !important;
+  border-radius: var(--r) !important;
   box-shadow: none !important;
-  font-family: var(--mono) !important;
-  font-weight: 700 !important;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  transition: box-shadow var(--fast), transform var(--fast), background-color var(--fast), color var(--fast) !important;
+  font-family: 'Inter', sans-serif !important;
+  font-weight: 500 !important;
+  text-transform: none;
+  letter-spacing: 0;
+  transition: background-color var(--fast), border-color var(--fast), color var(--fast) !important;
 }
-[data-theme='newsprint'] .btn.run,
-[data-theme='newsprint'] .btn.allow,
-[data-theme='newsprint'] .btn.primary {
-  background: var(--ink) !important;     /* nút chính = ĐEN mực, chữ trắng */
-  color: #ffffff !important;
-  border-color: var(--ink) !important;
-}
-[data-theme='newsprint'] .btn.stop,
-[data-theme='newsprint'] .btn.deny {
-  background: var(--brass) !important;   /* CTA huỷ = editorial RED (điểm nhấn hiếm) */
+[data-theme='figma'] .btn.run,
+[data-theme='figma'] .btn.allow,
+[data-theme='figma'] .btn.primary {
+  background: var(--brass) !important;              /* nút chính = tím primary Figma */
   color: #ffffff !important;
   border-color: var(--brass) !important;
 }
-[data-theme='newsprint'] .btn:not(.primary):not(.run):not(.allow):not(.stop):not(.deny) {
-  background: #ffffff !important;        /* secondary: trắng viền ink */
+[data-theme='figma'] .btn.run:hover:not(:disabled),
+[data-theme='figma'] .btn.allow:hover:not(:disabled),
+[data-theme='figma'] .btn.primary:hover:not(:disabled) {
+  background: var(--brass-bright) !important;
+  border-color: var(--brass-bright) !important;
+}
+[data-theme='figma'] .btn.stop,
+[data-theme='figma'] .btn.deny {
+  background: var(--danger) !important;             /* destructive = đỏ Figma */
+  color: #ffffff !important;
+  border-color: var(--danger) !important;
+}
+[data-theme='figma'] .btn:not(.primary):not(.run):not(.allow):not(.stop):not(.deny) {
+  background: var(--surface-2) !important;          /* secondary: surface viền hairline */
   color: var(--ink) !important;
+  border-color: var(--hairline) !important;
 }
-[data-theme='newsprint'] .btn:hover:not(:disabled),
-[data-theme='newsprint'] .px-select-btn:hover {
-  transform: translate(-2px, -2px);
-  box-shadow: 4px 4px 0 0 var(--ink) !important;   /* hard offset shadow (chính thức) */
+[data-theme='figma'] .btn:not(.primary):not(.run):not(.allow):not(.stop):not(.deny):hover:not(:disabled),
+[data-theme='figma'] .px-select-btn:hover {
+  background: var(--surface-3) !important;          /* hover = sáng lên một nấc */
 }
-[data-theme='newsprint'] .btn:active:not(:disabled),
-[data-theme='newsprint'] .px-select-btn:active {
-  transform: translate(0, 0);
-  box-shadow: 0 0 0 0 var(--ink) !important;
+[data-theme='figma'] .btn:active:not(:disabled),
+[data-theme='figma'] .px-select-btn:active {
+  transform: none;
+  filter: brightness(0.92);                          /* nhấn = tối nhẹ, không dịch chuyển */
 }
 
-/* Liên kết = ĐỎ editorial gạch chân (điểm nhấn hiếm). */
-[data-theme='newsprint'] a {
-  color: var(--brass) !important;
+/* Liên kết = blue Figma (đúng link tool UI). */
+[data-theme='figma'] a {
+  color: var(--teal) !important;
   text-decoration-thickness: 1px;
   text-underline-offset: 3px;
 }

@@ -17,11 +17,11 @@ import type {
   UsageSnapshot,
 } from './types.js';
 
-/** 2 phong cách UI: 'brutal' (Neo Brutalism, kem) + 'newsprint' (báo giấy editorial). */
-export type Theme = 'brutal' | 'newsprint';
+/** 2 phong cách UI: 'brutal' (Neo Brutalism, kem) + 'figma' (tool UI dark kiểu app Figma). */
+export type Theme = 'brutal' | 'figma';
 
-/** Thứ tự xoay vòng khi bấm nút phong cách ở header: brutal → newsprint → brutal. */
-const THEME_CYCLE: Theme[] = ['brutal', 'newsprint'];
+/** Thứ tự xoay vòng khi bấm nút phong cách ở header: brutal → figma → brutal. */
+const THEME_CYCLE: Theme[] = ['brutal', 'figma'];
 
 /** Màu nhấn chọn ở header. 'brass' = mặc định (vàng #ffcf24), không đặt data-accent. */
 export type Accent = 'brass' | 'blue' | 'teal' | 'purple' | 'pink' | 'red' | 'orange';
@@ -1756,7 +1756,9 @@ export function App() {
   const [detected, setDetected] = useState<DetectedSource | null>(null);
   const [theme, setTheme] = useState<Theme>(() => {
     // Lần đầu: 'brutal' (Neo Brutalism) — khớp landing page. Sau đó ưu tiên lựa chọn user đã lưu.
+    // 'newsprint' là tên cũ của theme thứ 2 (đã thay bằng 'figma') — migrate êm cho user cũ.
     const saved = localStorage.getItem('bow-theme') as Theme | null;
+    if (saved === ('newsprint' as string)) return 'figma';
     if (saved && THEME_CYCLE.includes(saved)) return saved;
     return 'brutal';
   });
@@ -2383,17 +2385,17 @@ export function App() {
               )}
             </button>
           )}
-          {/* Accent chỉ áp cho Neo Brutalism — Newsprint dùng cực ít màu (đỏ editorial) nên ẩn picker. */}
-          {theme !== 'newsprint' && (
+          {/* Accent chỉ áp cho Neo Brutalism — Figma dark khóa tím primary #5551FF nên ẩn picker. */}
+          {theme !== 'figma' && (
             <AccentPicker value={accent} options={ACCENTS} onChange={(id) => setAccent(id as Accent)} />
           )}
           <button
             className="theme-btn"
-            title={language === 'vi' ? (theme === 'brutal' ? 'Chuyển sang phong cách Newsprint (báo giấy editorial)' : 'Chuyển sang phong cách Neo Brutalism (kem)') : (theme === 'brutal' ? 'Switch to Newsprint theme' : 'Switch to Neo Brutalism theme')}
+            title={language === 'vi' ? (theme === 'brutal' ? 'Chuyển sang phong cách Figma (tool UI tối)' : 'Chuyển sang phong cách Neo Brutalism (kem)') : (theme === 'brutal' ? 'Switch to Figma theme' : 'Switch to Neo Brutalism theme')}
             onClick={() => setTheme(THEME_CYCLE[(THEME_CYCLE.indexOf(theme) + 1) % THEME_CYCLE.length])}
           >
-            {/* Icon = đích của lần bấm kế tiếp: brutal → hiện tờ báo (sẽ sang newsprint) & ngược lại. */}
-            <Icon name={theme === 'brutal' ? 'newsprint' : 'brutal'} size={18} />
+            {/* Icon = đích của lần bấm kế tiếp: brutal → hiện icon figma (sẽ sang figma) & ngược lại. */}
+            <Icon name={theme === 'brutal' ? 'figma' : 'brutal'} size={18} />
           </button>
         </div>
       </header>
