@@ -53,6 +53,77 @@ export function loadActiveProfileToken(): void {
 loadActiveProfileToken();
 
 /**
+ * Đường dẫn thư mục config của một profile Claude theo TÊN. 'default' (hoặc rỗng) = login
+ * mặc định máy (~/.claude) → trả undefined để KHÔNG set CLAUDE_CONFIG_DIR tường minh (xem
+ * saveActiveProfileToEnv/loadActiveProfileToken: set path ~/.claude trỏ nhầm Keychain key).
+ * Profile phụ → ~/.claude-<name>.
+ */
+export function profileConfigDir(profileName: string | undefined): string | undefined {
+  const name = (profileName ?? 'default').trim();
+  if (!name || name === 'default') return undefined;
+  return join(homedir(), `.claude-${name}`);
+}
+
+/**
+ * Tính env-PATCH auth cho một profile Claude theo TÊN, KHÔNG đụng process.env toàn cục —
+ * để mỗi query() (mỗi tab) chạy đúng tài khoản riêng qua options.env. Trả về các biến CẦN
+ * ĐẶT và các biến CẦN GỠ (đặt undefined) so với môi trường sạch:
+ *  - CLAUDE_CONFIG_DIR: path profile phụ, hoặc undefined cho 'default'.
+ *  - ANTHROPIC_API_KEY: chỉ khi token.txt của profile là API key dài hạn (`sk-ant-api…`);
+ *    OAuth (`sk-ant-oat…`) CỐ Ý bỏ qua để CLI dùng login-of-directory tự refresh (xem
+ *    loadActiveProfileToken). Ngược lại gỡ API key + OAuth token để không rò auth profile khác.
+ * Áp bằng cách spread lên { ...process.env } rồi xoá key nào có giá trị undefined.
+ */
+export function resolveProfileEnvPatch(profileName: string | undefined): Record<string, string | undefined> {
+  const configDir = profileConfigDir(profileName);
+  const patch: Record<string, string | undefined> = {
+    CLAUDE_CONFIG_DIR: configDir, // undefined cho 'default' → gỡ khỏi env
+    // Mặc định gỡ mọi auth ép sẵn; nhánh dưới bật lại nếu profile có API key thật.
+    ANTHROPIC_API_KEY: undefined,
+    CLAUDE_CODE_OAUTH_TOKEN: undefined,
+  };
+  const tokenFile = join(configDir ?? join(homedir(), '.claude'), 'token.txt');
+  if (existsSync(tokenFile)) {
+    try {
+      const token = readFileSync(tokenFile, 'utf8').trim();
+      if (token.startsWith('sk-ant-api')) patch.ANTHROPIC_API_KEY = token;
+    } catch {
+      /* đọc lỗi → coi như không có API key, dùng login-of-directory */
+    }
+  }
+  return patch;
+}
+
+/**
+ * Đã có credential login cho một profile Claude theo TÊN chưa? Bản THUẦN của hasClaudeCliLogin
+ * (không đọc process.env.CLAUDE_CONFIG_DIR toàn cục) — để UI/runner kiểm auth ĐÚNG tài khoản
+ * mà tab định chạy, không nhầm sang profile đang set ở env server.
+ */
+export function hasProfileAuth(profileName: string | undefined): boolean {
+  const configDir = profileConfigDir(profileName);
+  const defaultDir = join(homedir(), '.claude');
+  // Profile default: tin thư mục tồn tại (login có thể ở Keychain, không kiểm được bằng file).
+  if (!configDir) return existsSync(defaultDir);
+  if (!existsSync(configDir)) return false;
+  if (existsSync(join(configDir, '.credentials.json')) || existsSync(join(configDir, 'token.txt'))) {
+    return true;
+  }
+  // macOS/Windows: login ở Keychain, chỉ ghi account vào .claude.json.
+  for (const p of [configDir + '.json', join(configDir, 'claude.json'), join(configDir, '.claude.json')]) {
+    if (existsSync(p)) {
+      try {
+        const data = JSON.parse(readFileSync(p, 'utf8'));
+        if (data && data.oauthAccount) return true;
+      } catch {
+        /* bỏ qua parse lỗi */
+      }
+      break;
+    }
+  }
+  return false;
+}
+
+/**
  * Có credential Claude Code CLI đã login sẵn không?
  * Hỗ trợ các biến môi trường ANTHROPIC_API_KEY hoặc CLAUDE_CODE_OAUTH_TOKEN.
  *

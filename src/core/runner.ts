@@ -10,7 +10,7 @@ import type { MessageParam } from '@anthropic-ai/sdk/resources/messages';
 import { existsSync, realpathSync } from 'node:fs';
 import { resolve, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { config } from '../config/env.js';
+import { config, resolveProfileEnvPatch, hasProfileAuth } from '../config/env.js';
 import { BOW_AGENT_APPEND } from './systemPrompt.js';
 import {
   loadClaudeCodeMcp,
@@ -216,6 +216,12 @@ export interface RunOptions {
   requireApprovalForWrites?: boolean;
   /** Model sử dụng cho agent. */
   model?: string;
+  /**
+   * Tài khoản Claude dùng cho lượt chạy NÀY (per-tab). Tên profile ('default' hoặc tên phụ).
+   * Runner dựng env riêng (CLAUDE_CONFIG_DIR + token) truyền vào query() để mỗi tab chạy đúng
+   * tài khoản mà KHÔNG đổi process.env toàn cục của server. Bỏ trống = dùng profile env server.
+   */
+  claudeProfile?: string;
   /** ID phiên chạy cũ cần khôi phục lịch sử chat. */
   resumeSessionId?: string;
   /**
@@ -275,12 +281,18 @@ function findClaudeCodeExecutable(workspaceRoot: string): string | undefined {
  * hiển thị (onEvent) và cách duyệt (onApproval).
  */
 export async function runAgent(opts: RunOptions): Promise<string | null> {
-  // Cần auth: đã login Claude Code CLI (~/.claude). Agent SDK spawn `claude` dùng login đó.
-  if (!config.hasAuth) {
-    const cfgDir = process.env.CLAUDE_CONFIG_DIR;
-    const which = cfgDir ? ` (profile: ${cfgDir})` : '';
+  // Tài khoản Claude cho lượt chạy này: per-tab (opts.claudeProfile) nếu web truyền, ngược lại
+  // theo env server. Dựng env-patch riêng (config dir + token) để spawn `claude` đúng account
+  // mà KHÔNG đụng process.env toàn cục — nhờ đó nhiều tab chạy nhiều tài khoản song song.
+  const perTabProfile = opts.claudeProfile && opts.claudeProfile.trim() ? opts.claudeProfile.trim() : undefined;
+
+  // Cần auth: đã login Claude Code CLI. Kiểm ĐÚNG tài khoản của tab (nếu per-tab), không
+  // theo env toàn cục — tránh cho qua khi env server đang trỏ profile khác đã login.
+  const authed = perTabProfile ? hasProfileAuth(perTabProfile) : config.hasAuth;
+  if (!authed) {
+    const which = perTabProfile ? ` (tài khoản: claude-${perTabProfile})` : '';
     throw new Error(
-      `Chưa đăng nhập Claude CLI${which}. Đăng nhập lại profile này trong web, hoặc chạy \`claude\` rồi /login (dùng gói Claude sẵn có, không cần API key).`,
+      `Chưa đăng nhập Claude CLI${which}. Đăng nhập lại tài khoản này trong web, hoặc chạy \`claude\` rồi /login (dùng gói Claude sẵn có, không cần API key).`,
     );
   }
 
@@ -714,10 +726,14 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   const hasHooks = Object.keys(hooks).length > 0;
   // (Deploy core + stack đã chạy SỚM ở đầu hàm — cần cho system prompt & hooks trên.)
 
+  // Env cho subprocess `claude` khi tab chọn tài khoản riêng (per-tab). undefined = env server.
+  const perTabEnv = buildPerTabEnv(perTabProfile);
+
   const options: Options = {
     model: opts.model ?? config.model,
     effort: opts.effort ?? 'high',
     cwd: opts.cwd,
+    ...(perTabEnv ? { env: perTabEnv } : {}),
     permissionMode,
     allowedTools,
     // Bật Agent Skills: SDK tự nạp .claude/skills/* của repo đích (nhờ settingSources
@@ -1465,8 +1481,12 @@ async function readUsageSnapshot(q: {
  * snapshot rồi đóng. `contextTokens` ở đây phản ánh phiên trống này, KHÔNG phải hội
  * thoại thực — UI chỉ nên lấy phần rateLimits từ đây; context lấy từ event trong lượt chạy.
  */
-export async function fetchUsageSnapshot(model?: string): Promise<UsageSnapshot | null> {
-  if (!config.hasAuth) return null;
+export async function fetchUsageSnapshot(model?: string, claudeProfile?: string): Promise<UsageSnapshot | null> {
+  // Hạn mức đọc theo ĐÚNG tài khoản của tab (per-tab) nếu truyền — không theo env server.
+  const perTabProfile = claudeProfile && claudeProfile.trim() ? claudeProfile.trim() : undefined;
+  const authed = perTabProfile ? hasProfileAuth(perTabProfile) : config.hasAuth;
+  if (!authed) return null;
+  const perTabEnv = buildPerTabEnv(perTabProfile);
   let release: () => void = () => {};
   const done = new Promise<void>((r) => {
     release = r;
@@ -1479,6 +1499,7 @@ export async function fetchUsageSnapshot(model?: string): Promise<UsageSnapshot 
       model: model ?? config.model,
       permissionMode: 'plan',
       pathToClaudeCodeExecutable: findClaudeCodeExecutable(config.defaultCwd),
+      ...(perTabEnv ? { env: perTabEnv } : {}),
     },
   });
   try {
@@ -1495,6 +1516,21 @@ export async function fetchUsageSnapshot(model?: string): Promise<UsageSnapshot 
   } finally {
     release();
   }
+}
+
+/**
+ * Dựng env cho subprocess `claude` khi chạy dưới một tài khoản Claude cụ thể (per-tab).
+ * SDK options.env THAY THẾ TOÀN BỘ env (không merge) → spread process.env rồi áp env-patch
+ * của profile (xoá key có giá trị undefined). Trả undefined nếu không có profileName (dùng
+ * process.env như cũ). Tách riêng để runAgent và fetchUsageSnapshot cùng dùng.
+ */
+function buildPerTabEnv(profileName: string | undefined): Record<string, string> | undefined {
+  const name = profileName && profileName.trim() ? profileName.trim() : undefined;
+  if (!name) return undefined;
+  const merged: Record<string, string | undefined> = { ...process.env, ...resolveProfileEnvPatch(name) };
+  return Object.fromEntries(
+    Object.entries(merged).filter(([, v]) => v !== undefined) as [string, string][],
+  );
 }
 
 /** Bắc cầu AbortSignal → AbortController mà SDK nhận. */
