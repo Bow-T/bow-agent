@@ -30,6 +30,7 @@ import {
   fmtDuration,
   formatCountdown,
   formatResetIn,
+  genId,
   nextId,
   QUICK_PROMPTS,
   readDataUrl,
@@ -93,7 +94,7 @@ export interface TaskPaneProps {
    * Báo lên App phần state per-tab mà UI GLOBAL cần đọc (header đồng hồ lượt chạy + panel
    * Lịch sử tô cuộc đang mở). Bước 1: 1 tab nên App chỉ mirror của tab hiển thị.
    */
-  onStateChange: (s: { running: boolean; runStartedAt: number | null; lastRunMs: number | null; activeConvId: string | null; title: string; model: string; claudeProfile: string; usage: UsageSnapshot | null; usageLoading: boolean }) => void;
+  onStateChange: (s: { running: boolean; runStartedAt: number | null; lastRunMs: number | null; activeConvId: string | null; title: string; model: string; claudeProfile: string; usage: UsageSnapshot | null; usageLoading: boolean; pendingCount: number }) => void;
 }
 
 /**
@@ -360,7 +361,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
     if (convItems.length === 0) return activeConvId;
     let id = activeConvId;
     if (!id) {
-      id = (crypto as Crypto).randomUUID();
+      id = genId(); // KHÔNG dùng crypto.randomUUID trực tiếp — client LAN (http) không có
       setActiveConvId(id);
     }
     try {
@@ -981,52 +982,6 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
     await apiFetch(`/api/stop/${sessionId}`, { method: 'POST' }).catch(() => {});
   }
 
-  function clearChat() {
-    if (!items.length && !running) {
-      if (activeConvId || conversationId) resetToNewConversation();
-      return;
-    }
-    setConfirmClearOpen(true);
-  }
-
-  async function confirmClearChat() {
-    setConfirmClearOpen(false);
-    if (running) {
-      eventSourceRef.current?.close();
-      eventSourceRef.current = null;
-      setRunning(false);
-      if (sessionId) {
-        await apiFetch(`/api/stop/${sessionId}`, { method: 'POST' }).catch(() => {});
-      }
-    }
-    if (items.length > 0) {
-      const savedId = await persistActiveConversation(items, conversationId);
-      if (savedId === null) {
-        addItem('error', 'Không lưu được cuộc trò chuyện hiện tại (mất kết nối tới máy chủ). Đã giữ nguyên tin nhắn — hãy thử lại khi có kết nối để tránh mất dữ liệu.');
-        return;
-      }
-    }
-    resetToNewConversation();
-  }
-
-  function resetToNewConversation() {
-    setItems([]);
-    setPending([]);
-    setQuestions([]);
-    setSessionId(null);
-    setConversationId(null);
-    setActiveConvId(null);
-    setNeedResumeContext(false);
-    setSelectedStepId(null);
-    setUsage(prev => (prev ? { ...prev, contextTokens: null, contextMaxTokens: null, contextPercentage: null } : prev));
-    localStorage.removeItem(K.conv);
-    localStorage.removeItem(K.activeConv);
-    localStorage.removeItem(K.session);
-    sessionBaselineRef.current = 0;
-    localStorage.removeItem(K.items);
-    localStorage.removeItem(K.baseline);
-  }
-
   async function genProfile() {
     if (running) return;
     setRunning(true);
@@ -1051,9 +1006,6 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
       setRunning(false);
     }
   }
-
-  // Modal xác nhận "Cuộc trò chuyện mới" — per-tab (mỗi tab tự hỏi khi dọn cuộc của nó).
-  const [confirmClearOpen, setConfirmClearOpen] = useState(false);
 
   const buildActivityNodes = () => {
     const nodes: ActivityNode[] = [];
@@ -1294,11 +1246,12 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
   }
 
   // Báo state per-tab (running/đồng hồ + cuộc đang mở + tiêu đề) lên App cho header,
-  // panel Lịch sử, và NHÃN TAB (title = câu user đầu tiên của cuộc).
+  // panel Lịch sử, và NHÃN TAB (title = câu user đầu tiên của cuộc; pendingCount =
+  // số thẻ chờ duyệt/câu hỏi → tab-bar tô sáng tab đang cần người dùng bấm).
   useEffect(() => {
-    onStateChange({ running, runStartedAt, lastRunMs, activeConvId, title: deriveTitle(items), model: selectedModel, claudeProfile: selectedClaudeProfile, usage, usageLoading });
+    onStateChange({ running, runStartedAt, lastRunMs, activeConvId, title: deriveTitle(items), model: selectedModel, claudeProfile: selectedClaudeProfile, usage, usageLoading, pendingCount: pending.length + questions.length });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onStateChange, running, runStartedAt, lastRunMs, activeConvId, items, selectedModel, selectedClaudeProfile, usage, usageLoading]);
+  }, [onStateChange, running, runStartedAt, lastRunMs, activeConvId, items, selectedModel, selectedClaudeProfile, usage, usageLoading, pending.length, questions.length]);
 
   return (
     <div className="task-pane" hidden={!visible}>
@@ -2432,17 +2385,6 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
               />
             </label>
             <span className="composer-spacer" />
-            <button
-              className="btn clear-chat"
-              onClick={clearChat}
-              // Bật khi: đang chạy, có nội dung, HOẶC đang gắn một cuộc (activeConvId/
-              // conversationId) — kể cả khi khung đã trống (để "rời" cuộc cũ đang xem).
-              // Chỉ tắt khi đã là cuộc mới trống hoàn toàn (bấm cũng chẳng làm gì).
-              disabled={!running && !items.length && !activeConvId && !conversationId}
-              title={language === 'vi' ? "Bắt đầu cuộc trò chuyện mới — cuộc hiện tại vẫn được lưu vào Lịch sử (mở lại được). Dừng agent nếu đang chạy." : "Start new conversation — current session remains saved in History. Stops agent if running."}
-            >
-              <Icon name="newChat" size={15} /> {language === 'vi' ? 'Cuộc trò chuyện mới' : 'New chat'}
-            </button>
             {running ? (
               <button className="btn stop" onClick={stop}>
                 {language === 'vi' ? 'Dừng' : 'Stop'}
@@ -2457,43 +2399,6 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
         </div>
       </div>
       </div>
-      {confirmClearOpen && (
-        <div className="modal-overlay" onClick={() => setConfirmClearOpen(false)}>
-          <div
-            className="modal-content pixel-panel"
-            style={{ maxWidth: '420px' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="modal-header">
-              <span className="modal-title"><Icon name="newChat" size={16} /> Cuộc trò chuyện mới</span>
-              <button className="close-btn" onClick={() => setConfirmClearOpen(false)}><Icon name="close" size={16} /></button>
-            </div>
-            <div className="modal-body">
-              <p style={{ margin: 0, lineHeight: 1.6 }}>
-                {running && (
-                  <>
-                    <Icon name="stopCircle" size={14} /> Agent đang chạy sẽ bị <strong>dừng</strong>.
-                    <br />
-                  </>
-                )}
-                Cuộc trò chuyện hiện tại (<strong>{items.length}</strong> tin nhắn) sẽ được{' '}
-                <strong>lưu vào Lịch sử</strong> và màn hình được dọn để bắt đầu cuộc mới.
-                <br />
-                Bạn có thể mở lại và chat tiếp bất cứ lúc nào từ panel{' '}
-                <Icon name="history" size={13} /> Lịch sử.
-              </p>
-            </div>
-            <div className="modal-footer" style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '16px' }}>
-              <button className="btn deny" onClick={() => setConfirmClearOpen(false)}>
-                Hủy
-              </button>
-              <button className="btn stop" onClick={confirmClearChat}>
-                Bắt đầu mới
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 });

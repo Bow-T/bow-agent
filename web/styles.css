@@ -737,6 +737,29 @@ a { color: var(--brass); text-underline-offset: 2px; }
 }
 .tab-bar-dot.live { background: var(--brass); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brass) 25%, transparent); animation: tab-pulse 1.4s ease-in-out infinite; }
 @keyframes tab-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
+/* Tab có thẻ CHỜ DUYỆT/câu hỏi: dot đỏ nháy nhanh + nền tab ám màu cảnh báo + badge số. */
+.tab-bar-dot.attention {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 30%, transparent);
+  animation: tab-pulse 0.7s ease-in-out infinite;
+}
+.tab-bar-item.needs-attention {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--ink);
+}
+.tab-bar-item.needs-attention.active {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+}
+.tab-bar-pending {
+  flex-shrink: 0;
+  min-width: 16px; height: 16px;
+  padding: 0 4px;
+  display: inline-grid; place-items: center;
+  border-radius: 8px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 10.5px; font-weight: 700; line-height: 1;
+}
 .tab-bar-title { overflow: hidden; text-overflow: ellipsis; }
 .tab-bar-close {
   display: inline-grid; place-items: center;
@@ -2173,9 +2196,6 @@ a { color: var(--brass); text-underline-offset: 2px; }
 }
 .btn.stop:hover:not(:disabled), .btn.deny:hover:not(:disabled) { background: var(--danger-soft); border-color: var(--danger); }
 
-.btn.clear-chat { border-color: transparent; color: var(--muted); padding: 8px 11px; }
-.btn.clear-chat:hover:not(:disabled) { color: var(--danger); background: var(--danger-soft); }
-
 .btn.attach { padding: 7px 9px; font-size: 15px; color: var(--ink-2); background: transparent; border-color: transparent; }
 .btn.attach:hover:not(:disabled) { color: var(--brass); background: var(--surface-3); border-color: transparent; }
 
@@ -2895,6 +2915,96 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 }
 .picker-error { font-family: var(--mono); font-size: 12px; }
 
+/* ─────────────────────  Panel Lịch sử cuộc trò chuyện  ───────────────────── */
+.hist-list {
+  max-height: 420px;
+  overflow-y: auto;
+  border: var(--bd-thin) solid var(--outline);
+  background: var(--inset);
+}
+.hist-item {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--hairline-2);
+  transition: background var(--fast);
+}
+.hist-item:last-child { border-bottom: none; }
+.hist-item:hover { background: var(--surface-3); }
+/* Hàng đang mở: KHÔNG dùng nền --outline (trong theme brutal outline = ink đen →
+   chữ đen trên nền đen, mất chữ). Đánh dấu bằng viền trái accent + nền nhạt. */
+.hist-item.active {
+  background: var(--brass-soft);
+  box-shadow: inset 3px 0 0 0 var(--brass);
+}
+.hist-item-row { display: flex; align-items: center; gap: 10px; }
+.hist-item-main { flex: 1; min-width: 0; }
+.hist-item-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.hist-item.active .hist-item-title { font-weight: 700; }
+.hist-active-dot {
+  width: 7px; height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--brass);
+  border: 1px solid var(--hairline);
+}
+.hist-item-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hist-item-cwd { font-family: var(--mono); }
+.hist-rename-input { width: 100%; padding: 4px 6px; font-size: 13px; }
+/* Nút hành động gọn (icon-only) — cố ý KHÔNG dùng .btn để né bộ phóng to
+   uppercase/box-shadow của theme brutal (nút to đè mất tiêu đề). */
+.hist-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.hist-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px; height: 26px;
+  padding: 0;
+  font-size: 12px;
+  color: var(--ink-2);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  cursor: pointer;
+  transition: background var(--fast), color var(--fast), border-color var(--fast);
+}
+.hist-action-btn:hover:not(:disabled) {
+  background: var(--surface);
+  border-color: var(--hairline);
+  color: var(--ink);
+}
+.hist-action-btn.danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.hist-action-btn:disabled { opacity: 0.45; cursor: default; }
+/* Nút "Mở" (hành động chính) — dạng chữ, viền sẵn để nhận ra ngay không cần hover. */
+.hist-open-btn {
+  width: auto;
+  padding: 0 10px;
+  font-weight: 700;
+  border-color: var(--hairline);
+  background: var(--surface);
+}
+.hist-open-btn:hover:not(:disabled) { background: var(--brass); color: var(--on-brass, var(--ink)); }
+
 /* ───────────────────────────  Responsive  ─────────────────────────── */
 @media (max-width: 940px) {
   .main-layout { flex-direction: column; padding: 12px; gap: 12px; overflow-y: auto; }
@@ -3558,21 +3668,12 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 [data-theme='brutal'] .btn.attach:hover:not(:disabled) {
   background-color: #ffb063 !important;
 }
-[data-theme='brutal'] .btn.clear-chat {
-  background-color: #ff6bb0 !important; /* Pink */
-  color: #0a0a0a !important;
-  border: var(--bd-thin) solid var(--hairline) !important;
-  box-shadow: 2px 2px 0 0 var(--hairline) !important;
-}
-[data-theme='brutal'] .btn.clear-chat:hover:not(:disabled) {
-  background-color: #ff8bc2 !important;
-}
-[data-theme='brutal'] .btn:not(.primary):not(.run):not(.allow):not(.stop):not(.deny):not(.attach):not(.clear-chat),
+[data-theme='brutal'] .btn:not(.primary):not(.run):not(.allow):not(.stop):not(.deny):not(.attach),
 [data-theme='brutal'] .px-select-btn {
   background-color: var(--surface-2) !important;
   color: var(--ink) !important;
 }
-[data-theme='brutal'] .btn:not(.primary):not(.run):not(.allow):not(.stop):not(.deny):not(.attach):not(.clear-chat):hover:not(:disabled),
+[data-theme='brutal'] .btn:not(.primary):not(.run):not(.allow):not(.stop):not(.deny):not(.attach):hover:not(:disabled),
 [data-theme='brutal'] .px-select-btn:hover {
   background-color: var(--surface-3) !important;
 }

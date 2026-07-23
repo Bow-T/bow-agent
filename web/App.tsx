@@ -211,15 +211,20 @@ const CHAT_USER_ID_KEY = 'bow-chat-user-id';
 const CHAT_NICKNAME_KEY = 'bow-chat-nickname';
 const CHAT_LAST_GROUP_KEY = 'bow-chat-last-group';
 
+/** Sinh ID ngẫu nhiên AN TOÀN mọi ngữ cảnh. crypto.randomUUID chỉ có trong secure
+ *  context (HTTPS/localhost) — client LAN vào qua http://<ip>:400x KHÔNG có nó, gọi
+ *  thẳng sẽ throw (từng làm nút "+" tab chết im lặng ở mode QC). Luôn dùng hàm này. */
+export function genId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return `id-${Date.now()}-${Math.floor(Math.random() * 1e9).toString(36)}`;
+}
+
 /** ID cá nhân của máy này (sinh & nhớ 1 lần). Dùng để tô "tin của mình" vs người khác. */
 function getChatUserId(): string {
   try {
     let id = localStorage.getItem(CHAT_USER_ID_KEY);
     if (!id) {
-      id =
-        typeof crypto !== 'undefined' && crypto.randomUUID
-          ? crypto.randomUUID()
-          : `u-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+      id = genId();
       localStorage.setItem(CHAT_USER_ID_KEY, id);
     }
     return id;
@@ -419,8 +424,10 @@ interface PaneState {
   /** Hạn mức gói + context của TÀI KHOẢN tab này (per-tab). App hiển thị của tab đang mở. */
   usage: UsageSnapshot | null;
   usageLoading: boolean;
+  /** Số thẻ đang chờ người dùng (duyệt tool + câu hỏi) — tab-bar tô sáng tab cần bấm. */
+  pendingCount: number;
 }
-const EMPTY_PANE_STATE: PaneState = { running: false, runStartedAt: null, lastRunMs: null, activeConvId: null, title: '', model: 'claude-opus-4-8', claudeProfile: 'default', usage: null, usageLoading: false };
+const EMPTY_PANE_STATE: PaneState = { running: false, runStartedAt: null, lastRunMs: null, activeConvId: null, title: '', model: 'claude-opus-4-8', claudeProfile: 'default', usage: null, usageLoading: false, pendingCount: 0 };
 
 export function App() {
   // ── Multi-tab: nhiều conversation/session chạy SONG SONG, mỗi tab một <TaskPane> ──
@@ -432,7 +439,7 @@ export function App() {
   // thanh tab đọc mọi tab (chấm chạy + tiêu đề). TaskPane báo lên qua onStateChange.
   const [paneStates, setPaneStates] = useState<Record<string, PaneState>>({});
   const activePane = paneStates[activeTabId] ?? EMPTY_PANE_STATE;
-  const { running: paneRunning, runStartedAt: paneRunStartedAt, lastRunMs: paneLastRunMs, activeConvId: paneActiveConvId, usage: paneUsage, usageLoading: paneUsageLoading } = activePane;
+  const { running: paneRunning, runStartedAt: paneRunStartedAt, activeConvId: paneActiveConvId, usage: paneUsage, usageLoading: paneUsageLoading } = activePane;
   /** Handle của tab đang hiển thị (để History/xoá cuộc gọi imperative đúng pane). */
   const activePaneRef = () => paneRefs.current[activeTabId] ?? null;
 
@@ -446,7 +453,7 @@ export function App() {
       const cur = prev[tabId];
       if (cur && cur.running === s.running && cur.runStartedAt === s.runStartedAt &&
           cur.lastRunMs === s.lastRunMs && cur.activeConvId === s.activeConvId && cur.title === s.title &&
-          cur.usage === s.usage && cur.usageLoading === s.usageLoading) {
+          cur.usage === s.usage && cur.usageLoading === s.usageLoading && cur.pendingCount === s.pendingCount) {
         return prev; // không đổi → tránh render thừa
       }
       return { ...prev, [tabId]: s };
@@ -456,7 +463,7 @@ export function App() {
   /** Mở một tab mới (trống) và chuyển tới nó. Kế thừa model/effort/profile của tab đang mở
    *  (ghi localStorage TRƯỚC khi tab mới mount để TaskPane đọc đúng ngay từ khởi tạo). */
   const newTab = useCallback(() => {
-    const id = crypto.randomUUID();
+    const id = genId();
     inheritRunCfg(activeTabId, id);
     setTabs((prev) => [...prev, { id, title: '' }]);
     setActiveTabId(id);
@@ -1290,7 +1297,7 @@ export function App() {
     setHistBusy(true);
     try {
       // Tạo tab mới rồi chờ pane của nó mount xong mới gọi openConversation qua handle.
-      const tabId = crypto.randomUUID();
+      const tabId = genId();
       inheritRunCfg(activeTabId, tabId); // kế thừa model/effort/profile của tab đang mở
       setTabs((prev) => [...prev, { id: tabId, title: '' }]);
       setActiveTabId(tabId);
@@ -1704,22 +1711,11 @@ export function App() {
   const [auditLogs, setAuditLogs] = useState<string[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
 
-  // URL vừa được copy (để hiện "ĐÃ COPY!"); null = chưa copy gì.
-  const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
-  // Dropdown danh sách host LAN đang mở hay không.
-  const [lanMenuOpen, setLanMenuOpen] = useState(false);
   // Dropdown nguồn mã của các mode đang mở hay không.
   const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
-
-
-  // Tất cả host LAN của máy. Ưu tiên lanUrls (nhiều host); fallback lanUrl (bản cũ).
-  const lanUrls = cfg?.lanUrls?.length ? cfg.lanUrls : cfg?.lanUrl ? [cfg.lanUrl] : [];
-
-  const copyLanUrl = (url: string) => {
-    navigator.clipboard.writeText(url);
-    setCopiedUrl(url);
-    setTimeout(() => setCopiedUrl((c) => (c === url ? null : c)), 2000);
-  };
+  // Toạ độ màn hình của menu nguồn (position: fixed) — .obs-readouts có overflow:hidden
+  // nên menu absolute bên trong sẽ bị CẮT ngay mép topbar; fixed thoát vùng cắt đó.
+  const [sourceMenuPos, setSourceMenuPos] = useState<{ top: number; left: number } | null>(null);
 
   const fetchActiveClients = () => {
     setLoadingActiveClients(true);
@@ -1916,6 +1912,13 @@ export function App() {
   const ba = cfg ? !!cfg.isBaMode : false;
   const devops = cfg ? !!cfg.isDevOpsMode : false;
   const pendingAccessCount = accessUsers.filter((u) => u.status === 'pending').length;
+  // Tổng thẻ chờ duyệt/câu hỏi trên MỌI tab → báo lên tiêu đề trình duyệt "(N) ⏳ …"
+  // để biết cửa sổ/tab trình duyệt nào đang cần bấm dù không nhìn màn hình đó.
+  const totalPendingApprovals = Object.values(paneStates).reduce((n, s) => n + (s?.pendingCount ?? 0), 0);
+  useEffect(() => {
+    const base = 'Bow · Design Styles';
+    document.title = totalPendingApprovals > 0 ? `(${totalPendingApprovals}) ⏳ ${base}` : base;
+  }, [totalPendingApprovals]);
   // Tên repo hiển thị ở badge "Source" trên header:
   // - QC Mode: repo bị khoá vào cfg (qcCwd) → dùng repoName/defaultCwd từ backend.
   // - Thường: repo là cwd người dùng đang chọn ở composer (thứ lượt chạy sẽ dùng) →
@@ -2064,7 +2067,12 @@ export function App() {
               <button
                 className="readout readout-btn"
                 title={language === 'vi' ? 'Nguồn mã của các chế độ chạy. Bấm để xem chi tiết / đổi.' : 'Source directories of execution modes. Click to view or change.'}
-                onClick={() => setSourceMenuOpen((o) => !o)}
+                onClick={(e) => {
+                  // Neo menu (fixed) ngay dưới nút — đo lúc bấm để khỏi lệch khi cuộn/resize.
+                  const r = e.currentTarget.getBoundingClientRect();
+                  setSourceMenuPos({ top: r.bottom + 4, left: r.left });
+                  setSourceMenuOpen((o) => !o);
+                }}
               >
                 <span className="rl">{language === 'vi' ? 'Nguồn' : 'Source'}</span>
                 <span className="rv" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -2088,7 +2096,18 @@ export function App() {
               {sourceMenuOpen && (
                 <>
                   <div className="lan-url-backdrop" onClick={() => setSourceMenuOpen(false)} />
-                  <div className="lan-url-menu" role="menu" style={{ right: 'auto', left: 0, minWidth: '260px' }}>
+                  <div
+                    className="lan-url-menu"
+                    role="menu"
+                    style={{
+                      // fixed để thoát overflow:hidden của .obs-readouts (menu bị cắt cụt dưới topbar).
+                      position: 'fixed',
+                      top: sourceMenuPos?.top ?? 58,
+                      left: sourceMenuPos?.left ?? 0,
+                      right: 'auto',
+                      minWidth: '260px',
+                    }}
+                  >
                     <div className="lan-url-menu-head">
                       {language === 'vi' ? 'Nguồn mã theo chế độ' : 'Sources by Mode'}
                     </div>
@@ -2166,25 +2185,6 @@ export function App() {
             <span className="rl">UTC</span>
             <span className="rv">{utc}</span>
           </span>
-          {/* Đồng hồ phiên: đang chạy → tick mỗi giây (nhờ interval UTC); xong → đứng ở
-              tổng thời lượng lượt gần nhất. Ẩn khi chưa chạy lượt nào. */}
-          {(paneRunning && paneRunStartedAt != null) || paneLastRunMs != null ? (
-            <span
-              className="readout"
-              title={
-                paneRunning
-                  ? (language === 'vi' ? 'Thời gian lượt chạy hiện tại (tính cả lúc chờ duyệt)' : 'Current run duration (including pending approval time)')
-                  : (language === 'vi' ? 'Thời lượng lượt chạy gần nhất' : 'Last run duration')
-              }
-            >
-              <span className="rl">{language === 'vi' ? 'Thời gian' : 'Time'}</span>
-              <span className="rv" style={{ color: paneRunning ? 'var(--brass)' : undefined }}>
-                {paneRunning && paneRunStartedAt != null
-                  ? fmtDuration(Date.now() - paneRunStartedAt)
-                  : fmtDuration(paneLastRunMs!)}
-              </span>
-            </span>
-          ) : null}
           {!readonlyShare && (
             <span className="readout" title={language === 'vi' ? "Chi phí tích lũy phiên này" : "Accumulated session cost"}>
               <span className="rl">{language === 'vi' ? 'Chi phí' : 'Cost'}</span>
@@ -2200,68 +2200,6 @@ export function App() {
                 {modeDef(mode, language).short}
               </span>
             </span>
-          )}
-          {lanUrls.length > 0 && (
-            <div className="lan-url-wrap">
-              <button
-                className="readout readout-btn"
-                title={
-                  lanUrls.length > 1
-                    ? `Máy có ${lanUrls.length} địa chỉ LAN. Bấm để chọn/copy đúng địa chỉ máy khách dùng.`
-                    : 'Địa chỉ mạng LAN của trang này. Bấm để copy.'
-                }
-                onClick={() => {
-                  // 1 host → copy luôn. Nhiều host → mở menu cho chọn.
-                  if (lanUrls.length === 1) copyLanUrl(lanUrls[0]);
-                  else setLanMenuOpen((o) => !o);
-                }}
-              >
-                <span className="rl">LAN</span>
-                <span
-                  className="rv"
-                  style={{
-                    color: copiedUrl && lanUrls.includes(copiedUrl) ? 'var(--teal)' : 'var(--brass)',
-                    textDecoration:
-                      copiedUrl && lanUrls.includes(copiedUrl) ? 'none' : lanUrls.length > 1 ? 'none' : 'underline',
-                  }}
-                >
-                  {/* Nhiều host: chỉ hiện số host (địa chỉ đầy đủ nằm trong dropdown) → gọn header. */}
-                  {copiedUrl && lanUrls.includes(copiedUrl)
-                    ? 'ĐÃ COPY!'
-                    : lanUrls.length > 1
-                    ? `${lanUrls.length} host`
-                    : lanUrls[0].replace(/^https?:\/\//, '')}
-                  {lanUrls.length > 1 && <span className="lan-url-caret">{lanMenuOpen ? '▴' : '▾'}</span>}
-                </span>
-              </button>
-              {lanMenuOpen && lanUrls.length > 1 && (
-                <>
-                  {/* Backdrop trong suốt: bấm ra ngoài để đóng menu. */}
-                  <div className="lan-url-backdrop" onClick={() => setLanMenuOpen(false)} />
-                  <div className="lan-url-menu" role="menu">
-                    <div className="lan-url-menu-head">
-                      Máy có nhiều địa chỉ mạng — chọn địa chỉ khớp mạng của máy khách
-                    </div>
-                    {lanUrls.map((url) => {
-                      const isCopied = copiedUrl === url;
-                      return (
-                        <button
-                          key={url}
-                          className="lan-url-item"
-                          onClick={() => copyLanUrl(url)}
-                          title="Bấm để copy"
-                        >
-                          <span className="lan-url-item-addr">{url.replace(/^https?:\/\//, '')}</span>
-                          <span className={`lan-url-item-copy${isCopied ? ' copied' : ''}`}>
-                            {isCopied ? 'ĐÃ COPY!' : 'Copy'}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </>
-              )}
-            </div>
           )}
           </div>
           {/* Meter pill tài nguyên gộp: chi phí + hạn mức phiên 5h (%) + context window */}
@@ -2388,24 +2326,29 @@ export function App() {
       </header>
 
       {/* Thanh tab: nhiều tác vụ/hội thoại chạy SONG SONG. Mỗi tab một <TaskPane> (SSE +
-          session riêng); tab nền vẫn chạy thật (ẩn bằng CSS, không unmount). Chỉ hiện khi
-          có >1 tab hoặc admin — ở mode chia sẻ (QC/BA/…) giữ 1 tab cho gọn. */}
-      {(!readonlyShare || tabs.length > 1) && (
-        <div className="tab-bar" role="tablist" aria-label={language === 'vi' ? 'Các tác vụ đang mở' : 'Open tasks'}>
+          session riêng); tab nền vẫn chạy thật (ẩn bằng CSS, không unmount). Hiện ở MỌI
+          mode (kể cả QC/Reviewer) để ai cũng mở được chat mới qua nút +. */}
+      <div className="tab-bar" role="tablist" aria-label={language === 'vi' ? 'Các tác vụ đang mở' : 'Open tasks'}>
           {tabs.map((t, i) => {
             const st = paneStates[t.id];
             const title = (t.title || st?.title || '').trim() || `${language === 'vi' ? 'Tác vụ' : 'Task'} ${i + 1}`;
+            // Tab có thẻ chờ duyệt/câu hỏi → tô sáng để biết cần vào bấm (ưu tiên hơn 'live').
+            const needsAttention = (st?.pendingCount ?? 0) > 0;
+            const tabTitle = needsAttention
+              ? `${title} — ${language === 'vi' ? `${st!.pendingCount} yêu cầu chờ duyệt` : `${st!.pendingCount} pending approval(s)`}`
+              : title;
             return (
               <div
                 key={t.id}
                 role="tab"
                 aria-selected={t.id === activeTabId}
-                className={`tab-bar-item${t.id === activeTabId ? ' active' : ''}`}
+                className={`tab-bar-item${t.id === activeTabId ? ' active' : ''}${needsAttention ? ' needs-attention' : ''}`}
                 onClick={() => setActiveTabId(t.id)}
-                title={title}
+                title={tabTitle}
               >
-                <span className={`tab-bar-dot${st?.running ? ' live' : ''}`} aria-hidden="true" />
+                <span className={`tab-bar-dot${needsAttention ? ' attention' : st?.running ? ' live' : ''}`} aria-hidden="true" />
                 <span className="tab-bar-title">{title}</span>
+                {needsAttention && <span className="tab-bar-pending">{st!.pendingCount}</span>}
                 {tabs.length > 1 && (
                   <button
                     type="button"
@@ -2429,7 +2372,6 @@ export function App() {
             <Icon name="newChat" size={15} />
           </button>
         </div>
-      )}
 
       {/* Mỗi tab = 1 instance TaskPane (SSE/session riêng). visible điều khiển hidden —
           tab nền vẫn mounted nên vẫn chạy. TaskPane render .main-layout + docks + composer;
@@ -2948,7 +2890,7 @@ export function App() {
                 />
               </div>
 
-              <div className="mcp-list" style={{ maxHeight: '420px', overflowY: 'auto', border: 'var(--bd-thin) solid var(--outline)', padding: '6px', background: 'var(--inset)' }}>
+              <div className="hist-list">
                 {(() => {
                   const q = histSearch.trim().toLowerCase();
                   const filtered = q
@@ -2964,16 +2906,9 @@ export function App() {
                     const isActive = c.id === paneActiveConvId;
                     const isRenaming = c.id === histRenameId;
                     return (
-                      <div
-                        key={c.id}
-                        style={{
-                          padding: '8px 10px',
-                          borderBottom: 'var(--bd-thin) solid var(--outline)',
-                          background: isActive ? 'var(--outline)' : undefined,
-                        }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <div style={{ flex: 1, minWidth: 0 }}>
+                      <div key={c.id} className={`hist-item${isActive ? ' active' : ''}`}>
+                        <div className="hist-item-row">
+                          <div className="hist-item-main">
                             {isRenaming ? (
                               <input
                                 autoFocus
@@ -2984,28 +2919,27 @@ export function App() {
                                   if (e.key === 'Escape') setHistRenameId(null);
                                 }}
                                 onBlur={() => submitRename(c.id)}
-                                style={{ width: '100%', padding: '4px 6px', fontSize: '13px' }}
+                                className="hist-rename-input"
                               />
                             ) : (
                               <div
+                                className="hist-item-title"
                                 onDoubleClick={() => { setHistRenameId(c.id); setHistRenameText(c.title); }}
                                 title="Bấm để mở · double-click để đổi tên"
-                                style={{ fontWeight: isActive ? 700 : 600, fontSize: '13px', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                                 onClick={() => openConversation(c.id)}
                               >
-                                {isActive && '● '}{c.title}
+                                {isActive && <span className="hist-active-dot" aria-hidden="true" />}{c.title}
                               </div>
                             )}
-                            <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            <div className="hist-item-meta">
                               {c.itemCount} dòng · {new Date(c.updatedAt).toLocaleString('vi-VN')}
-                              {c.cwd && <> · <span style={{ fontFamily: 'monospace' }}>{c.cwd}</span></>}
+                              {c.cwd && <> · <span className="hist-item-cwd">{c.cwd}</span></>}
                             </div>
                           </div>
                           {!isRenaming && (
-                            <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+                            <div className="hist-actions">
                               <button
-                                className="btn"
-                                style={{ padding: '2px 8px', fontSize: '11px' }}
+                                className="hist-action-btn hist-open-btn"
                                 disabled={histBusy}
                                 onClick={() => openConversation(c.id)}
                                 title="Mở lại cuộc này (trong tab hiện tại)"
@@ -3014,30 +2948,27 @@ export function App() {
                               </button>
                               {!readonlyShare && (
                                 <button
-                                  className="btn"
-                                  style={{ padding: '2px 6px', fontSize: '11px' }}
+                                  className="hist-action-btn"
                                   disabled={histBusy}
                                   onClick={() => openConversationInNewTab(c.id)}
                                   title="Mở trong TAB MỚI (chạy song song, giữ tab hiện tại)"
                                 >
-                                  <Icon name="newChat" size={13} />
+                                  <Icon name="newChat" size={14} />
                                 </button>
                               )}
                               <button
-                                className="btn"
-                                style={{ padding: '2px 6px', fontSize: '11px' }}
+                                className="hist-action-btn"
                                 onClick={() => { setHistRenameId(c.id); setHistRenameText(c.title); }}
                                 title="Đổi tên"
                               >
-                                <Icon name="rename" size={13} />
+                                <Icon name="rename" size={14} />
                               </button>
                               <button
-                                className="btn deny"
-                                style={{ padding: '2px 6px', fontSize: '11px' }}
+                                className="hist-action-btn danger"
                                 onClick={() => setHistDeleteId(c.id)}
                                 title="Xóa cuộc này"
                               >
-                                <Icon name="trash" size={13} />
+                                <Icon name="trash" size={14} />
                               </button>
                             </div>
                           )}
@@ -3243,8 +3174,6 @@ export function App() {
           </div>
         </div>
       )}
-
-      {/* Modal xác nhận "Cuộc trò chuyện mới" đã dời sang TaskPane (state per-tab). */}
 
       {activeClientsOpen && (
         <div className="modal-overlay" onClick={() => setActiveClientsOpen(false)}>
