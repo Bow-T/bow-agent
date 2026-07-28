@@ -672,10 +672,11 @@ app.post('/api/run', async (req, res) => {
     const hasJiraSelected = selectedMcp.some((n) => n.toLowerCase().includes('jira'));
     const hasJiraMcp = hasJiraSelected || jiraInGlobal.length > 0;
 
-    // Nếu có Jira ref mà jira đã cấu hình global nhưng client chưa tick → TỰ bật,
-    // để runner nạp được server jira. Tránh chặn oan khi ~/.claude.json đã có jira.
+    // Jira đã cấu hình global thì LUÔN tự bật (kể cả khi client chưa tick VÀ brief không
+    // có ticket ref) — người dùng hỏi theo tên sprint/board ("check sprint 8") cũng cần
+    // jira để đọc board live. Khớp với các mode khác vốn đã nạp toàn bộ cc.names.
     let effectiveMcp = selectedMcp;
-    if (activeJiraRef && !hasJiraSelected && jiraInGlobal.length > 0) {
+    if (!hasJiraSelected && jiraInGlobal.length > 0) {
       effectiveMcp = [...new Set([...selectedMcp, ...jiraInGlobal])];
     }
 
