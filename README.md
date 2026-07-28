@@ -84,6 +84,27 @@ Same core, same safety gate, six permission profiles. Each runs on its own port,
 
 Admin is determined by **the real socket IP being localhost** — a LAN client cannot spoof `X-Forwarded-For` to seize control. LAN users request access by name and wait for you to approve them.
 
+## Sprint-scan — the self-driving one
+
+The six modes above are interactive chat sessions. **Sprint-scan** is different: it's the agent running *on a schedule*, with no one at the keyboard. It scans the active Jira sprint, triages each open bug/task, and — when it doesn't have enough to go on — asks the ticket's **reporter** directly instead of guessing.
+
+```bash
+# Configure the schedule (the agent owns the schedule; launchd just keeps it alive)
+bow schedule set --project PROJ --at 09:00,14:00     # dry-run by default
+bow schedule install                                  # macOS LaunchAgent, ticks every 5 min
+bow schedule status                                   # see schedule + last runs
+
+# Or run one pass by hand
+bow sprint-scan --project PROJ                         # dry-run: triage + propose, writes nothing
+bow sprint-scan --project PROJ --execute --assign      # full-auto: fix, commit, assign QC
+
+# Watch it from a dashboard (port 4006)
+npm run ui:sprint                                      # localhost only
+npm run ui:sprint:share                                # share on LAN
+```
+
+**Dry-run is the default** everywhere. `--execute` is genuinely full-auto (fixes, commits), but a hard policy still blocks destructive commands (`rm -rf`, force-push, `execute_sql`, creating/deleting issues) so a bad triage can't wipe anything. The dashboard shows the schedule, launchd status, and a history of past scans with their triage results — plus a **"Scan now"** button that streams the agent's log live. It reads the mode from your saved schedule, so the web UI can never silently escalate a dry-run into an execute.
+
 ## Quick start
 
 **Requirements:** Node ≥ 18, and the [Claude CLI](https://claude.com/claude-code) logged in (`claude` → `/login`). bow-agent uses your existing Claude subscription — no API key needed.
@@ -147,6 +168,7 @@ The whole safety model is one function. If you're auditing this project, read [`
 - **Skills load at runtime, not from this repo.** bow-agent is an empty frame: skills are fetched from allow-listed GitHub repos, pinned to a specific ref, and cached locally. Adding a skill doesn't mean forking this repo.
 - **Multi-agent, opt-in.** `--subagents` lets the main agent delegate to specialists — a *reviewer* that argues against the plan, a *verifier* that traces runtime behavior end-to-end, an *impact-scout* that finds every call site before you change a contract. All of them are read-only; the main agent still does every write, still through the gate.
 - **Auto-resume on rate limit.** Hit your 5-hour session cap mid-execution? It schedules a resume for when the limit resets and picks the work back up.
+- **Scheduled sprint triage.** The `src/scheduler/` module drives Sprint-scan: `schedule.ts` holds the schedule the agent owns (and de-dupes runs so a 5-minute launchd tick never double-fires), `launchd.ts` keeps it alive on macOS, `sprintScan.ts` builds the orchestration brief and calls the same `runAgent` core, and `webServer.ts` serves the dashboard. No agent logic is duplicated — it's the one core, on a timer.
 
 Full design docs: **[ARCHITECTURE.md](ARCHITECTURE.md)** · Vietnamese README: **[README.vi.md](README.vi.md)**
 

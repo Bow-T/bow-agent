@@ -138,6 +138,29 @@
       }
     },
     {
+      // Sprint-scan Dashboard — agent TỰ quét sprint Jira theo lịch (khác 6 mode trên: đây KHÔNG
+      // phải chat LAN mà là dashboard theo dõi + nút "Quét ngay"). Server độc lập (không dùng Vite)
+      // ở cổng RIÊNG :4006 nên bật ĐỒNG THỜI với mọi mode khác. Đổi lịch qua CLI `bow schedule set`.
+      // Mở http://127.0.0.1:4006. Muốn chia sẻ LAN dùng script `ui:sprint:share` thay vì cái này.
+      "name": "📊 Chạy Web Sprint-scan (tự quét Jira theo lịch)",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "ui:sprint"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"],
+      "presentation": {
+        "group": "1_run",
+        "order": 7
+      },
+      "serverReadyAction": {
+        "pattern": "dashboard:\\s+(https?://[\\d.]+:4006)",
+        "uriFormat": "%s",
+        "action": "openExternally"
+      }
+    },
+    {
       // Debug backend Express (src/web/server.ts) qua tsx — ĐẶT BREAKPOINT được ở code .ts.
       // Chạy riêng phần api (:4000). Muốn xem UI thì chạy thêm "web: chạy" hoặc vite riêng.
       "name": "🐛 Debug Backend API (:4000)",

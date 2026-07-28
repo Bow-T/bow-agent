@@ -55,7 +55,9 @@
     "ui:collab": "npm run ui:build && BOW_COLLAB_MODE=true BOW_SERVE_STATIC=true BOW_AGENT_PORT=4002 npm run ui:api",
     "ui:ba": "npm run ui:build && BOW_BA_MODE=true BOW_SERVE_STATIC=true BOW_AGENT_PORT=4003 npm run ui:api",
     "ui:review:share": "npm run ui:build && BOW_REVIEWER_MODE=true BOW_SERVE_STATIC=true BOW_AGENT_PORT=4004 npm run ui:api",
-    "ui:devops:share": "npm run ui:build && BOW_DEVOPS_MODE=true BOW_SERVE_STATIC=true BOW_AGENT_PORT=4005 npm run ui:api"
+    "ui:devops:share": "npm run ui:build && BOW_DEVOPS_MODE=true BOW_SERVE_STATIC=true BOW_AGENT_PORT=4005 npm run ui:api",
+    "ui:sprint": "tsx src/scheduler/webMain.ts",
+    "ui:sprint:share": "BOW_SPRINT_WEB_HOST=0.0.0.0 tsx src/scheduler/webMain.ts"
   },
   "engines": {
     "node": ">=18"

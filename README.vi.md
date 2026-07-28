@@ -128,6 +128,40 @@ qua LAN — **mỗi mode một cặp cổng riêng nên chạy đồng thời kh
 
 ---
 
+## Sprint-scan — agent TỰ chạy theo lịch 📊
+
+Sáu mode trên là **phiên chat tương tác**. Sprint-scan thì khác: agent **tự chạy theo lịch**,
+không cần ai gõ. Nó quét sprint Jira đang chạy, triage từng bug/task, và khi **không đủ thông tin**
+thì hỏi thẳng **reporter (người tạo ticket)** thay vì đoán bừa.
+
+```bash
+# Cấu hình lịch (agent giữ lịch; launchd chỉ lo giữ cho sống)
+bow schedule set --project PROJ --at 09:00,14:00     # mặc định dry-run
+bow schedule install                                  # LaunchAgent macOS, tick mỗi 5 phút
+bow schedule status                                   # xem lịch + các lượt gần nhất
+
+# Hoặc quét một lượt bằng tay
+bow sprint-scan --project PROJ                         # dry-run: chỉ triage + đề xuất, không ghi gì
+bow sprint-scan --project PROJ --execute --assign      # full-auto: tự fix, commit, assign QC
+
+# Dashboard theo dõi (cổng 4006)
+npm run ui:sprint                                      # chỉ localhost
+npm run ui:sprint:share                                # chia sẻ LAN
+```
+
+- **Dry-run là mặc định** ở mọi nơi. `--execute` mới thực sự tự fix/commit, nhưng vẫn có **phanh
+  cứng** (`autoApprovalPolicy`) chặn lệnh huỷ hoại (`rm -rf`, force-push, `execute_sql`, tạo/xoá issue)
+  để một lần triage sai không xoá được gì.
+- **KHÔNG phải mode thứ 7 của `server.ts`** — vì bản chất khác (agent tự chạy, không phải chat), nó có
+  **server độc lập** `src/scheduler/webServer.ts`. Lõi vẫn là `runAgent` — không nhân đôi logic agent.
+- **"Tự lên lịch"** = config `~/.bow-agent/sprint-schedule.json` (agent giữ lịch, có chống chạy trùng
+  qua `lastRunAt`) + launchd gọi `sprint-scan --tick` (OS giữ sống). Đổi lịch qua **CLI**, web chỉ xem + kích.
+- Dashboard hiển thị lịch, trạng thái launchd, **lịch sử các lượt quét** kèm kết quả triage + chi phí,
+  và nút **"Quét ngay"** stream log agent realtime. Chế độ lượt web **lấy từ lịch** — web không tự nâng
+  dry-run thành execute.
+
+---
+
 ## Dùng qua Terminal (CLI)
 
 Có thể chạy trực tiếp bằng `tsx` (không cần build) hoặc từ bản build:

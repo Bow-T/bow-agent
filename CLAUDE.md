@@ -57,6 +57,20 @@ thật là localhost** (đừng tin header `X-Forwarded-For` — xem `.agents/AG
 LAI: ghi file theo target như BA (helper `isInfraPath`), nhưng deploy/apply định tuyến admin duyệt
 qua `adminBus` như Collab (`routeToAdmin = (isCollabMode || isDevOpsMode) && !isAdmin`).
 
+## Sprint-scan (agent TỰ chạy theo lịch — KHÁC 6 mode chat trên)
+
+| Thứ | Script | Cổng | Chức năng |
+| --- | ------ | ---- | --------- |
+| **Sprint-scan** | `npm run ui:sprint` (LAN: `ui:sprint:share`) | **4006** | Dashboard theo dõi + nút "Quét ngay" (SSE). Agent tự quét sprint Jira, triage bug/task, hỏi/assign **reporter** ticket |
+
+> **KHÔNG phải mode thứ 7 của `server.ts`.** Sprint-scan là agent TỰ vận hành theo lịch (không phải
+> phiên chat người-gõ), nên có **server độc lập** `src/scheduler/webServer.ts` (không đụng 6 mode trên,
+> không dùng access-token/SSE-chat của `server.ts`). Lõi vẫn là `runAgent` — không nhân đôi logic agent.
+> Các file: `src/scheduler/{sprintScan,schedule,launchd,qcRouting,webServer}.ts` + CLI `bow sprint-scan`
+> / `bow schedule`. **Dry-run mặc định**; `--execute` full-auto có phanh cứng (`autoApprovalPolicy` chặn
+> `rm -rf`/force-push/`execute_sql`/tạo-xoá issue). "Tự lên lịch" = config `~/.bow-agent/sprint-schedule.json`
+> (agent giữ lịch) + launchd gọi `sprint-scan --tick` mỗi 5 phút (OS giữ sống). Đổi lịch qua CLI, KHÔNG qua web.
+
 ## Tài liệu chi tiết
 
 - **README.md** — hướng dẫn dùng (CLI/Web, cờ, MCP, profile, subagents).
