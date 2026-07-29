@@ -402,16 +402,29 @@ async function runScheduleCommand(args: ParsedArgs): Promise<void> {
     const { existsSync } = await import('node:fs');
     const { resolve, dirname } = await import('node:path');
     const { fileURLToPath } = await import('node:url');
+    const { createRequire } = await import('node:module');
     const here = dirname(fileURLToPath(import.meta.url));
     const distEntry = resolve(here, 'index.js'); // khi chạy từ dist/cli/index.js
     const srcEntry = resolve(here, 'index.ts'); // khi chạy từ src qua tsx
     const useDist = existsSync(distEntry) && here.includes('dist');
     const cliEntry = useDist ? distEntry : srcEntry;
-    const tsxLoader = useDist ? undefined : 'tsx';
+    // WorkingDirectory launchd = THƯ MỤC bow-agent (here = <bow>/[dist/]cli → lùi 2 cấp), nơi Node
+    // resolve tsx. KHÔNG dùng args.cwd (repo đích) — nó không có node_modules/tsx → tick crash. cwd
+    // repo đích do --tick tự đọc từ sprint-schedule.json/BOW_CWD, độc lập WorkingDirectory này.
+    const bowRoot = resolve(here, '..', '..');
+    // Dev (src .ts): --import tsx bằng ĐƯỜNG DẪN TUYỆT ĐỐI (không bare 'tsx' — phụ thuộc cwd).
+    let tsxLoader: string | undefined;
+    if (!useDist) {
+      try {
+        tsxLoader = createRequire(resolve(bowRoot, 'noop.js')).resolve('tsx');
+      } catch {
+        tsxLoader = 'tsx';
+      }
+    }
     const res = lch.installLaunchd({
       cliEntry,
       tsxLoader,
-      cwd: args.cwd,
+      cwd: bowRoot,
     });
     process.stdout.write(
       `${res.loaded ? '✅ Đã nạp' : '⚠️  Đã ghi plist nhưng chưa nạp được'} LaunchAgent: ${res.plist}\n` +

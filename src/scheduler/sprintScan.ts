@@ -273,14 +273,40 @@ export async function runSprintScan(opts: SprintScanOptions): Promise<string | n
   // write qua onApproval/policy). Nếu không có Jira MCP thì agent sẽ báo trong tổng kết.
   const mcpServers = loadClaudeCodeMcp().names;
 
+  const startedAt = new Date().toISOString();
+
+  // SNAPSHOT LOG realtime ra đĩa (~/.bow-agent/sprint-live.json) để dashboard reload KHÔNG mất
+  // phần đang xem — và để lượt tự-động (launchd) cũng xem lại được, không chỉ lượt bấm-tay-trên-web.
+  // Import động (như appendRunHistory) tránh vòng lặp import scheduler.
+  const { saveLiveRun } = await import('./schedule.js');
+  const live: import('./schedule.js').SprintLiveRun = {
+    startedAt,
+    status: 'running',
+    projectKey,
+    dryRun: opts.dryRun,
+    sprintName: opts.sprint?.name,
+    ticketCount: opts.onlyKeys?.length,
+    log: [],
+  };
+  let flushTimer: NodeJS.Timeout | null = null;
+  const flushLive = (): void => { flushTimer = null; saveLiveRun(live); };
+  const appendLive = (cls: 't' | 'tool' | 'ok' | 'err', text: string): void => {
+    live.log.push({ cls, text });
+    // Debounce 400ms: gộp event dồn dập thành 1 lần ghi đĩa (tránh ghi mỗi token).
+    if (!flushTimer) flushTimer = setTimeout(flushLive, 400);
+  };
+  saveLiveRun(live); // ghi ngay trạng thái 'running' để reload sớm vẫn thấy lượt đang chạy
+
   // Bắt cost từ event 'result' để lưu vào lịch sử (dashboard hiển thị $/lượt).
   let costUsd: number | undefined;
   const onEvent = (ev: AgentEvent): void => {
-    if (ev.type === 'result') costUsd = ev.costUsd;
+    if (ev.type === 'result') { costUsd = ev.costUsd; appendLive('ok', `Xong · ${ev.turns} lượt · $${ev.costUsd.toFixed(4)}`); }
+    else if (ev.type === 'text') appendLive('t', ev.text);
+    else if (ev.type === 'tool') appendLive('tool', ev.describe);
+    else if (ev.type === 'error') appendLive('err', ev.subtype);
     opts.onEvent(ev);
   };
 
-  const startedAt = new Date().toISOString();
   let summary: string | null = null;
   let error: string | undefined;
   try {
@@ -307,6 +333,13 @@ export async function runSprintScan(opts: SprintScanOptions): Promise<string | n
     error = (err as Error).message;
     throw err;
   } finally {
+    const triage = parseTriage(summary);
+    // Chốt snapshot live cuối cùng (huỷ debounce đang chờ để không đè status done bằng running).
+    if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+    live.status = error ? 'error' : 'done';
+    live.triage = triage;
+    if (error) { live.error = error; live.log.push({ cls: 'err', text: error }); }
+    saveLiveRun(live);
     // Lưu lịch sử lượt quét (kể cả khi lỗi) để dashboard theo dõi. Import động tránh vòng lặp.
     const { appendRunHistory } = await import('./schedule.js');
     appendRunHistory({
@@ -317,7 +350,7 @@ export async function runSprintScan(opts: SprintScanOptions): Promise<string | n
       dryRun: opts.dryRun,
       summary,
       // Kết quả triage đã cấu trúc (tách từ block JSON cuối) — dashboard vẽ thành thẻ màu.
-      triage: parseTriage(summary),
+      triage,
       costUsd,
       error,
     });

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { TriageItem } from './sprintScan.js';
@@ -68,6 +68,91 @@ export interface SprintRun {
   error?: string;
   /** ISO thời điểm kết thúc. */
   endedAt?: string;
+}
+
+/**
+ * "LƯỢT ĐANG/VỪA CHẠY" — snapshot log realtime của lượt gần nhất, để dashboard reload lại
+ * KHÔNG mất phần đang xem. Khác `SprintRun` (chỉ lưu summary cuối): cái này giữ TỪNG DÒNG log
+ * đã stream, cập nhật liên tục trong lúc chạy. Chỉ có MỘT live tại một thời điểm (scan chạy đơn).
+ */
+export interface SprintLiveRun {
+  /** ISO thời điểm bắt đầu — cũng dùng làm "id" để client biết đây có phải lượt nó đang xem không. */
+  startedAt: string;
+  /** 'running' đang chạy (client reload nên nối lại SSE) | 'done'/'error' đã xong (chỉ render lại). */
+  status: 'running' | 'done' | 'error';
+  projectKey?: string;
+  dryRun: boolean;
+  sprintName?: string;
+  ticketCount?: number;
+  /** Từng dòng log theo thứ tự — client vẽ lại y hệt cột "Log realtime". */
+  log: SprintLiveLine[];
+  /** Triage đã cấu trúc khi xong (rỗng lúc đang chạy). */
+  triage?: TriageItem[];
+  /** Summary/thông báo lỗi khi kết thúc. */
+  error?: string;
+}
+
+/** Một dòng log đã stream. `cls` khớp class client dùng: t|tool|ok|err. */
+export interface SprintLiveLine {
+  cls: 't' | 'tool' | 'ok' | 'err';
+  text: string;
+}
+
+/** Đường dẫn file live-run (snapshot log lượt gần nhất). Cạnh file lịch sử. */
+export function liveRunPath(): string {
+  return process.env.BOW_SPRINT_LIVE || join(homedir(), '.bow-agent', 'sprint-live.json');
+}
+
+/** Đọc live-run. Trả null nếu chưa có/hỏng. */
+export function loadLiveRun(): SprintLiveRun | null {
+  const file = liveRunPath();
+  if (!existsSync(file)) return null;
+  try {
+    const data = JSON.parse(readFileSync(file, 'utf8')) as SprintLiveRun;
+    if (!data || typeof data !== 'object' || !Array.isArray(data.log)) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * "Có lượt nào ĐANG chạy ngoài process này không?" — nguồn duy nhất mà lượt tự-chạy (launchd)
+ * để lại là `sprint-live.json` (status='running'). Dashboard dựa vào đây để bật pill "đang quét"
+ * kể cả khi lượt KHÔNG đi qua web server (biến in-memory `scanning` của web mù trước lượt launchd).
+ *
+ * HEARTBEAT chống kẹt: nếu tiến trình launchd crash giữa chừng, file kẹt status='running' mãi.
+ * `runSprintScan` ghi lại file liên tục (debounce 400ms mỗi event) trong lúc chạy, nên mtime là
+ * nhịp tim đáng tin. Coi là "chết cứng" nếu file không đổi quá `staleMs` (mặc định 3 phút) → không
+ * còn tính là đang chạy (pill tắt), tránh sáng vĩnh viễn.
+ */
+export function liveRunActivity(staleMs = 180_000): {
+  running: boolean;
+  live: SprintLiveRun | null;
+  updatedAt: string | null;
+  stale: boolean;
+} {
+  const file = liveRunPath();
+  const live = loadLiveRun();
+  if (!live) return { running: false, live: null, updatedAt: null, stale: false };
+  let updatedAt: string | null = null;
+  let stale = false;
+  try {
+    const mtime = statSync(file).mtime;
+    updatedAt = mtime.toISOString();
+    stale = Date.now() - mtime.getTime() > staleMs;
+  } catch {
+    /* stat lỗi — coi như không có heartbeat, để stale=false, dựa hẳn vào status */
+  }
+  const running = live.status === 'running' && !stale;
+  return { running, live, updatedAt, stale };
+}
+
+/** Ghi đè live-run (tạo thư mục nếu cần). Gọi khi bắt đầu + mỗi lần append + khi kết thúc. */
+export function saveLiveRun(run: SprintLiveRun): void {
+  const file = liveRunPath();
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify(run, null, 2), 'utf8');
 }
 
 /** Đọc lịch sử (mới nhất trước). Trả [] nếu chưa có. */

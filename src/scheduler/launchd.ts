@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, writeFileSync, unlinkSync, mkdirSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
@@ -24,11 +25,20 @@ export interface LaunchdInstallOptions {
   nodePath?: string;
   /** Đường dẫn entry CLI đã build (dist/cli/index.js) hoặc src qua tsx. */
   cliEntry: string;
-  /** Nếu chạy qua tsx (src chưa build), truyền loader. Rỗng = chạy node thẳng file .js. */
+  /**
+   * Nếu chạy src `.ts` qua tsx (chưa build), truyền loader. PHẢI là đường dẫn TUYỆT ĐỐI tới
+   * gói tsx (vd `<bow>/node_modules/tsx`), KHÔNG dùng bare `'tsx'`. Lý do: launchd chạy với
+   * WorkingDirectory là repo ĐÍCH (monorepo…) nơi KHÔNG có tsx trong node_modules → Node resolve
+   * bare `tsx` theo cwd sẽ ERR_MODULE_NOT_FOUND và mọi tick crash. Rỗng = chạy node thẳng file .js.
+   */
   tsxLoader?: string;
   /** Chu kỳ launchd kích --tick, giây. Mặc định 300 (5 phút) — đủ nhạy cho mốc giờ. */
   intervalSec?: number;
-  /** Thư mục làm việc khi chạy. */
+  /**
+   * WorkingDirectory của tiến trình launchd. QUAN TRỌNG: đây là nơi Node resolve module (gồm tsx
+   * nếu chạy dev) — nên đặt = THƯ MỤC bow-agent (có node_modules), KHÔNG phải repo đích. cwd repo
+   * đích để agent thao tác do `--tick` tự đọc từ sprint-schedule.json/BOW_CWD, độc lập cái này.
+   */
   cwd: string;
   /** File log stdout/stderr. Mặc định ~/.bow-agent/sprint-scan.log. */
   logPath?: string;
@@ -45,7 +55,20 @@ export function buildPlist(opts: LaunchdInstallOptions): string {
   const log = opts.logPath ?? join(homedir(), '.bow-agent', 'sprint-scan.log');
 
   const args = [node];
-  if (opts.tsxLoader) args.push('--import', opts.tsxLoader);
+  if (opts.tsxLoader) {
+    // tsxLoader phải TUYỆT ĐỐI (xem doc option). Nếu caller lỡ truyền bare 'tsx', cố resolve từ
+    // WorkingDirectory (opts.cwd = bow-agent) sang đường dẫn thật để `--import` không phụ thuộc cwd.
+    let loader = opts.tsxLoader;
+    if (!loader.startsWith('/')) {
+      try {
+        const req = createRequire(join(resolve(opts.cwd), 'noop.js'));
+        loader = req.resolve(opts.tsxLoader);
+      } catch {
+        /* resolve fail — giữ nguyên (sẽ lộ lỗi ở log, còn hơn im lặng dùng sai) */
+      }
+    }
+    args.push('--import', loader);
+  }
   args.push(resolve(opts.cliEntry), 'sprint-scan', '--tick');
 
   const argXml = args.map((a) => `    <string>${escapeXml(a)}</string>`).join('\n');

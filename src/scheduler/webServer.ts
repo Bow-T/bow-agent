@@ -5,6 +5,8 @@ import {
   loadSchedule,
   saveSchedule,
   loadRunHistory,
+  loadLiveRun,
+  liveRunActivity,
   isDue,
   schedulePath,
   type SprintSchedule,
@@ -78,6 +80,11 @@ export function startSprintWebServer(): void {
     const history = loadRunHistory();
     const due = sched ? isDue(sched, new Date()) : null;
     const ctx = readConnectionContext();
+    // ĐANG CHẠY? Hợp nhất 2 nguồn: (1) `scanning` in-memory = lượt kích qua CHÍNH web server này;
+    // (2) heartbeat sprint-live.json = lượt TỰ CHẠY qua launchd (process khác — web mù nếu chỉ nhìn
+    // biến in-memory). Nhờ (2), pill "đang quét" sáng cả khi launchd tự kích lúc tới giờ.
+    const act = liveRunActivity();
+    const liveRunning = scanning || act.running;
     res.json({
       schedule: sched,
       schedulePath: schedulePath(),
@@ -85,7 +92,12 @@ export function startSprintWebServer(): void {
       launchdPath: plistPath(),
       due: due?.due ?? false,
       dueReason: due?.reason ?? 'chưa cấu hình lịch',
-      scanning,
+      scanning: liveRunning,
+      // Chi tiết cho dashboard phân biệt nguồn + chống hiểu nhầm khi file kẹt (stale).
+      liveStatus: act.live?.status ?? null,
+      liveTrigger: scanning ? 'web' : act.running ? 'launchd' : null,
+      liveStale: act.stale,
+      liveUpdatedAt: act.updatedAt,
       history,
       projectDefault: config.defaultProjectKey ?? null,
       // CONTEXT KẾT NỐI — hiển thị rõ agent đang trỏ đâu (không đoán, do config chỉ định).
@@ -168,17 +180,29 @@ export function startSprintWebServer(): void {
     try {
       const { installLaunchd } = await import('./launchd.js');
       const { fileURLToPath } = await import('node:url');
+      const { createRequire } = await import('node:module');
       const { resolve, dirname } = await import('node:path');
       const here = dirname(fileURLToPath(import.meta.url));
       const useDist = existsSync(resolve(here, 'index.js')) && here.includes('dist');
-      const cliEntry = useDist ? resolve(here, 'webMain.js') : resolve(here, 'webMain.ts');
-      // launchd gọi CLI sprint-scan --tick, không phải webMain. Trỏ tới cli/index.
-      const cliDir = useDist ? resolve(here, '../cli') : resolve(here, '../cli');
-      const entry = resolve(cliDir, useDist ? 'index.js' : 'index.ts');
+      // launchd gọi CLI sprint-scan --tick. Trỏ tới cli/index (dist .js hoặc src .ts qua tsx).
+      const entry = resolve(here, '../cli', useDist ? 'index.js' : 'index.ts');
+      // WorkingDirectory của launchd = THƯ MỤC bow-agent (here = <bow>/[dist/]scheduler → lùi 2 cấp).
+      // ĐÂY là nơi Node resolve tsx; KHÔNG dùng repo đích (monorepo) vì nó không có node_modules/tsx
+      // → mọi tick crash ERR_MODULE_NOT_FOUND. cwd repo đích do --tick tự đọc từ sprint-schedule.json.
+      const bowRoot = resolve(here, '..', '..');
+      // Dev (src .ts): --import tsx bằng ĐƯỜNG DẪN TUYỆT ĐỐI (không bare 'tsx' — phụ thuộc cwd).
+      let tsxLoader: string | undefined;
+      if (!useDist) {
+        try {
+          tsxLoader = createRequire(resolve(bowRoot, 'noop.js')).resolve('tsx');
+        } catch {
+          tsxLoader = 'tsx'; // fallback (buildPlist còn thử resolve lần nữa theo cwd)
+        }
+      }
       const result = installLaunchd({
         cliEntry: entry,
-        tsxLoader: useDist ? undefined : 'tsx',
-        cwd: loadSchedule()?.cwd || config.defaultCwd,
+        tsxLoader,
+        cwd: bowRoot,
       });
       res.json({ ok: true, ...result });
     } catch (err) {
@@ -230,8 +254,11 @@ export function startSprintWebServer(): void {
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
-    if (scanning) {
-      send('error', { message: 'Đang có một lượt quét chạy. Chờ nó xong.' });
+    // Chặn kích song song. Nhìn CẢ 2 nguồn: biến in-memory (lượt web) VÀ heartbeat sprint-live.json
+    // (lượt tự-chạy launchd — process khác, cùng ghi 1 file + đụng Jira/Git, không được chạy chồng).
+    if (scanning || liveRunActivity().running) {
+      const src = scanning ? '' : ' (agent đang tự chạy theo lịch)';
+      send('error', { message: `Đang có một lượt quét chạy${src}. Chờ nó xong.` });
       res.end();
       return;
     }
@@ -262,6 +289,8 @@ export function startSprintWebServer(): void {
       ticketCount: keys.length || undefined,
     });
     try {
+      // runSprintScan TỰ snapshot log ra ~/.bow-agent/sprint-live.json (dùng chung cho cả lượt
+      // launchd) — ở đây web chỉ việc stream tiếp qua SSE cho client đang mở.
       const summary = await runSprintScan({
         projectKey,
         cwd: sched?.cwd || config.defaultCwd,
@@ -289,6 +318,12 @@ export function startSprintWebServer(): void {
     }
   });
 
+  // REPLAY lượt gần nhất — client reload gọi endpoint này để dựng lại cột log + triage đã mất
+  // khi trang reload. status='running' báo client poll tiếp (agent còn chạy ở server).
+  app.get('/api/scan/live', (_req, res) => {
+    res.json(loadLiveRun());
+  });
+
   app.listen(PORT, HOST, () => {
     const shareHint =
       HOST === '127.0.0.1'
@@ -307,7 +342,7 @@ const DASHBOARD_HTML = `<!doctype html>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#fbf6e9">
 <title>Sprint-scan · Bow</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230a0a0a'/%3E%3Crect x='3' y='3' width='26' height='26' fill='%23ffcf24'/%3E%3Crect x='9' y='9' width='14' height='14' fill='%230a0a0a'/%3E%3Crect x='14' y='14' width='4' height='4' fill='%23ffcf24'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230a0a0a'/%3E%3Ccircle cx='16' cy='16' r='11' fill='none' stroke='%23ffcf24' stroke-width='2'/%3E%3Ccircle cx='16' cy='16' r='6' fill='none' stroke='%23ffcf24' stroke-width='2'/%3E%3Cpath d='M16 16 L16 4 A12 12 0 0 1 27 12 Z' fill='%23ffcf24' opacity='.55'/%3E%3Ccircle cx='16' cy='16' r='2' fill='%23ffcf24'/%3E%3Ccircle cx='23' cy='9' r='2.2' fill='%23fff'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
@@ -334,6 +369,10 @@ const DASHBOARD_HTML = `<!doctype html>
     --danger:#ff5a5a; --hairline:#0a0a0a; --r:0px; --r-lg:0px; --bd:2px;
     --depth:6px 6px 0 0 #0a0a0a; --ok:#1f7a3d; --warn:#c07a00;
     --step-bg:#0a0a0a; --step-ink:#ffcf24;
+    --grid:rgba(10,10,10,0.10); /* lưới ô vuông brutal (nhạt để không rối chữ) */
+    /* Ép OS vẽ popup <select>/form control theo tông SÁNG (brutal light) + highlight brass —
+       nếu không, dropdown dùng accent hệ thống (xanh lá macOS) → lệch tông. */
+    color-scheme:light;
   }
   [data-theme='figma'] {
     --bg:#0c0c0c; --surface:#141414; --surface-2:#1e1e1e; --ink:#ffffff; --ink-2:#d4d4d4;
@@ -341,10 +380,29 @@ const DASHBOARD_HTML = `<!doctype html>
     --danger:#ff4d4d; --hairline:rgba(255,255,255,0.12); --r:2px; --r-lg:8px; --bd:1px;
     --depth:0 8px 30px rgba(0,0,0,0.5); --ok:#3fb950; --warn:#e3b341;
     --step-bg:#e2ff00; --step-ink:#0a0a0a;
+    --grid:rgba(255,255,255,0.05); /* lưới ô vuông figma dark (mờ như canvas) */
+    color-scheme:dark; /* dropdown popup theo tông TỐI khớp figma */
   }
   * { box-sizing:border-box; }
-  body { margin:0; font:14px/1.55 'Space Grotesk',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; background:var(--bg); color:var(--ink); }
+  /* Highlight option/checkbox/radio dùng màu brass thay vì accent hệ thống (xanh lá). */
+  html { accent-color:var(--brass); }
+  html { background:var(--bg); }
+  /* Nền lưới ô vuông (kẻ dọc + ngang 26px) — DÙNG CHUNG công thức với UI chính (.app trong
+     web/styles.css). --grid đổi theo theme nên lưới tự hợp brutal/figma. */
+  body {
+    margin:0; min-height:100vh; color:var(--ink);
+    font:14px/1.55 'Space Grotesk',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    background-color:var(--bg);
+    background-image:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size:26px 26px;
+  }
   header { padding:16px 20px; border-bottom:var(--bd) solid var(--hairline); display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  /* GHIM header lên đỉnh khi cuộn — bật/tắt bằng nút 📌. Nền đặc + phủ lưới để chữ không lẫn nội dung
+     cuộn phía dưới; z-index cao hơn card/toast-nội-trang. Trạng thái nhớ qua localStorage. */
+  header.pinned { position:sticky; top:0; z-index:50; background:var(--bg); box-shadow:var(--depth); }
+  #pin.on { background:var(--brass); color:var(--on-brass); }
   h1 { font-size:16px; margin:0; font-weight:700; letter-spacing:-0.01em; }
   .pill { font-size:11px; font-weight:600; padding:3px 9px; border-radius:var(--r); border:var(--bd) solid var(--hairline); color:var(--muted); background:var(--surface); }
   .pill.on { color:var(--on-brass); background:var(--brass); border-color:var(--hairline); }
@@ -353,10 +411,10 @@ const DASHBOARD_HTML = `<!doctype html>
   main { max-width:1000px; margin:0 auto; padding:20px; display:grid; gap:16px; }
   .card { background:var(--surface); border:var(--bd) solid var(--hairline); border-radius:var(--r-lg); padding:16px; box-shadow:var(--depth); }
   .card h2 { font-size:12px; margin:0 0 12px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; font-weight:700; }
-  .row { display:flex; justify-content:space-between; gap:12px; padding:6px 0; border-bottom:1px solid var(--hairline); opacity:1; }
+  .row { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:baseline; gap:4px 12px; padding:6px 0; border-bottom:1px solid var(--hairline); opacity:1; }
   .row { border-bottom-color:color-mix(in srgb, var(--hairline) 25%, transparent); }
   .row:last-child { border-bottom:none; }
-  .k { color:var(--muted); } .v { font-family:'Space Mono',ui-monospace,monospace; text-align:right; word-break:break-all; color:var(--ink-2); }
+  .k { color:var(--muted); flex:none; } .v { font-family:'Space Mono',ui-monospace,monospace; text-align:right; overflow-wrap:anywhere; min-width:0; color:var(--ink-2); }
   button { font:inherit; font-weight:700; padding:9px 16px; border-radius:var(--r); border:var(--bd) solid var(--hairline); background:var(--brass); color:var(--on-brass); cursor:pointer; box-shadow:var(--depth); transition:transform .1s, box-shadow .1s; }
   button:hover:not(:disabled) { transform:translate(-1px,-1px); }
   button:active:not(:disabled) { transform:translate(2px,2px); box-shadow:none; }
@@ -364,12 +422,22 @@ const DASHBOARD_HTML = `<!doctype html>
   button:disabled { opacity:.5; cursor:not-allowed; box-shadow:none; }
   input { font:inherit; padding:9px 11px; border-radius:var(--r); border:var(--bd) solid var(--hairline); background:var(--surface); color:var(--ink); }
   code { font-family:'Space Mono',monospace; font-size:12px; background:var(--surface-2); padding:1px 5px; border-radius:var(--r); }
-  #log { background:var(--surface-2); border:var(--bd) solid var(--hairline); border-radius:var(--r); padding:12px; font-family:'Space Mono',ui-monospace,monospace; font-size:12px; white-space:pre-wrap; max-height:340px; overflow:auto; }
+  #log { background:var(--surface-2); border:var(--bd) solid var(--hairline); border-radius:var(--r); padding:12px; font-family:'Space Mono',ui-monospace,monospace; font-size:12px; white-space:pre-wrap; overflow-wrap:anywhere; max-height:340px; overflow:auto; }
   #log .t { color:var(--ink); } #log .tool { color:var(--muted); } #log .ok { color:var(--ok); } #log .err { color:var(--danger); }
   .runs .run { padding:10px 0; border-bottom:1px solid color-mix(in srgb, var(--hairline) 25%, transparent); }
   .runs .run:last-child { border-bottom:none; }
   .runs .meta { font-size:12px; color:var(--muted); display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-  .runs .sum { margin-top:6px; font-size:12px; max-height:120px; overflow:auto; white-space:pre-wrap; font-family:'Space Mono',ui-monospace,monospace; color:var(--ink-2); }
+  /* Mỗi lượt = accordion native: mặc định CHỈ 1 dòng tóm tắt; bấm để xổ full. Không tràn, không ô cuộn. */
+  .runs details { margin-top:6px; }
+  .runs summary { list-style:none; cursor:pointer; display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--ink); }
+  .runs summary::-webkit-details-marker { display:none; }
+  .runs summary .caret { color:var(--muted); font-size:10px; transition:transform .15s; flex:none; }
+  .runs details[open] summary .caret { transform:rotate(90deg); }
+  .runs summary .head { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; }
+  .runs .full { margin-top:8px; font-size:12px; white-space:pre-wrap; word-break:break-word; line-height:1.6; font-family:'Space Mono',ui-monospace,monospace; color:var(--ink-2); }
+  .runs .full .md-h { display:block; font-weight:700; color:var(--ink); margin:8px 0 2px; font-family:inherit; }
+  .runs .full strong { color:var(--ink); font-weight:700; }
+  .runs .sum.err { margin-top:6px; font-size:12px; white-space:pre-wrap; word-break:break-word; }
   .empty { color:var(--muted); }
   .tag { font-size:10px; font-weight:700; padding:2px 7px; border-radius:var(--r); border:var(--bd) solid var(--hairline); text-transform:uppercase; letter-spacing:.03em; }
   .tag.sched { color:var(--on-brass); background:var(--brass); } .tag.man { color:var(--ink); background:var(--surface-2); }
@@ -384,7 +452,11 @@ const DASHBOARD_HTML = `<!doctype html>
   .picker { display:grid; gap:10px; }
   .picker-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
   .picker-row .lbl { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.05em; width:64px; flex:none; }
-  select { font:inherit; padding:9px 11px; border-radius:var(--r); border:var(--bd) solid var(--hairline); background:var(--surface); color:var(--ink); }
+  select { font:inherit; padding:9px 11px; border-radius:var(--r); border:var(--bd) solid var(--hairline); background:var(--surface); color:var(--ink); cursor:pointer; }
+  select:focus, input:focus { outline:2px solid var(--brass); outline-offset:1px; }
+  /* KHÔNG ép background/color trên <option>: popup native <select> (Safari/Chromium macOS) bỏ
+     qua chúng và render nền OS lệch tông (nâu-xám). Để color-scheme (light/dark theo theme) lo
+     popup — nó khớp đúng đen/trắng chuẩn OS theo brutal/figma. */
   .issue { display:flex; align-items:flex-start; gap:10px; padding:9px 0; border-bottom:1px solid color-mix(in srgb, var(--hairline) 22%, transparent); }
   .issue:last-child { border-bottom:none; }
   .issue input[type=checkbox] { margin-top:3px; width:16px; height:16px; accent-color:var(--brass); flex:none; }
@@ -426,6 +498,13 @@ const DASHBOARD_HTML = `<!doctype html>
   .card-h .hint { font-size:11px; color:var(--muted); font-weight:500; }
   .card-h .step-badge { font-family:'Space Mono',monospace; font-weight:700; font-size:12px; width:24px; height:24px; flex:none; display:grid; place-items:center; border-radius:var(--r); background:var(--step-bg); color:var(--step-ink); }
 
+  /* ── Nút thu nhỏ/mở rộng card (bấm chevron ở góc header) ── */
+  .collapse-btn { flex:none; width:26px; height:26px; display:grid; place-items:center; padding:0; border:var(--bd) solid var(--hairline); border-radius:var(--r); background:var(--surface); color:var(--muted); cursor:pointer; font-size:13px; line-height:1; transition:transform .15s, color .15s; }
+  .collapse-btn:hover { color:var(--ink); }
+  .collapsible.collapsed .collapse-btn { transform:rotate(-90deg); }
+  .collapsible.collapsed #step1-body { display:none; }
+  .collapsible.collapsed .card-h { margin-bottom:0; }
+
   /* ── Strip "agent trỏ đâu" — 3 chip ngang ── */
   #ctx { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
   .ctx-chip { display:flex; align-items:center; gap:10px; border:var(--bd) solid var(--hairline); border-radius:var(--r); padding:9px 11px; background:var(--surface-2); min-width:0; }
@@ -447,12 +526,15 @@ const DASHBOARD_HTML = `<!doctype html>
   .mode-chip.dry { color:var(--warn); background:var(--surface); } .mode-chip.exec { color:#fff; background:var(--danger); }
 
   /* ── Split log realtime | kết quả triage ── */
-  .split { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  /* minmax(0,1fr): mặc định track grid có min-width:auto (= rộng bằng nội dung), nên JSON
+     dòng dài trong #log sẽ phình cột → cả trang scroll ngang. minmax(0,…) cho track co được. */
+  .split { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:16px; }
+  .split > div { min-width:0; }
   .col-lbl { font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin-bottom:6px; }
   #log { height:320px; max-height:320px; }
   #log .ln { padding:1px 0; }
   .triage-list { display:grid; gap:8px; height:320px; overflow:auto; padding-right:2px; align-content:start; }
-  .tri { border:var(--bd) solid var(--hairline); border-radius:var(--r); padding:10px 12px; background:var(--surface-2); display:grid; gap:5px; border-left-width:5px; }
+  .tri { border:var(--bd) solid var(--hairline); border-radius:var(--r); padding:10px 12px; background:var(--surface-2); display:grid; gap:5px; border-left-width:5px; min-width:0; overflow-wrap:anywhere; }
   .tri.done { border-left-color:var(--ok); } .tri.ask { border-left-color:var(--warn); }
   .tri.skip { border-left-color:var(--muted); } .tri.fix { border-left-color:var(--brass); }
   .tri .top { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
@@ -464,7 +546,11 @@ const DASHBOARD_HTML = `<!doctype html>
   .tri .meta { font-size:11px; color:var(--muted); display:flex; gap:12px; flex-wrap:wrap; }
   .tri .meta b { color:var(--ink-2); font-weight:600; }
 
-  .two-col { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .two-col { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:16px; }
+  .two-col > * { min-width:0; }
+  /* Card lịch full-width: trải các cặp label/value thành nhiều cột để không bị 1 cột dọc hẹp. */
+  .sched-card #sched { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:0 24px; }
+  .sched-card #sched .row { border-bottom:none; padding:8px 0; }
   @media (max-width:820px){ .split, .two-col { grid-template-columns:1fr; } }
   @media (max-width:720px){ .flow { grid-template-columns:1fr 1fr; } }
   @media (max-width:640px){ #ctx { grid-template-columns:1fr; } }
@@ -472,13 +558,14 @@ const DASHBOARD_HTML = `<!doctype html>
 </head>
 <body>
 <header>
-  <h1>📊 Sprint-scan</h1>
+  <h1><svg viewBox="0 0 32 32" width="1.05em" height="1.05em" style="vertical-align:-.15em;margin-right:.35em" aria-hidden="true"><circle cx="16" cy="16" r="11" fill="none" stroke="currentColor" stroke-width="2.2"/><circle cx="16" cy="16" r="6" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M16 16 L16 4 A12 12 0 0 1 27 12 Z" fill="var(--brass)" opacity=".6"/><circle cx="16" cy="16" r="2" fill="currentColor"/><circle cx="23" cy="9" r="2.4" fill="var(--brass)"/></svg>Sprint-scan</h1>
   <span class="pill" id="p-enabled">…</span>
   <span class="pill" id="p-mode">…</span>
   <span class="pill" id="p-due">…</span>
   <span class="pill" id="p-launchd">…</span>
-  <span class="pill live" id="p-live" style="display:none"><span class="dot"></span>đang quét</span>
-  <button id="theme" class="ghost" style="margin-left:auto;padding:5px 11px;font-size:12px" title="Đổi phong cách (đồng bộ với UI chính)">◐ Theme</button>
+  <span class="pill live" id="p-live" style="display:none"><span class="dot"></span><span class="txt">đang quét</span></span>
+  <button id="pin" class="ghost" style="margin-left:auto;padding:5px 11px;font-size:12px" title="Ghim thanh này lên đỉnh khi cuộn" aria-pressed="false">📌 Ghim</button>
+  <button id="theme" class="ghost" style="padding:5px 11px;font-size:12px" title="Đổi phong cách (đồng bộ với UI chính)">◐ Theme</button>
 </header>
 <main>
   <!-- CÔNG CỤ NÀY LÀM GÌ — banner + 4 bước, để người mở lần đầu hiểu ngay -->
@@ -504,25 +591,27 @@ const DASHBOARD_HTML = `<!doctype html>
     <p class="empty" style="margin:10px 0 0; font-size:11px;">Đổi qua: MCP (Jira) trong <code>~/.bow-agent/mcp.json</code> · project qua <code>--project</code>/<code>BOW_PROJECT_KEY</code> · folder qua <code>--cwd</code>/<code>BOW_CWD</code>.</p>
   </section>
 
-  <section class="card">
-    <div class="card-h"><span class="step-badge">1</span><h2>Chọn việc để chạy</h2><span class="hint">bạn quyết — agent chỉ đụng ticket bạn tick</span></div>
-    <div class="picker">
-      <div class="picker-row">
-        <label class="lbl">Project</label>
-        <input id="proj" placeholder="vd: DUOCT" style="width:130px">
-        <button id="load-sprints" class="ghost" style="padding:7px 12px">Lấy sprint</button>
+  <section class="card collapsible" id="step1-card">
+    <div class="card-h"><span class="step-badge">1</span><h2>Chọn việc để chạy</h2><span class="hint">bạn quyết — agent chỉ đụng ticket bạn tick</span><button id="step1-toggle" class="collapse-btn" title="Thu nhỏ / mở rộng" aria-expanded="true">▾</button></div>
+    <div id="step1-body">
+      <div class="picker">
+        <div class="picker-row">
+          <label class="lbl">Project</label>
+          <input id="proj" placeholder="vd: DUOCT" style="width:130px">
+          <button id="load-sprints" class="ghost" style="padding:7px 12px">Lấy sprint</button>
+        </div>
+        <div class="picker-row" id="sprint-row" style="display:none">
+          <label class="lbl">Sprint</label>
+          <select id="sprint-sel" style="min-width:220px"></select>
+          <button id="load-issues" class="ghost" style="padding:7px 12px">Liệt kê ticket</button>
+        </div>
       </div>
-      <div class="picker-row" id="sprint-row" style="display:none">
-        <label class="lbl">Sprint</label>
-        <select id="sprint-sel" style="min-width:220px"></select>
-        <button id="load-issues" class="ghost" style="padding:7px 12px">Liệt kê ticket</button>
+      <div id="issues" style="margin-top:12px"></div>
+      <div id="run-bar" class="run-bar" style="display:none">
+        <button id="scan" class="act" disabled>▶ Chạy trên ticket đã chọn</button>
+        <span id="sel-count" class="sel-count"></span>
+        <span id="run-mode" class="mode-chip dry" style="display:none"></span>
       </div>
-    </div>
-    <div id="issues" style="margin-top:12px"></div>
-    <div id="run-bar" class="run-bar" style="display:none">
-      <button id="scan" class="act" disabled>▶ Chạy trên ticket đã chọn</button>
-      <span id="sel-count" class="sel-count"></span>
-      <span id="run-mode" class="mode-chip dry" style="display:none"></span>
     </div>
   </section>
 
@@ -540,8 +629,7 @@ const DASHBOARD_HTML = `<!doctype html>
     </div>
   </section>
 
-  <section class="two-col">
-    <section class="card">
+  <section class="card sched-card">
       <div class="card-h"><h2>Lịch tự chạy</h2><span class="hint">chế độ tự động</span></div>
       <div id="sched"></div>
       <details id="sched-form-wrap" style="margin-top:12px">
@@ -575,12 +663,11 @@ const DASHBOARD_HTML = `<!doctype html>
         <button id="refresh" class="ghost">↻ Làm mới</button>
       </div>
       <p class="empty" style="margin:10px 0 0; font-size:12px;">Lịch tự chạy quét CẢ sprint active theo giờ. Muốn kiểm soát từng ticket thì dùng khối "Chọn việc" ở trên.</p>
-    </section>
+  </section>
 
-    <section class="card runs">
-      <div class="card-h"><h2>Lịch sử các lượt quét</h2></div>
-      <div id="history"><span class="empty">Đang tải…</span></div>
-    </section>
+  <section class="card runs">
+    <div class="card-h"><h2>Lịch sử các lượt quét</h2></div>
+    <div id="history"><span class="empty">Đang tải…</span></div>
   </section>
 </main>
 <div id="toast-wrap"></div>
@@ -623,8 +710,18 @@ async function refresh() {
   $('p-due').className = 'pill ' + (s.due ? 'due' : '');
   $('p-launchd').textContent = s.launchdInstalled ? 'launchd: đã cài' : 'launchd: chưa cài';
   $('p-launchd').className = 'pill ' + (s.launchdInstalled ? 'on' : 'off');
-  // Pill "đang quét" nhấp nháy — chỉ hiện khi server báo scanning (giải "không thấy đang chạy gì").
-  $('p-live').style.display = s.scanning ? 'inline-flex' : 'none';
+  // Pill "đang quét" nhấp nháy — hiện khi server báo scanning (bao gồm CẢ lượt tự-chạy launchd,
+  // nhận qua heartbeat sprint-live.json). Nhãn nói rõ nguồn để biết agent đang tự chạy hay ta kích.
+  const live = $('p-live');
+  if (s.scanning) {
+    live.style.display = 'inline-flex';
+    const label = s.liveTrigger === 'launchd' ? 'agent tự chạy' : 'đang quét';
+    // Giữ chấm nhấp nháy + đổi phần chữ (không xoá .dot).
+    live.querySelector('.txt') ? (live.querySelector('.txt').textContent = label)
+      : live.insertAdjacentHTML('beforeend', '<span class="txt">'+label+'</span>');
+  } else {
+    live.style.display = 'none';
+  }
 
   if (!sc) {
     $('sched').innerHTML =
@@ -656,9 +753,19 @@ async function refresh() {
     const last = (s.history || []).find(h => (h.triage||[]).length);
     renderTriage(last ? last.triage : []);
   }
-  // KHÔNG động vào nút scan ở đây — trạng thái disable của nó do checkbox ticket + lúc đang chạy
-  // quyết (trong renderIssues/scan.onclick). refresh() 15s/lần không được reset nhầm.
-  if (s.scanning) { $('scan').disabled = true; $('scan').textContent = '⏳ đang chạy…'; }
+  // Nút scan phản ánh "có lượt nào đang chạy" (kể cả lượt launchd, nhờ s.scanning đã hợp nhất
+  // heartbeat). KHÔNG reset khi CHÍNH client này đang lái một SSE/poll (window.__ownRun) — để
+  // attachScanStream/restoreLive tự lo, tránh giẫm chân. Với lượt launchd (không phải của client),
+  // refresh() là thứ duy nhất chạy nên phải tự khoá LÚC chạy + mở lại KHI xong.
+  if (s.scanning) {
+    $('scan').disabled = true;
+    $('scan').textContent = s.liveTrigger === 'launchd' ? '⏳ agent đang tự chạy…' : '⏳ đang chạy…';
+  } else if (!window.__ownRun) {
+    // Không còn lượt nào chạy và client không tự lái → khôi phục nút theo số ticket đã tick.
+    const n = document.querySelectorAll('.isk:checked').length;
+    $('scan').disabled = !n;
+    $('scan').textContent = '▶ Chạy trên ticket đã chọn';
+  }
 }
 
 // Vẽ cột KẾT QUẢ TRIAGE dạng thẻ màu theo verdict (done|fix|ask|skip). Rỗng → placeholder.
@@ -681,6 +788,24 @@ function renderTriage(items) {
 }
 function row(k, v) { return '<div class="row"><span class="k">'+esc(k)+'</span><span class="v">'+esc(v)+'</span></div>'; }
 
+// Markdown NHẸ cho summary agent (escape TRƯỚC để an toàn, rồi mới render **đậm** / ## tiêu đề).
+// Không kéo thư viện ngoài — chỉ vài regex trên chuỗi đã escape.
+function mdLite(s) {
+  // LƯU Ý: hàm này nằm TRONG template literal (backtick) của DASHBOARD_HTML → mọi '\\' phải viết
+  // gấp đôi để còn '\\' thật trong HTML render (không thì regex vỡ, cả script chết → nút không chạy).
+  return esc(s)
+    .replace(/^\\s*#{1,6}\\s+(.+)$/gm, '<span class="md-h">$1</span>') // ## Tiêu đề → dòng đậm
+    .replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>');           // **đậm**
+}
+
+// Lấy DÒNG TÓM TẮT 1 dòng cho summary agent: heading '## ...' đầu tiên, hoặc dòng chữ đầu tiên.
+// Bỏ ký tự markdown (#, *) để dòng tóm tắt sạch. Đây là text hiển thị ở <summary> (đã escape sau).
+function firstLine(s) {
+  // (như mdLite) trong template literal nên '\\n', '\\s', '\\*' đều phải gấp đôi backslash.
+  const line = String(s).split('\\n').map(l => l.trim()).find(l => l && !/^[-=*_\\s]+$/.test(l)) || s;
+  return line.replace(/^#{1,6}\\s*/, '').replace(/\\*\\*/g, '').slice(0, 120);
+}
+
 function renderHistory(hist) {
   if (!hist.length) { $('history').innerHTML = '<span class="empty">Chưa có lượt quét nào.</span>'; return; }
   $('history').innerHTML = hist.map(h => {
@@ -688,7 +813,12 @@ function renderHistory(hist) {
     const mode = h.dryRun ? '<span class="tag dry">dry-run</span>' : '<span class="tag exec">execute</span>';
     const cost = h.costUsd!=null ? ('$'+h.costUsd.toFixed(4)) : '';
     const err = h.error ? '<div class="sum err" style="color:var(--err)">❌ '+esc(h.error)+'</div>' : '';
-    const sum = h.summary ? '<div class="sum">'+esc(h.summary.slice(0,1500))+(h.summary.length>1500?'…':'')+'</div>' : '';
+    // Summary = accordion: <summary> 1 dòng tóm tắt, xổ full markdown đã render khi bấm. Không tràn.
+    const sum = h.summary
+      ? '<details><summary><span class="caret">▶</span>'+
+        '<span class="head">'+esc(firstLine(h.summary))+'</span></summary>'+
+        '<div class="full">'+mdLite(h.summary)+'</div></details>'
+      : '';
     return '<div class="run"><div class="meta">'+trig+mode+'<span>'+esc(h.startedAt)+'</span><span>'+cost+'</span></div>'+err+sum+'</div>';
   }).join('');
 }
@@ -760,34 +890,59 @@ function updateRunMode() {
   el.style.display = 'inline-block';
 }
 
+// ── PERSIST log + triage phía client (sống qua reload TỨC THÌ, kể cả khi server chưa flush) ──
+// Server cũng snapshot ra đĩa (/api/scan/live) — client localStorage là lớp nhanh + offline-first.
+const LOG_KEY = 'bow-sprint-log', TRIAGE_KEY = 'bow-sprint-triage';
+let logLines = []; // [{cls,text}] — nguồn sự thật để vẽ + lưu localStorage
+function saveLog() { try { localStorage.setItem(LOG_KEY, JSON.stringify(logLines.slice(-400))); } catch {} }
+function saveTriageLS(items) { try { localStorage.setItem(TRIAGE_KEY, JSON.stringify(items||[])); } catch {} }
+// Vẽ 1 dòng vào #log VÀ lưu (persist=true khi đang chạy live; false khi chỉ render lại từ store).
+function logLine(cls, text, persist) {
+  const log = $('log');
+  const d = document.createElement('div'); d.className = 'ln ' + cls; d.textContent = text;
+  log.appendChild(d); log.scrollTop = log.scrollHeight;
+  if (persist !== false) { logLines.push({ cls, text }); saveLog(); }
+}
+// Dựng lại cột log từ một mảng dòng (dùng khi reload — từ server live hoặc localStorage).
+function renderLogLines(lines) {
+  const log = $('log'); log.innerHTML = '';
+  logLines = (lines || []).slice();
+  logLines.forEach(l => logLine(l.cls, l.text, false));
+  if (!logLines.length) log.innerHTML = '<span class="empty">Chọn project → sprint → tick ticket → "Chạy trên ticket đã chọn".</span>';
+}
+
+// Gắn listener SSE cho một EventSource của /api/scan (tách ra để tái dùng khi nối lại lượt đang chạy).
+function attachScanStream(es) {
+  window.__ownRun = true; // client này đang tự lái lượt → refresh() đừng đụng nút
+  $('scan').disabled = true; $('scan').textContent = '⏳ đang chạy…';
+  $('p-live').style.display = 'inline-flex';
+  const resetBtn = () => { window.__ownRun = false; $('scan').disabled=false; $('scan').textContent='▶ Chạy trên ticket đã chọn'; $('p-live').style.display='none'; };
+  es.addEventListener('start', e => { const d=JSON.parse(e.data); logLine('t', '▶ Chạy '+d.projectKey+(d.sprint?' · '+d.sprint:'')+' · '+(d.ticketCount||0)+' ticket · '+(d.dryRun?'DRY-RUN':'EXECUTE')); });
+  es.addEventListener('text', e => logLine('t', '🤖 '+JSON.parse(e.data).text));
+  es.addEventListener('tool', e => logLine('tool', '🔧 '+JSON.parse(e.data).describe));
+  es.addEventListener('result', e => { const d=JSON.parse(e.data); logLine('ok', '✅ Xong · '+d.turns+' lượt · $'+d.costUsd.toFixed(4)); });
+  es.addEventListener('agent-error', e => logLine('err', '⚠️ '+JSON.parse(e.data).subtype));
+  es.addEventListener('done', e => {
+    logLine('ok', '✔ Hoàn tất.');
+    try { const d=JSON.parse(e.data); renderTriage(d.triage||[]); saveTriageLS(d.triage||[]);
+      if (!(d.triage||[]).length) logLine('tool', 'ℹ️ Không tách được kết quả có cấu trúc — xem tổng kết ở "Lịch sử".'); } catch {}
+    es.close(); resetBtn(); refresh();
+  });
+  es.addEventListener('error', e => { try { logLine('err','❌ '+JSON.parse(e.data).message);} catch{} es.close(); resetBtn(); refresh(); });
+  es.onerror = () => { es.close(); resetBtn(); refresh(); };
+}
+
 // Pha 2: chạy agent CHỈ trên ticket đã tick.
 $('scan').onclick = () => {
   const keys = [...document.querySelectorAll('.isk:checked')].map(c=>c.value);
   if (!keys.length) { toast('Tick chọn ít nhất 1 ticket.', 'warn'); return; }
   if (!curSprint) { toast('Chọn sprint + liệt kê ticket trước.', 'warn'); return; }
   const proj = $('proj').value.trim();
-  const log = $('log'); log.innerHTML = '';
-  // Reset cột triage + đánh dấu 'live' để refresh() không đè bằng lượt cũ trong lúc đang chạy.
-  $('triage').dataset.live = '1'; renderTriage([]);
-  $('p-live').style.display = 'inline-flex';
-  const line = (cls, txt) => { const d=document.createElement('div'); d.className='ln '+cls; d.textContent=txt; log.appendChild(d); log.scrollTop=log.scrollHeight; };
+  // Bắt đầu lượt mới → xoá log + triage cũ (cả DOM lẫn store) để không lẫn với lượt trước.
+  logLines = []; saveLog(); $('log').innerHTML = '';
+  $('triage').dataset.live = '1'; renderTriage([]); saveTriageLS([]);
   const q = new URLSearchParams({ project:proj, sprint:String(curSprint.id), sprintName:curSprint.name, keys:keys.join(',') });
-  const es = new EventSource('/api/scan?' + q.toString());
-  $('scan').disabled = true; $('scan').textContent = '⏳ đang chạy…';
-  const resetBtn = () => { $('scan').disabled=false; $('scan').textContent='▶ Chạy trên ticket đã chọn'; $('p-live').style.display='none'; };
-  es.addEventListener('start', e => { const d=JSON.parse(e.data); line('t', '▶ Chạy '+d.projectKey+(d.sprint?' · '+d.sprint:'')+' · '+(d.ticketCount||0)+' ticket · '+(d.dryRun?'DRY-RUN':'EXECUTE')); });
-  es.addEventListener('text', e => line('t', '🤖 '+JSON.parse(e.data).text));
-  es.addEventListener('tool', e => line('tool', '🔧 '+JSON.parse(e.data).describe));
-  es.addEventListener('result', e => { const d=JSON.parse(e.data); line('ok', '✅ Xong · '+d.turns+' lượt · $'+d.costUsd.toFixed(4)); });
-  es.addEventListener('agent-error', e => line('err', '⚠️ '+JSON.parse(e.data).subtype));
-  es.addEventListener('done', e => {
-    line('ok', '✔ Hoàn tất.');
-    try { const d=JSON.parse(e.data); renderTriage(d.triage||[]);
-      if (!(d.triage||[]).length) line('tool', 'ℹ️ Không tách được kết quả có cấu trúc — xem tổng kết ở "Lịch sử".'); } catch {}
-    es.close(); resetBtn(); refresh();
-  });
-  es.addEventListener('error', e => { try { line('err','❌ '+JSON.parse(e.data).message);} catch{} es.close(); resetBtn(); refresh(); });
-  es.onerror = () => { es.close(); resetBtn(); refresh(); };
+  attachScanStream(new EventSource('/api/scan?' + q.toString()));
 };
 $('toggle').onclick = async () => {
   const r = await fetch('/api/schedule/toggle', {method:'POST'});
@@ -824,7 +979,81 @@ $('theme').onclick = () => {
   document.documentElement.setAttribute('data-theme', next);
   try { localStorage.setItem('bow-theme', next); } catch {}
 };
+// Ghim/bỏ ghim header lên đỉnh khi cuộn — nhớ trạng thái qua localStorage (mặc định TẮT).
+(() => {
+  const header = document.querySelector('header'), btn = $('pin');
+  const apply = (on) => {
+    header.classList.toggle('pinned', on);
+    btn.classList.toggle('on', on);
+    btn.setAttribute('aria-pressed', String(on));
+    btn.textContent = on ? '📌 Đã ghim' : '📌 Ghim';
+  };
+  let pinned = false; try { pinned = localStorage.getItem('bow-sprint-header-pinned') === '1'; } catch {}
+  apply(pinned);
+  btn.onclick = () => { pinned = !pinned; apply(pinned); try { localStorage.setItem('bow-sprint-header-pinned', pinned ? '1' : '0'); } catch {} };
+})();
+// Thu nhỏ/mở rộng khối "Chọn việc" — nhớ trạng thái qua localStorage để giữ sau khi refresh.
+(() => {
+  const card = $('step1-card'), btn = $('step1-toggle');
+  const apply = (col) => { card.classList.toggle('collapsed', col); btn.setAttribute('aria-expanded', String(!col)); };
+  let collapsed = false; try { collapsed = localStorage.getItem('bow-sprint-step1-collapsed') === '1'; } catch {}
+  apply(collapsed);
+  btn.onclick = () => { collapsed = !collapsed; apply(collapsed); try { localStorage.setItem('bow-sprint-step1-collapsed', collapsed ? '1' : '0'); } catch {} };
+})();
+// ── KHÔI PHỤC khi mở/reload trang: dựng lại cột log + triage của lượt gần nhất ──
+// Ưu tiên snapshot SERVER (/api/scan/live) vì nó đủ + biết lượt còn đang chạy hay đã xong.
+// Không có (server chưa từng chạy lượt nào phiên này) → fallback localStorage của chính máy.
+let livePoll = null;
+async function restoreLive() {
+  let live = null;
+  try { const r = await fetch('/api/scan/live'); live = await r.json(); } catch {}
+
+  if (!live) {
+    // Fallback: dựng lại từ localStorage (log + triage lần chạy gần nhất trên máy này).
+    try {
+      const ls = JSON.parse(localStorage.getItem(LOG_KEY) || '[]');
+      if (ls.length) { renderLogLines(ls); $('triage').dataset.live = '1'; }
+      const t = JSON.parse(localStorage.getItem(TRIAGE_KEY) || '[]');
+      if (t.length) renderTriage(t);
+    } catch {}
+    return;
+  }
+
+  // Có snapshot server → nó là nguồn sự thật, đồng bộ luôn xuống localStorage.
+  renderLogLines(live.log || []);
+  saveLog();
+  $('triage').dataset.live = '1'; // chặn refresh() đè triage vừa khôi phục
+  renderTriage(live.triage || []); saveTriageLS(live.triage || []);
+
+  if (live.status === 'running') {
+    // Lượt CÒN đang chạy ở server (lượt web CHƯA xong HOẶC lượt tự-chạy launchd). KHÔNG mở SSE mới
+    // (server chặn scan song song) — poll snapshot mỗi 2s, chỉ vẽ các dòng MỚI so với đã có, tới khi
+    // status đổi sang done/error. __ownRun=true để refresh() 15s không giẫm nút trong lúc poll.
+    window.__ownRun = true;
+    $('scan').disabled = true; $('scan').textContent = '⏳ đang chạy…';
+    $('p-live').style.display = 'inline-flex';
+    let seen = (live.log || []).length;
+    livePoll = setInterval(async () => {
+      let cur = null;
+      try { const r = await fetch('/api/scan/live'); cur = await r.json(); } catch { return; }
+      if (!cur) return;
+      const lines = cur.log || [];
+      for (let i = seen; i < lines.length; i++) logLine(lines[i].cls, lines[i].text);
+      seen = lines.length;
+      if (cur.status !== 'running') {
+        clearInterval(livePoll); livePoll = null;
+        window.__ownRun = false;
+        renderTriage(cur.triage || []); saveTriageLS(cur.triage || []);
+        $('scan').disabled = false; $('scan').textContent = '▶ Chạy trên ticket đã chọn';
+        $('p-live').style.display = 'none';
+        refresh();
+      }
+    }, 2000);
+  }
+}
+
 refresh();
+restoreLive();
 setInterval(refresh, 15000);
 </script>
 </body>

@@ -19,3 +19,4 @@
 - [3 theme nền web (light/dark/blueprint)](bow-web-theme-blueprint.md) — theme (data-theme) tách khỏi 7 accent (data-accent); thêm theme phải sửa styles.css + THEME_CYCLE trong App.tsx + isLight trong NeuralBrain
 - [Đội agent (multi-agent) trên web — chỉ admin](bow-web-subagents-admin.md) — toggle useSubagents ở web nối cờ xuống runAgent (reviewer/verifier/impact-scout); chỉ admin (localhost), gate 2 lớp; runner có sẵn, chỉ nối web
 - [Badge trạng thái skill 3 mức](bow-skill-badge-states.md) — cạnh dropdown Stack: ✅ synced / ⚠️ stale (ref cũ hơn registry) / ⬇️ missing; STAMP 2 dòng ghi ref đã trải, so registry local (KHÔNG so remote)
+- [launchd sprint-scan — cwd/tsx](sprint-scan-launchd-cwd.md) — WorkingDirectory phải là bow-agent (có tsx), KHÔNG repo đích; --import tsx phải đường dẫn tuyệt đối; sai → mọi tick crash ERR_MODULE_NOT_FOUND, "tới giờ không chạy"
