@@ -136,6 +136,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
     effort: tabKey('bow-effort', tabId),
     profile: tabKey('bow-profile', tabId),
     claudeProfile: tabKey('bow-claudeProfile', tabId),
+    autoApprove: tabKey('bow-auto-approve', tabId),
   };
 
   // ── State/refs PER-TAB ──
@@ -218,6 +219,30 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
   });
   const [pending, setPending] = useState<PendingApproval[]>([]);
   const [questions, setQuestions] = useState<PendingQuestion[]>([]);
+  // Tự động duyệt (per-tab): khi BẬT, mọi yêu cầu duyệt THƯỜNG (ghi file, MCP write, ghi
+  // ngoài repo…) được tự cho phép ngay, KHÔNG hiện popup. Thao tác RỦI RO (ev.risky:
+  // rm -rf/git push/MCP ghi DB…) VẪN dừng hỏi — phanh cứng do runner đánh dấu. Ref để
+  // handler SSE (closure cũ) đọc được giá trị mới nhất mà không phải re-subscribe.
+  const [autoApproveAll, setAutoApproveAll] = useState(
+    () => localStorage.getItem(K.autoApprove) === '1',
+  );
+  const autoApproveRef = useRef(autoApproveAll);
+  useEffect(() => {
+    autoApproveRef.current = autoApproveAll;
+    localStorage.setItem(K.autoApprove, autoApproveAll ? '1' : '0');
+  }, [K.autoApprove, autoApproveAll]);
+  // Bật toggle KHI đang có yêu cầu duyệt thường treo → tự duyệt luôn (rủi ro giữ lại).
+  // decide() được hoisted (function declaration) nên gọi được ở đây.
+  useEffect(() => {
+    if (!autoApproveAll) return;
+    const normals = pending.filter((p) => !p.risky);
+    if (normals.length === 0) return;
+    normals.forEach((p) => {
+      addItem('system', `⚡ Tự duyệt: ${p.toolName}`);
+      void decide(p, true);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoApproveAll, pending]);
   const [running, setRunning] = useState(false);
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
   const [lastRunMs, setLastRunMs] = useState<number | null>(null);
@@ -838,13 +863,23 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
             ),
           );
           break;
-        case 'result':
+        case 'result': {
           addItem(
             'result',
             `Xong · ${fmtDuration(ev.durationMs)} · ${ev.turns} lượt · ${ev.outputTokens} tokens · $${ev.costUsd.toFixed(4)}`,
           );
+          // Breakdown token để CHẨN ĐOÁN token đi đâu: cache-read = nền cố định (MCP schema +
+          // skill descriptions + system prompt) đọc lại mỗi lượt (~0.1× giá); fresh = input
+          // tính giá đầy đủ. cache-read cao + fresh thấp = cache tốt; fresh cao mỗi lượt = có
+          // silent invalidator phá cache ở đầu prefix.
+          const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
+          addItem(
+            'result',
+            `↳ token: cache-read ${k(ev.cacheRead)} · fresh ${k(ev.inputFresh)} · cache-write ${k(ev.cacheCreation)} · output ${k(ev.outputTokens)}`,
+          );
           setAccumulatedCost((prev) => prev + ev.costUsd);
           break;
+        }
         case 'usage':
           setUsage((prev) => {
             const hasRL = ev.usage.rateLimits.length > 0;
@@ -889,24 +924,28 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
             addItem('error', `Đã tự chạy tiếp tối đa số lần cho phép mà vẫn hết hạn mức. Hãy tiếp tục thủ công khi hạn mức mở lại.`);
           }
           break;
-        case 'approval-request':
-          setPending((prev) =>
-            prev.some((p) => p.id === ev.id)
-              ? prev
-              : [
-                  ...prev,
-                  {
-                    id: ev.id,
-                    toolName: ev.toolName,
-                    input: ev.input,
-                    title: ev.title,
-                    description: ev.description,
-                    blockedPath: ev.blockedPath,
-                    decisionReason: ev.decisionReason,
-                  },
-                ],
-          );
+        case 'approval-request': {
+          const approval: PendingApproval = {
+            id: ev.id,
+            toolName: ev.toolName,
+            input: ev.input,
+            title: ev.title,
+            description: ev.description,
+            blockedPath: ev.blockedPath,
+            decisionReason: ev.decisionReason,
+            risky: ev.risky,
+          };
+          // Tự động duyệt: BẬT + thao tác KHÔNG rủi ro → tự cho phép ngay, khỏi hiện popup.
+          // Rủi ro (ev.risky) VẪN rơi vào hàng chờ để người bấm — phanh cứng. Dùng ref để
+          // đọc trạng thái toggle mới nhất (handler này là closure cũ, không re-subscribe).
+          if (autoApproveRef.current && !ev.risky) {
+            addItem('system', `⚡ Tự duyệt: ${ev.toolName}`);
+            void decide(approval, true);
+            break;
+          }
+          setPending((prev) => (prev.some((p) => p.id === ev.id) ? prev : [...prev, approval]));
           break;
+        }
         case 'question-request':
           setQuestions((prev) =>
             prev.some((q) => q.id === ev.id)
@@ -950,10 +989,12 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
   async function decide(approval: PendingApproval, approved: boolean) {
     setPending((prev) => prev.filter((p) => p.id !== approval.id));
     addItem('system', `${approved ? '✅ Cho phép' : '⛔ Từ chối'}: ${approval.toolName}`);
+    // Dùng sessionIdRef (không phải state) để auto-duyệt gọi từ closure SSE cũ vẫn gửi
+    // đúng sessionId hiện tại — tránh gửi null khi handler bắt closure lúc state chưa cập nhật.
     await apiFetch('/api/approve', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId, id: approval.id, approved }),
+      body: JSON.stringify({ sessionId: sessionIdRef.current ?? sessionId, id: approval.id, approved }),
     }).catch(() => {});
   }
 
@@ -1856,6 +1897,22 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
                 <button className="btn allow" onClick={() => decide(p, true)}>
                   Cho phép
                 </button>
+                {/* Chỉ thao tác THƯỜNG mới cho "Luôn cho phép" (bật auto-duyệt). Lệnh rủi ro
+                    (p.risky) không có nút này — buộc bấm tay từng lần, giữ phanh cứng. */}
+                {!p.risky && (
+                  <button
+                    className="btn allow-always"
+                    title={language === 'vi'
+                      ? 'Cho phép và BẬT tự duyệt: các thao tác thường sau sẽ không hỏi nữa (lệnh rủi ro vẫn hỏi).'
+                      : 'Allow and enable auto-approve for subsequent normal operations (risky commands still ask).'}
+                    onClick={() => {
+                      setAutoApproveAll(true);
+                      decide(p, true);
+                    }}
+                  >
+                    {language === 'vi' ? 'Luôn cho phép' : 'Always allow'}
+                  </button>
+                )}
                 <button className="btn deny" onClick={() => decide(p, false)}>
                   Từ chối
                 </button>
@@ -1935,6 +1992,25 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
                   <strong>{detected.profile}</strong>
                   {detected.profileChars ? ` ~${Math.round(detected.profileChars / 1000)}K` : ''}
                 </span>
+              )}
+
+              {/* Tự động duyệt: chỉ ở mode thực thi (plan không có duyệt) và không phải chia
+                  sẻ read-only. BẬT = mọi duyệt THƯỜNG tự cho phép; lệnh rủi ro VẪN hỏi. */}
+              {!readonlyShare && mode !== 'plan' && (
+                <button
+                  type="button"
+                  className={`cfg-chip auto-approve-chip${autoApproveAll ? ' on' : ''}`}
+                  onClick={() => setAutoApproveAll((v) => !v)}
+                  title={
+                    language === 'vi'
+                      ? 'Tự động duyệt mọi thao tác THƯỜNG (ghi file, MCP write, ghi ngoài repo). Lệnh RỦI RO (rm -rf, git push, MCP ghi DB) VẪN dừng hỏi.'
+                      : 'Auto-approve all NORMAL operations (file writes, MCP writes, out-of-repo writes). RISKY commands (rm -rf, git push, DB writes) still ask.'
+                  }
+                >
+                  {autoApproveAll
+                    ? (language === 'vi' ? '⚡ Tự duyệt: BẬT' : '⚡ Auto-approve: ON')
+                    : (language === 'vi' ? '⚡ Tự duyệt: TẮT' : '⚡ Auto-approve: OFF')}
+                </button>
               )}
             </div>
           );

@@ -33,7 +33,17 @@ export type WebEvent =
   | { type: 'text'; text: string }
   | { type: 'tool'; id?: string; name: string; describe: string; summary?: string }
   | { type: 'tool-result'; toolId: string; text: string; isError: boolean }
-  | { type: 'result'; text: string; turns: number; outputTokens: number; costUsd: number; durationMs: number }
+  | {
+      type: 'result';
+      text: string;
+      turns: number;
+      outputTokens: number;
+      inputFresh: number;
+      cacheRead: number;
+      cacheCreation: number;
+      costUsd: number;
+      durationMs: number;
+    }
   | { type: 'usage'; usage: UsageSnapshot }
   | { type: 'error'; subtype: string; isSessionLimit?: boolean; resetsAt?: string | null }
   | {
@@ -54,6 +64,9 @@ export type WebEvent =
       description?: string;
       blockedPath?: string;
       decisionReason?: string;
+      /** True nếu thao tác RỦI RO (rm -rf/push/MCP ghi DB…) — toggle Auto-approve KHÔNG
+       *  tự duyệt nhóm này, vẫn hiện popup hỏi (phanh cứng). */
+      risky?: boolean;
     }
   | { type: 'question-request'; id: string; questions: Question[] }
   | { type: 'conversation'; conversationId: string }
@@ -92,6 +105,8 @@ export interface PendingApproval {
   description?: string;
   blockedPath?: string;
   decisionReason?: string;
+  /** True nếu thao tác RỦI RO — toggle Auto-approve bỏ qua (vẫn hỏi người). */
+  risky?: boolean;
 }
 
 /** Câu hỏi (AskUserQuestion) đang chờ người dùng chọn. */

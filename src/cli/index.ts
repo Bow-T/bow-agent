@@ -212,6 +212,22 @@ function fmtDuration(ms: number): string {
   return `${s}s`;
 }
 
+/**
+ * Dòng breakdown token cuối phiên — để CHẨN ĐOÁN token đi đâu. `cacheRead` là nền cố định
+ * (MCP tool schema + skill descriptions + system prompt) đọc lại mỗi lượt; `fresh` là input
+ * tính giá đầy đủ; `creation` là phần vừa ghi cache; `output` là token model sinh ra. Tỷ lệ
+ * cacheRead cao mà fresh thấp = cache đang hoạt động tốt (nền đắt nhưng chỉ tính ~0.1× giá).
+ */
+function fmtTokenBreakdown(ev: {
+  inputFresh: number;
+  cacheRead: number;
+  cacheCreation: number;
+  outputTokens: number;
+}): string {
+  const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
+  return `   ↳ token: cache-read ${k(ev.cacheRead)} · fresh ${k(ev.inputFresh)} · cache-write ${k(ev.cacheCreation)} · output ${k(ev.outputTokens)}\n`;
+}
+
 function fail(msg: string): never {
   process.stderr.write(`Lỗi: ${msg}\n\n${USAGE}\n`);
   process.exit(1);
@@ -302,6 +318,7 @@ async function runSprintScanCommand(args: ParsedArgs): Promise<void> {
         process.stdout.write(
           `✅ Xong sau ${fmtDuration(ev.durationMs)} · ${ev.turns} lượt · ${ev.outputTokens} output tokens · $${ev.costUsd.toFixed(4)}\n`,
         );
+        process.stdout.write(fmtTokenBreakdown(ev));
         break;
       case 'error':
         process.stdout.write(`⚠️  Kết thúc bất thường: ${ev.subtype}\n`);
@@ -574,6 +591,7 @@ async function main(): Promise<void> {
           process.stdout.write(
             `✅ Xong sau ${fmtDuration(ev.durationMs)} · ${ev.turns} lượt · ${ev.outputTokens} output tokens · $${ev.costUsd.toFixed(4)}\n`,
           );
+          process.stdout.write(fmtTokenBreakdown(ev));
           break;
         case 'error':
           process.stdout.write(`⚠️  Kết thúc bất thường: ${ev.subtype}\n`);

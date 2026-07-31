@@ -467,7 +467,7 @@ function runAgentSession(session: ReturnType<typeof createSession>, params: RunP
   let hitSessionLimit = false;
 
   const approvalHandler = params.routeToAdmin
-    ? (toolName: string, input: Record<string, unknown>, meta?: { title?: string; description?: string; blockedPath?: string; decisionReason?: string }) => {
+    ? (toolName: string, input: Record<string, unknown>, meta?: { title?: string; description?: string; blockedPath?: string; decisionReason?: string; risky?: boolean }) => {
         logAudit(`IP: ${params.cleanIp} - COLLAB xin ADMIN duyệt: session=${session.id}, tool=${toolName}`, params.cleanIp, params.clientName);
         return adminBus.requestApproval({
           sessionId: session.id,
@@ -479,7 +479,7 @@ function runAgentSession(session: ReturnType<typeof createSession>, params: RunP
           decisionReason: meta?.decisionReason,
         });
       }
-    : (toolName: string, input: Record<string, unknown>, meta?: { title?: string; description?: string; blockedPath?: string; decisionReason?: string }) =>
+    : (toolName: string, input: Record<string, unknown>, meta?: { title?: string; description?: string; blockedPath?: string; decisionReason?: string; risky?: boolean }) =>
         session.requestApproval(toolName, input, meta);
 
   runAgent({

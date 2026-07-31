@@ -41,7 +41,20 @@ export type AgentEvent =
   // Kết quả của một tool (khớp qua toolId) — hiển thị "→ exit 0 / 4 matches / lỗi...".
   | { type: 'tool-result'; toolId: string; text: string; isError: boolean }
   // `durationMs` = tổng thời gian phiên do SDK đo (duration_ms) — bao gồm cả lúc chờ duyệt.
-  | { type: 'result'; text: string; turns: number; outputTokens: number; costUsd: number; durationMs: number }
+  // Breakdown token (để CHẨN ĐOÁN token đi đâu): `inputFresh` = input tính giá đầy đủ lượt này,
+  // `cacheRead` = phần đọc lại từ cache (~0.1× giá — nền cố định MCP+skill+system prompt),
+  // `cacheCreation` = phần vừa ghi vào cache lượt này. Tổng input ≈ fresh+read+creation.
+  | {
+      type: 'result';
+      text: string;
+      turns: number;
+      outputTokens: number;
+      inputFresh: number;
+      cacheRead: number;
+      cacheCreation: number;
+      costUsd: number;
+      durationMs: number;
+    }
   // Snapshot hạn mức tài khoản + độ dùng context window của phiên hiện tại. Phát ra
   // sau mỗi lượt `result` (đọc qua control request của SDK — xem readUsageSnapshot).
   | { type: 'usage'; usage: UsageSnapshot }
@@ -82,6 +95,14 @@ export interface ApprovalMeta {
   description?: string;
   blockedPath?: string;
   decisionReason?: string;
+  /**
+   * True nếu thao tác là RỦI RO/không-thể-hoàn-tác (rm -rf, git push, chmod, sudo, MCP
+   * ghi DB, sửa-file-tại-chỗ…). Đây là "phanh cứng": UI có toggle Auto-approve tự duyệt
+   * mọi thao tác THƯỜNG, nhưng khi risky=true VẪN dừng hỏi người dùng. Chỉ runner biết
+   * chắc lệnh nào risky (đã match RISKY_COMMANDS), nên cờ này do runner đặt — client
+   * KHÔNG tự đoán từ chuỗi decisionReason.
+   */
+  risky?: boolean;
 }
 
 /** Yêu cầu duyệt một thao tác GHI. Trả true = cho phép, false = từ chối. */
@@ -339,6 +360,7 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   // Xem opts.devopsMode ở RunOptions + khối `if (isDevOpsMode)` trong canUseTool.
   const isDevOpsMode = opts.devopsMode === true;
 
+
   // Các tool ĐỌC được auto-duyệt. KHÔNG đưa chúng (và AskUserQuestion) vào
   // allowedTools: entry "trần" trong allowedTools auto-approve TRƯỚC khi tới
   // canUseTool, khiến SDK cảnh báo CLAUDE_SDK_CAN_USE_TOOL_SHADOWED (callback bị
@@ -456,6 +478,14 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     /^fvm flutter test(\s+[\w./@=-]+)*$/,
     /^flutter analyze(\s+[\w./@=-]+)*$/,
     /^flutter test(\s+[\w./@=-]+)*$/,
+    // iOS Simulator (skill ios-sim): build/nạp app lên máy ảo để agent tự kiểm chứng UI.
+    // CHỈ whitelist subcommand KHÔNG phá hoại. `erase`/`delete`/`shutdown` KHÔNG có ở đây —
+    // chúng rơi vào cổng duyệt như thường. `fvm flutter run` chạy nền lâu nhưng vô hại (build).
+    /^(fvm )?flutter run(\s+[\w./@=:-]+)*$/,                 // build + chạy app lên sim/thiết bị
+    /^(fvm )?flutter devices$/,                              // liệt kê thiết bị/sim khả dụng
+    /^xcrun simctl list(\s+[\w./@=-]+)*$/,                   // liệt kê simulator + trạng thái
+    /^xcrun simctl boot(\s+[\w./@=-]+)*$/,                   // khởi động một simulator (không xoá gì)
+    /^xcrun simctl io\s+[\w-]+\s+screenshot(\s+[\w./@=-]+)*$/, // chụp màn hình sim để agent "nhìn"
     /^bun test(\s+[\w./@=-]+)*$/,
     /^npm test(\s+[\w./@=-]+)*$/,
     /^npm run test(\s+[\w./@=-]+)*$/,
@@ -994,6 +1024,7 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
                   const approved = await opts.onApproval(toolName, input, {
                     decisionReason:
                       'DevOps Mode: lệnh sửa file tại chỗ/áp patch (sed -i, patch, git apply…) có thể ghi vào source — cần xác nhận không đụng code ứng dụng.',
+                    risky: true,
                   });
                   return approved
                     ? { behavior: 'allow' as const, updatedInput: input }
@@ -1016,6 +1047,7 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
               ) {
                 const approved = await opts.onApproval(toolName, input, {
                   decisionReason: `DevOps Mode: thao tác MCP "${toolName}" có thể đổi DB/hạ tầng — cần xác nhận.`,
+                  risky: true,
                 });
                 return approved
                   ? { behavior: 'allow' as const, updatedInput: input }
@@ -1057,12 +1089,15 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
               description?: string;
               blockedPath?: string;
               decisionReason?: string;
+              risky?: boolean;
             }) => {
               const approved = await opts.onApproval!(toolName, input, {
                 title: meta?.title ?? sdkOpts?.title,
                 description: meta?.description ?? sdkOpts?.description,
                 blockedPath: meta?.blockedPath ?? sdkOpts?.blockedPath,
                 decisionReason: meta?.decisionReason ?? sdkOpts?.decisionReason,
+                // Phanh cứng: đánh dấu thao tác rủi ro để UI KHÔNG auto-duyệt (vẫn hỏi người).
+                risky: meta?.risky,
               });
               return approved
                 ? allow
@@ -1083,7 +1118,7 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
             if (toolName === 'Bash' && typeof input.command === 'string') {
               const cmd = input.command.trim();
               if (isRiskyCommand(cmd)) {
-                return gate({ decisionReason: 'Lệnh có thể gây hại/không thể hoàn tác — cần bạn xác nhận.' });
+                return gate({ decisionReason: 'Lệnh có thể gây hại/không thể hoàn tác — cần bạn xác nhận.', risky: true });
               }
               // Fast-path 'safe' CHỈ cho lệnh đơn (không toán tử nối) — chốt chặn M1.
               if (!hasCommandChaining(cmd) && SAFE_COMMANDS.some((re) => re.test(cmd))) return allow;
@@ -1114,8 +1149,16 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
             // Mọi tool ghi/side-effect còn lại (MCP write như execute_sql/apply_migration,
             // jira_create…). M5: ở chế độ siết-duyệt LUÔN hỏi — trước đây 'auto' tự duyệt
             // khiến CTV Collab gọi được DROP TABLE trên DB thật mà admin không thấy.
+            // MCP ghi DB/hạ tầng (mcp__*, không phải read tường minh) là KHÔNG-thể-hoàn-tác
+            // → đánh dấu risky: toggle Auto-approve VẪN dừng hỏi (không tự chạy DROP TABLE).
             if (opts.requireApprovalForWrites) {
-              return gate({ decisionReason: `Thao tác "${toolName}" có side-effect — cần được duyệt.` });
+              const isMcpWrite =
+                toolName.startsWith('mcp__') &&
+                !/(?:^|__)(?:list|get|search|describe|read|show|fetch)/i.test(toolName);
+              return gate({
+                decisionReason: `Thao tác "${toolName}" có side-effect — cần được duyệt.`,
+                risky: isMcpWrite,
+              });
             }
             return mode === 'auto' ? allow : gate();
           },
@@ -1275,11 +1318,24 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
         const success = message.subtype === 'success';
         if (success) {
           finalText = message.result;
+          // Đọc usage 1 lần, đủ 4 thành phần token — dùng chung cho event `result`
+          // (breakdown để CHẨN ĐOÁN) và cảnh báo cache bên dưới.
+          const u = message.usage as {
+            cache_read_input_tokens?: number;
+            cache_creation_input_tokens?: number;
+            input_tokens?: number;
+          };
+          const read = u.cache_read_input_tokens ?? 0;
+          const fresh = u.input_tokens ?? 0;
+          const creation = u.cache_creation_input_tokens ?? 0;
           opts.onEvent({
             type: 'result',
             text: message.result,
             turns: message.num_turns,
             outputTokens: message.usage.output_tokens,
+            inputFresh: fresh,
+            cacheRead: read,
+            cacheCreation: creation,
             costUsd: message.total_cost_usd,
             durationMs: message.duration_ms,
           });
@@ -1288,12 +1344,6 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
           // lượt 2 trở đi mà read=0 dù đầu vào lớn → có silent invalidator phá cache ở
           // đầu prefix (timestamp/ID/nội dung đổi) — lúc đó token bị tính giá đầy đủ.
           resultCount++;
-          const u = message.usage as {
-            cache_read_input_tokens?: number;
-            input_tokens?: number;
-          };
-          const read = u.cache_read_input_tokens ?? 0;
-          const fresh = u.input_tokens ?? 0;
           // Ngưỡng 3000: chỉ báo khi phần đầu vào đủ lớn để đáng lẽ phải cache được
           // (dưới ngưỡng cacheable tối thiểu thì read=0 là đương nhiên, không phải lỗi).
           if (resultCount >= 2 && read === 0 && fresh > 3000) {

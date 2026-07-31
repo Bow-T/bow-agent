@@ -18,6 +18,9 @@ export type WebEvent =
       description?: string;
       blockedPath?: string;
       decisionReason?: string;
+      /** True nếu thao tác RỦI RO (rm -rf/push/MCP ghi DB…). UI: toggle Auto-approve tự
+       *  duyệt thao tác thường, nhưng risky=true VẪN dừng hỏi người (phanh cứng). */
+      risky?: boolean;
     }
   | {
       // Agent hỏi người dùng (tool AskUserQuestion) — UI render các option để chọn.
@@ -174,6 +177,7 @@ export class Session {
       description?: string;
       blockedPath?: string;
       decisionReason?: string;
+      risky?: boolean;
     },
   ): Promise<boolean> {
     const id = randomUUID();
@@ -188,6 +192,7 @@ export class Session {
         description: meta?.description,
         blockedPath: meta?.blockedPath,
         decisionReason: meta?.decisionReason,
+        risky: meta?.risky,
       });
     });
   }

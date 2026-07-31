@@ -433,6 +433,24 @@ export function App() {
   // ── Multi-tab: nhiều conversation/session chạy SONG SONG, mỗi tab một <TaskPane> ──
   const [tabs, setTabs] = useState<Tab[]>(() => loadTabs());
   const [activeTabId, setActiveTabId] = useState<string>(() => loadActiveTabId(loadTabs()));
+  // Kéo-thả sắp xếp tab: id tab đang được kéo + id tab đang bị kéo ĐÈ lên (để tô viền đích).
+  const [dragTabId, setDragTabId] = useState<string | null>(null);
+  const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
+  /** Chèn tab `dragId` vào vị trí ngay trước tab `overId` (thả vào tab đích). Tự persist qua
+   *  useEffect 'bow-tabs'. Bỏ qua nếu kéo lên chính nó hoặc id không hợp lệ. */
+  const reorderTab = useCallback((dragId: string, overId: string) => {
+    if (dragId === overId) return;
+    setTabs((prev) => {
+      const from = prev.findIndex((t) => t.id === dragId);
+      const to = prev.findIndex((t) => t.id === overId);
+      if (from === -1 || to === -1) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(from, 1);
+      // Sau khi rút phần tử `from`, chỉ mục đích lùi 1 nếu nó nằm sau `from`.
+      next.splice(to > from ? to - 1 : to, 0, moved);
+      return next;
+    });
+  }, []);
   // Handle imperative của TỪNG tab (panel Lịch sử/xoá cuộc điều khiển pane đang hiển thị).
   const paneRefs = useRef<Record<string, TaskPaneHandle | null>>({});
   // Mirror state per-tab: header (đồng hồ) + panel Lịch sử (tô cuộc) đọc tab ĐANG MỞ;
@@ -2342,8 +2360,14 @@ export function App() {
                 key={t.id}
                 role="tab"
                 aria-selected={t.id === activeTabId}
-                className={`tab-bar-item${t.id === activeTabId ? ' active' : ''}${needsAttention ? ' needs-attention' : ''}`}
+                draggable
+                className={`tab-bar-item${t.id === activeTabId ? ' active' : ''}${needsAttention ? ' needs-attention' : ''}${dragTabId === t.id ? ' dragging' : ''}${dragOverTabId === t.id && dragTabId !== t.id ? ' drag-over' : ''}`}
                 onClick={() => setActiveTabId(t.id)}
+                onDragStart={(e) => { setDragTabId(t.id); e.dataTransfer.effectAllowed = 'move'; }}
+                onDragEnter={() => { if (dragTabId && dragTabId !== t.id) setDragOverTabId(t.id); }}
+                onDragOver={(e) => { if (dragTabId) e.preventDefault(); }}
+                onDrop={(e) => { e.preventDefault(); if (dragTabId) reorderTab(dragTabId, t.id); setDragTabId(null); setDragOverTabId(null); }}
+                onDragEnd={() => { setDragTabId(null); setDragOverTabId(null); }}
                 title={tabTitle}
               >
                 <span className={`tab-bar-dot${needsAttention ? ' attention' : st?.running ? ' live' : ''}`} aria-hidden="true" />

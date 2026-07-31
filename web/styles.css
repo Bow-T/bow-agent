@@ -723,12 +723,24 @@ a { color: var(--brass); text-underline-offset: 2px; }
 .tab-bar-item:hover { color: var(--ink); background: color-mix(in srgb, var(--surface) 92%, transparent); }
 .tab-bar-item.active {
   color: var(--ink);
-  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  font-weight: 600;
+  background: color-mix(in srgb, var(--brass) 12%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brass) 30%, transparent);
 }
 .tab-bar-item.active::after {
   content: '';
-  position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+  position: absolute; left: 0; right: 0; bottom: -1px; height: 3px;
   background: var(--brass);
+}
+/* Kéo-thả sắp xếp tab: tab đang kéo mờ đi, tab đích hiện vạch chèn brass ở mép trái. */
+.tab-bar-item { -webkit-user-select: none; user-select: none; }
+.tab-bar-item:active { cursor: grabbing; }
+.tab-bar-item.dragging { opacity: 0.4; }
+.tab-bar-item.drag-over::before {
+  content: '';
+  position: absolute; left: -1px; top: 0; bottom: 0; width: 2px;
+  background: var(--brass);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--brass) 30%, transparent);
 }
 .tab-bar-dot {
   width: 7px; height: 7px; border-radius: 50%;
@@ -2196,6 +2208,18 @@ a { color: var(--brass); text-underline-offset: 2px; }
 }
 .btn.stop:hover:not(:disabled), .btn.deny:hover:not(:disabled) { background: var(--danger-soft); border-color: var(--danger); }
 
+/* "Luôn cho phép" — nút phụ trong card duyệt: viền brass, nền nhạt (ít nổi hơn "Cho phép"
+   để không nhấn nhầm nhưng vẫn rõ là hành động tích cực). Chỉ hiện cho thao tác thường. */
+.btn.allow-always {
+  border-color: color-mix(in srgb, var(--brass) 55%, transparent);
+  color: var(--brass);
+  background: var(--brass-soft);
+}
+.btn.allow-always:hover:not(:disabled) {
+  border-color: var(--brass);
+  background: color-mix(in srgb, var(--brass) 18%, transparent);
+}
+
 .btn.attach { padding: 7px 9px; font-size: 15px; color: var(--ink-2); background: transparent; border-color: transparent; }
 .btn.attach:hover:not(:disabled) { color: var(--brass); background: var(--surface-3); border-color: transparent; }
 
@@ -2348,6 +2372,17 @@ a { color: var(--brass); text-underline-offset: 2px; }
 .cfg-chip.cfg-summary b { font-weight: 700; color: var(--ink); }
 .cfg-chip.static { cursor: default; color: var(--muted); }
 .cfg-chip:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* Chip "Tự duyệt" — khi BẬT dùng màu cảnh báo (brass đậm + viền) để luôn nhắc người dùng
+   đang ở chế độ tự động cho phép, tránh vô tình để bật. Khi TẮT trông như chip thường. */
+.auto-approve-chip.on {
+  background: var(--brass);
+  border-color: var(--brass);
+  color: var(--on-brass);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--brass) 40%, transparent),
+    0 2px 10px -4px color-mix(in srgb, var(--brass) 55%, transparent);
+}
+.auto-approve-chip.on:hover:not(:disabled) { background: var(--brass-bright); border-color: var(--brass-bright); color: var(--on-brass); }
 .cfg-auth { font-weight: 700; }
 .cfg-auth.ok { color: #00b060; }
 .cfg-auth.bad { color: var(--danger); }

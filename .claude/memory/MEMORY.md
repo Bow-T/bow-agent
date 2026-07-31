@@ -20,3 +20,4 @@
 - [Đội agent (multi-agent) trên web — chỉ admin](bow-web-subagents-admin.md) — toggle useSubagents ở web nối cờ xuống runAgent (reviewer/verifier/impact-scout); chỉ admin (localhost), gate 2 lớp; runner có sẵn, chỉ nối web
 - [Badge trạng thái skill 3 mức](bow-skill-badge-states.md) — cạnh dropdown Stack: ✅ synced / ⚠️ stale (ref cũ hơn registry) / ⬇️ missing; STAMP 2 dòng ghi ref đã trải, so registry local (KHÔNG so remote)
 - [launchd sprint-scan — cwd/tsx](sprint-scan-launchd-cwd.md) — WorkingDirectory phải là bow-agent (có tsx), KHÔNG repo đích; --import tsx phải đường dẫn tuyệt đối; sai → mọi tick crash ERR_MODULE_NOT_FOUND, "tới giờ không chạy"
+- [Đòn bẩy token thật](bow-token-real-levers.md) — token cao do model Opus mọi việc + subagent tự spawn, KHÔNG do schema MCP; ĐO breakdown (event result) trước khi cắt
