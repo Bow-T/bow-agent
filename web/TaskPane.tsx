@@ -1,5 +1,7 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, lazy, Suspense, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { NeuralBrain, type CameraInfo, type NeuralBrainHandle } from './NeuralBrain.js';
+// Cosmos overlay nặng (Three.js ~500KB) → lazy: chỉ tải chunk khi người dùng bấm mở vũ trụ.
+const CosmosOverlay = lazy(() => import('./CosmosOverlay.js').then((m) => ({ default: m.CosmosOverlay })));
 import { ModeSelect, modeDef } from './ModeSelect.js';
 import { PixelSelect } from './PixelSelect.js';
 import { Markdown } from './Markdown.js';
@@ -110,6 +112,8 @@ export interface TaskPaneHandle {
   resetForDeleted: () => void;
   /** Làm mới hạn mức gói của TÀI KHOẢN tab này (nút "Làm mới" trong panel usage của App gọi). */
   refreshUsage: () => void;
+  /** Mở vũ trụ Cosmos toàn màn hình cho ĐÚNG tab này (nút Cosmos ở tab-bar App gọi). */
+  openCosmos: () => void;
 }
 
 export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskPane(props, ref) {
@@ -164,6 +168,10 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const [cameraInfo, setCameraInfo] = useState<CameraInfo | null>(null);
   const neuralBrainRef = useRef<NeuralBrainHandle>(null);
+  // Cosmos: vũ trụ tri thức toàn màn hình. Chỉ fetch filetree khi mở (lazy) + load component qua React.lazy.
+  const [cosmosOpen, setCosmosOpen] = useState(false);
+  const [fileTree, setFileTree] = useState<{ path: string; lines: number }[]>([]);
+  const [repoName, setRepoName] = useState('');
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   const [configPopOpen, setConfigPopOpen] = useState(false);
   const configPopRef = useRef<HTMLDivElement | null>(null);
@@ -192,6 +200,21 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
       triggerEffect();
     }
   }, [sidebarOpen]);
+
+  // Mở vũ trụ Cosmos: fetch cây file THẬT của workspace (lazy, chỉ khi bấm) rồi bung overlay.
+  const openCosmos = useCallback(async () => {
+    setCosmosOpen(true);
+    try {
+      const res = await apiFetch('/api/filetree');
+      if (res.ok) {
+        const data = (await res.json()) as { files?: { path: string; lines: number }[]; repoName?: string };
+        setFileTree(data.files ?? []);
+        setRepoName(data.repoName ?? '');
+      }
+    } catch {
+      // fail-open: overlay vẫn mở, chỉ thiếu bản đồ file (chế độ vũ trụ tri thức vẫn chạy).
+    }
+  }, []);
 
   // Đóng popover cấu hình khi click ngoài
   useEffect(() => {
@@ -464,6 +487,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
     openConversation,
     resetForDeleted,
     refreshUsage: () => refreshUsageRef.current(),
+    openCosmos,
   }));
 
   // Kéo giãn ô nhập: App giữ state taskHeight (global), TaskPane gọi setTaskHeight (prop)
@@ -1275,6 +1299,72 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
 
   const agentNodes = buildAgentNodes();
 
+  // ── Cosmos: suy các FILE agent đang/vừa đụng tới (để sao tương ứng sáng live). Từ pipelineNodes,
+  //    quét op/detail của các node ĐANG active, match tên file (basename) với filetree đã tải.
+  //    Khớp basename thay vì full path vì summary tool thường chỉ nêu tên file, không kèm cwd. ──
+  const cosmosActiveFiles = (() => {
+    if (fileTree.length === 0) return [] as string[];
+    const byBase = new Map<string, string[]>();
+    for (const f of fileTree) {
+      const base = f.path.split('/').pop() || f.path;
+      if (!byBase.has(base)) byBase.set(base, []);
+      byBase.get(base)!.push(f.path);
+    }
+    const hits = new Set<string>();
+    const scan = (text?: string) => {
+      if (!text) return;
+      for (const [base, paths] of byBase) {
+        // basename phải có ký tự "." (file) và đủ dài để tránh khớp rác (vd "a.ts").
+        if (base.length >= 4 && base.includes('.') && text.includes(base)) {
+          for (const p of paths) hits.add(p);
+        }
+      }
+    };
+    for (const node of pipelineNodes) {
+      if (!node.active) continue;
+      scan(node.label);
+      scan(node.detail);
+      if (node.ops) for (const op of node.ops) { scan(op.name); scan(op.summary); }
+    }
+    return Array.from(hits);
+  })();
+
+  // ── Cosmos: suy các NGUỒN TRI THỨC agent đang dùng (để "AI thinking" sáng thật). Quét tên
+  //    tool thật (ops[].name: Read/Grep/mcp__jira__.../WebSearch…) của node đang active rồi map
+  //    về 7 nguồn của Cosmos. CHỈ đọc luồng đã có — không đụng SSE, không nhân đôi logic agent. ──
+  const cosmosActiveSources = (() => {
+    const hits = new Set<string>();
+    const mapTool = (raw?: string) => {
+      if (!raw) return;
+      const n = raw.toLowerCase();
+      // MCP (Jira/Supabase/Codemagic…) → trạm MCP.
+      if (n.startsWith('mcp__')) hits.add('mcp');
+      // Tra cứu ngoài.
+      else if (n.includes('websearch') || n.includes('webfetch')) hits.add('web');
+      // Đọc/tìm trong repo → lõi codebase "đang đọc chính mình"; file cụ thể sáng riêng qua activeFiles.
+      else if (n === 'read' || n === 'grep' || n === 'glob' || n === 'ls') hits.add('claudemd');
+      // Gọi skill.
+      else if (n === 'skill') hits.add('skills');
+    };
+    const scanText = (text?: string) => {
+      if (!text) return;
+      const s = text.toLowerCase();
+      if (s.includes('claude.md') || s.includes('project instruction')) hits.add('claudemd');
+      if (s.includes('.claude/memory') || s.includes('ghi nhớ') || s.includes('memory')) hits.add('memory');
+    };
+    for (const node of pipelineNodes) {
+      if (!node.active) continue;
+      // Node đang "suy nghĩ" → não AI radiate.
+      if (node.type === 'thinking') hits.add('brain');
+      if (node.type === 'approval') hits.add('prompt');
+      scanText(node.label); scanText(node.detail);
+      if (node.ops) for (const op of node.ops) { mapTool(op.name); scanText(op.summary); }
+    }
+    // Đang chạy mà chưa suy được nguồn cụ thể → coi như prompt vừa châm ngòi.
+    if (running && hits.size === 0) hits.add('prompt');
+    return Array.from(hits);
+  })();
+
   const itemToQueryMap = new Map<string, string>();
   let currentQueryText = '';
   for (const it of items) {
@@ -1379,6 +1469,14 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
                 {cameraInfo.targetLabel.replace(/ Agent$/, '')}
               </div>
             )}
+            {/* Nút bung vũ trụ tri thức toàn màn hình */}
+            <button
+              className="viewport-expand"
+              title={language === 'vi' ? 'Bung vũ trụ tri thức toàn màn hình' : 'Expand knowledge universe (full screen)'}
+              onClick={openCosmos}
+            >
+              <Icon name="expand" size={13} />
+            </button>
             {/* Nút đưa góc nhìn về mặc định */}
             <button
               className="viewport-reset"
@@ -2475,6 +2573,25 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
         </div>
       </div>
       </div>
+
+      {/* Vũ trụ tri thức toàn màn hình — chỉ mount khi mở & tab đang hiển thị (tránh nhiều canvas). */}
+      {cosmosOpen && visible && (
+        <Suspense fallback={null}>
+          <CosmosOverlay
+            steps={agentNodes}
+            running={running}
+            filetree={fileTree}
+            activeFiles={cosmosActiveFiles}
+            activeSources={cosmosActiveSources}
+            skillList={skillStacks.map((s) => s.label)}
+            mcpList={cfg?.mcpServers ?? selectedMcps}
+            repoName={repoName}
+            theme={theme === 'brutal' ? 'light' : 'dark'}
+            language={language}
+            onClose={() => setCosmosOpen(false)}
+          />
+        </Suspense>
+      )}
     </div>
   );
 });

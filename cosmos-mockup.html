@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cosmos — Dòng tri thức của AI ⇄ Bản đồ codebase</title>
+<style>
+  :root {
+    --bg: #03040A; --ink: #EAF0FF; --muted: #8A93A8;
+    --line: rgba(150, 160, 190, 0.20); --panel: rgba(8, 11, 22, 0.72);
+    --core: #FFB347;
+    --font: ui-monospace, "SFMono-Regular", "JetBrains Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--bg); color: var(--ink); font-family: var(--font); overflow: hidden; -webkit-font-smoothing: antialiased; }
+  #app { position: fixed; inset: 0; }
+  #app canvas { display: block; cursor: grab; }
+  #app canvas.dragging { cursor: grabbing; }
+
+  .corner { position: fixed; width: 26px; height: 26px; border: 1.5px solid var(--line); pointer-events: none; z-index: 5; opacity: .85; }
+  .corner.tl { top: 20px; left: 20px; border-right: 0; border-bottom: 0; }
+  .corner.tr { top: 20px; right: 20px; border-left: 0; border-bottom: 0; }
+  .corner.bl { bottom: 20px; left: 20px; border-right: 0; border-top: 0; }
+  .corner.br { bottom: 20px; right: 20px; border-left: 0; border-top: 0; }
+
+  .lbl { position: fixed; z-index: 6; pointer-events: none; transform: translate(-50%, -50%);
+    text-align: center; text-shadow: 0 2px 16px rgba(0,0,0,.95); transition: opacity .4s; white-space: nowrap; }
+  .lbl b { font-size: 11.5px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; display:block; }
+  .lbl em { font-style: normal; font-size: 8px; letter-spacing: .1em; color: var(--muted); }
+  .fileLabel { position: fixed; z-index: 6; pointer-events: none; transform: translate(-50%, -140%);
+    font-size: 10px; letter-spacing: .04em; text-shadow: 0 2px 14px rgba(0,0,0,.95); white-space: nowrap; transition: opacity .2s; }
+
+  .hud-title { position: fixed; top: 32px; left: 40px; z-index: 6; pointer-events: none; text-shadow: 0 2px 20px rgba(0,0,0,.85); }
+  .hud-title h1 { font-size: 13px; font-weight: 700; letter-spacing: .44em; margin: 0; text-transform: uppercase; }
+  .hud-title .sub { margin-top: 7px; font-size: 10px; letter-spacing: .18em; color: var(--muted); text-transform: uppercase; transition: color .3s; }
+  .live-badge { display: inline-flex; align-items: center; gap: 7px; margin-top: 11px; font-size: 9.5px; letter-spacing: .14em; color: var(--core); text-transform: uppercase; }
+  .live-badge b { width: 6px; height: 6px; border-radius: 50%; background: var(--core); box-shadow: 0 0 12px var(--core); animation: pulse 1.6s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; transform: scale(1);} 50% { opacity: .35; transform: scale(.6);} }
+
+  .hud-coords { position: fixed; top: 32px; right: 40px; z-index: 6; text-align: right; font-size: 10px; letter-spacing: .16em; color: var(--muted); pointer-events: none; font-variant-numeric: tabular-nums; text-shadow: 0 2px 20px rgba(0,0,0,.85); }
+  .hud-coords .zoom { color: var(--ink); font-size: 11px; margin-top: 4px; }
+  .hud-coords .now { color: var(--core); margin-top: 8px; font-size: 10px; letter-spacing: .08em; }
+
+  /* mode switch */
+  .modebar { position: fixed; top: 76px; right: 40px; z-index: 6; display: flex; gap: 6px; }
+  .modebar button { background: var(--panel); border: 1px solid var(--line); color: var(--muted); font-family: var(--font); font-size: 9px; letter-spacing: .1em; text-transform: uppercase; padding: 7px 11px; cursor: pointer; backdrop-filter: blur(8px); transition: all .2s; }
+  .modebar button.on { border-color: var(--core); color: var(--core); box-shadow: 0 0 14px rgba(255,179,71,.25); }
+
+  .legend { position: fixed; bottom: 34px; left: 40px; z-index: 6; display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow: auto; padding-right: 6px; }
+  .legend-item { display: flex; align-items: center; gap: 9px; font-size: 10px; letter-spacing: .04em; cursor: pointer; color: var(--muted); transition: color .2s; text-shadow: 0 2px 14px rgba(0,0,0,.85); }
+  .legend-item:hover { color: var(--ink); }
+  .legend-item i { width: 9px; height: 9px; border-radius: 50%; flex: none; box-shadow: 0 0 8px currentColor; }
+  .legend-item b { color: var(--ink); letter-spacing: .07em; }
+  .legend-item .cnt { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .legend-sec { font-size: 8px; letter-spacing: .2em; text-transform: uppercase; color: var(--muted); opacity: .6; margin: 6px 0 2px; }
+
+  .ctl { position: fixed; bottom: 34px; right: 40px; z-index: 6; display: flex; gap: 8px; }
+  .ctl button { background: var(--panel); border: 1px solid var(--line); color: var(--ink); font-family: var(--font); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; padding: 8px 12px; cursor: pointer; backdrop-filter: blur(8px); transition: border-color .2s, color .2s; }
+  .ctl button:hover { border-color: var(--core); color: var(--core); }
+
+  .search { position: fixed; top: 32px; left: 50%; transform: translateX(-50%); z-index: 6; transition: opacity .3s; }
+  .search input { background: var(--panel); border: 1px solid var(--line); color: var(--ink); font-family: var(--font); font-size: 11px; letter-spacing: .05em; padding: 8px 14px; width: 280px; backdrop-filter: blur(8px); outline: none; }
+  .search input:focus { border-color: var(--core); }
+  .search input::placeholder { color: var(--muted); }
+
+  .inspector { position: fixed; top: 0; right: 0; height: 100%; width: 356px; z-index: 8; background: var(--panel); backdrop-filter: blur(22px); border-left: 1px solid var(--line); transform: translateX(100%); transition: transform .5s cubic-bezier(.16,1,.3,1); padding: 88px 30px 30px; display: flex; flex-direction: column; overflow-y: auto; }
+  .inspector.open { transform: translateX(0); }
+  .inspector .close { position: absolute; top: 30px; right: 24px; background: none; border: 0; color: var(--muted); font-size: 24px; cursor: pointer; line-height: 1; }
+  .inspector .close:hover { color: var(--ink); }
+  .insp-tag { font-size: 9px; letter-spacing: .2em; text-transform: uppercase; }
+  .insp-name { font-size: 24px; letter-spacing: .02em; margin: 8px 0 0; word-break: break-all; }
+  .insp-body { margin-top: 20px; font-size: 12.5px; line-height: 1.75; color: var(--muted); }
+  .insp-body strong { color: var(--ink); font-weight: 600; }
+  .insp-status { display: inline-flex; align-items: center; gap: 7px; margin-top: 20px; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; }
+  .insp-status b { width: 7px; height: 7px; border-radius: 50%; }
+  .insp-status.live b { animation: pulse 1.4s infinite; }
+  .insp-meta { margin-top: 22px; display: flex; flex-direction: column; }
+  .insp-row { display: flex; justify-content: space-between; font-size: 12px; border-top: 1px solid var(--line); padding: 12px 0; }
+  .insp-row span:first-child { color: var(--muted); letter-spacing: .06em; text-transform: uppercase; font-size: 9px; align-self: center; }
+  .insp-row span:last-child { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+  .hint { position: fixed; bottom: 36px; left: 50%; transform: translateX(-50%); z-index: 6; font-size: 9.5px; letter-spacing: .05em; color: var(--muted); pointer-events: none; opacity: .7; white-space: nowrap; text-shadow: 0 2px 14px rgba(0,0,0,.85); }
+  .loading { position: fixed; inset: 0; display: grid; place-items: center; z-index: 20; color: var(--muted); font-size: 11px; letter-spacing: .2em; text-transform: uppercase; }
+
+  @media (max-width: 900px) {
+    .hud-title { left: 20px; top: 22px; } .hud-coords { right: 20px; top: 22px; }
+    .legend, .ctl, .search, .modebar { display: none; } .inspector { width: 100%; } .hint { display: none; }
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="loading" id="loading">Đang mở vũ trụ…</div>
+
+<span class="corner tl"></span><span class="corner tr"></span><span class="corner bl"></span><span class="corner br"></span>
+
+<div class="hud-title">
+  <h1>Cosmos</h1>
+  <div class="sub" id="subMode">Dòng tri thức của AI</div>
+  <div class="live-badge"><b></b><span id="liveTxt">Agent đang hút tri thức…</span></div>
+</div>
+
+<div class="modebar">
+  <button id="mUni" class="on">Vũ trụ tri thức</button>
+  <button id="mRepo">Bản đồ codebase</button>
+</div>
+
+<div class="search" id="searchBox" style="opacity:0;pointer-events:none"><input id="q" placeholder="tìm file… (vd runner.ts)" autocomplete="off"></div>
+
+<div class="hud-coords">
+  <div id="ra">RA 11ʰ38ᵐ · DEC −23°</div>
+  <div class="zoom" id="zoom">×1.0</div>
+  <div class="now" id="fileCount"></div>
+</div>
+
+<div class="legend" id="legend"></div>
+
+<div class="ctl">
+  <button id="btnPlay">▐▐ Tạm dừng</button>
+  <button id="btnReset">↺ Toàn cảnh</button>
+</div>
+
+<div class="hint" id="hint">Kéo xoay · cuộn phóng · bấm thiên thể để xem · lăn chuột vào lõi để LẶN vào codebase</div>
+
+<aside class="inspector" id="insp">
+  <button class="close" id="inspClose">×</button>
+  <div class="insp-tag" id="inspTag"></div>
+  <h2 class="insp-name" id="inspName"></h2>
+  <div class="insp-status" id="inspStatus"><b></b><span id="inspStatusTxt"></span></div>
+  <div class="insp-body" id="inspBody"></div>
+  <div class="insp-meta" id="inspMeta"></div>
+</aside>
+
+<div id="labels"></div>
+
+<script id="filetree" type="application/json">[{"path":".agents/AGENTS.md","lines":31},{"path":".claude/hooks/block-claude-coauthor.py","lines":67},{"path":".claude/memory/MEMORY.md","lines":23},{"path":".claude/memory/bow-auto-resume-session-limit.md","lines":45},{"path":".claude/memory/bow-ba-mode.md","lines":64},{"path":".claude/memory/bow-collab-mode.md","lines":44},{"path":".claude/memory/bow-devops-mode.md","lines":93},{"path":".claude/memory/bow-empty-frame-skills.md","lines":30},{"path":".claude/memory/bow-lan-config-401-crash.md","lines":24},{"path":".claude/memory/bow-mcp-split-from-profile.md","lines":38},{"path":".claude/memory/bow-per-user-mcp.md","lines":46},{"path":".claude/memory/bow-qc-mode.md","lines":52},{"path":".claude/memory/bow-reviewer-mode.md","lines":54},{"path":".claude/memory/bow-share-modes-serve-static.md","lines":22},{"path":".claude/memory/bow-skill-badge-states.md","lines":30},{"path":".claude/memory/bow-skill-qc-triage.md","lines":32},{"path":".claude/memory/bow-token-real-levers.md","lines":29},{"path":".claude/memory/bow-web-subagents-admin.md","lines":26},{"path":".claude/memory/bow-web-theme-blueprint.md","lines":47},{"path":".claude/memory/no-claude-coauthor-trailer.md","lines":16},{"path":".claude/memory/sprint-scan-launchd-cwd.md","lines":23},{"path":".claude/memory/user-command-style.md","lines":26},{"path":".claude/memory/user-communicates-in-vietnamese.md","lines":12},{"path":".claude/memory/working-style-agent-delegation.md","lines":22},{"path":".claude/settings.json","lines":32},{"path":".env.example","lines":21},{"path":".github/ISSUE_TEMPLATE/bug.yml","lines":54},{"path":".github/ISSUE_TEMPLATE/config.yml","lines":5},{"path":".github/ISSUE_TEMPLATE/idea.yml","lines":45},{"path":".gitignore","lines":19},{"path":".vscode/launch.json","lines":195},{"path":".vscode/tasks.json","lines":180},{"path":"ARCHITECTURE.md","lines":478},{"path":"ARCHITECTURE.vi.md","lines":436},{"path":"CLAUDE.md","lines":84},{"path":"CONTRIBUTING.md","lines":99},{"path":"LICENSE","lines":21},{"path":"README.md","lines":189},{"path":"README.vi.md","lines":435},{"path":"docs/.nojekyll","lines":0},{"path":"docs/favicon.svg","lines":9},{"path":"docs/index.html","lines":705},{"path":"docs/launch/devto-article.md","lines":284},{"path":"docs/launch/faq.md","lines":210},{"path":"docs/launch/issues.md","lines":243},{"path":"docs/launch/posts.md","lines":504},{"path":"docs/media/logo.svg","lines":188},{"path":"docs/media/logo.vi.svg","lines":188},{"path":"docs/robots.txt","lines":4},{"path":"docs/site.webmanifest","lines":14},{"path":"docs/sitemap.xml","lines":9},{"path":"examples/task.example.md","lines":24},{"path":"package-lock.json","lines":4744},{"path":"package.json","lines":92},{"path":"scripts/generate-logo.js","lines":105},{"path":"scripts/replace_duoct.js","lines":1},{"path":"scripts/watch-launch.ts","lines":131},{"path":"scripts/workspace.ts","lines":94},{"path":"src/cli/index.ts","lines":638},{"path":"src/config/env.ts","lines":313},{"path":"src/core/runner.ts","lines":1598},{"path":"src/core/subagents.ts","lines":142},{"path":"src/core/systemPrompt.ts","lines":71},{"path":"src/input/jira-attachments.ts","lines":373},{"path":"src/input/jira-ref.ts","lines":57},{"path":"src/input/pdf.ts","lines":14},{"path":"src/input/task.ts","lines":156},{"path":"src/profiles/base/app-base-flutter-supabase.md","lines":99},{"path":"src/profiles/detect.ts","lines":123},{"path":"src/profiles/generate.ts","lines":158},{"path":"src/profiles/index.ts","lines":78},{"path":"src/profiles/workspace.ts","lines":262},{"path":"src/scheduler/jiraApi.ts","lines":165},{"path":"src/scheduler/launchd.ts","lines":171},{"path":"src/scheduler/qcRouting.ts","lines":123},{"path":"src/scheduler/schedule.ts","lines":258},{"path":"src/scheduler/sprintScan.ts","lines":359},{"path":"src/scheduler/webMain.ts","lines":4},{"path":"src/scheduler/webServer.ts","lines":1060},{"path":"src/skills/agentSkills.ts","lines":155},{"path":"src/skills/externalSkills.ts","lines":454},{"path":"src/skills/hooks.ts","lines":135},{"path":"src/skills/index.ts","lines":38},{"path":"src/skills/monorepo.ts","lines":150},{"path":"src/tools/mcp.ts","lines":374},{"path":"src/web/access.ts","lines":200},{"path":"src/web/chat.ts","lines":215},{"path":"src/web/conversations.ts","lines":197},{"path":"src/web/server.ts","lines":2238},{"path":"src/web/session.ts","lines":417},{"path":"src/web/userMcp.ts","lines":132},{"path":"tsconfig.json","lines":19},{"path":"vite.config.ts","lines":54},{"path":"web/AccentPicker.tsx","lines":71},{"path":"web/App.tsx","lines":3950},{"path":"web/Icon.tsx","lines":150},{"path":"web/Markdown.tsx","lines":60},{"path":"web/ModeSelect.tsx","lines":150},{"path":"web/NeuralBrain.tsx","lines":1276},{"path":"web/PixelSelect.tsx","lines":88},{"path":"web/QuestionCard.tsx","lines":158},{"path":"web/TaskPane.tsx","lines":2480},{"path":"web/index.html","lines":40},{"path":"web/main.tsx","lines":10},{"path":"web/styles.css","lines":4250},{"path":"web/tsconfig.json","lines":15},{"path":"web/types.ts","lines":157}]</script>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.161.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.161.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from "three";
+import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
+
+const FILES = JSON.parse(document.getElementById("filetree").textContent);
+function rng(seed){ return ()=>{ seed=(seed*1103515245+12345)&0x7fffffff; return seed/0x7fffffff; }; }
+function hashCode(s){ let h=0; for(let i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))|0; return h; }
+
+// ── NGUỒN TRI THỨC (vòng ngoài) — theo đúng cách AI hoạt động ──
+const SOURCES = [
+  { id:"brain", code:"NÃO AI", hue:0.72, dist:64, ang:0.2,
+    tag:"Kiến thức nền · model weights", nebula:true,
+    body:"Trọng số model — mọi thứ Claude đã học: <strong>ngôn ngữ, thuật toán, design pattern</strong>. Tinh vân nền bao trùm, luôn hiện diện làm bối cảnh cho suy luận. Giới hạn ở <strong>knowledge cutoff</strong>." },
+  { id:"claudemd", code:"CLAUDE.md", hue:0.11, dist:50, ang:1.05,
+    tag:"Chỉ dẫn dự án", body:"File CLAUDE.md ở gốc repo — <strong>luật lệ riêng của dự án</strong> agent phải tuân: bản đồ kiến trúc, quy ước, việc thường làm. Nạp đầu mỗi phiên." },
+  { id:"memory", code:"MEMORY", hue:0.86, dist:56, ang:1.85,
+    tag:".claude/memory/ · ghi nhớ", body:"Bộ nhớ dự án — <strong>ghi nhớ cách làm việc</strong> đúc kết qua nhiều phiên (mode web, sprint-scan, quy ước commit…). Cùng memory người dùng, giúp agent nhớ ngữ cảnh cũ." },
+  { id:"skills", code:"SKILLS", hue:0.42, dist:58, ang:2.7,
+    tag:"bow-ui · bow-commit · …", body:"Các Skill — <strong>quy trình 'cách làm' đóng gói</strong> (dựng UI Flutter, commit chuẩn Bow, triage Jira…). Tải lúc runtime, agent gọi khi task khớp." },
+  { id:"mcp", code:"MCP", hue:0.33, dist:60, ang:3.7,
+    tag:"Jira · Supabase · Codemagic", body:"Server MCP — <strong>dữ liệu sống ngoài repo</strong>: đọc ticket Jira, truy vấn Supabase, kích build Codemagic. Mỗi server một hành tinh." },
+  { id:"web", code:"WEB", hue:0.06, dist:66, ang:4.6,
+    tag:"WebSearch · WebFetch", body:"Tra cứu ngoài — <strong>tài liệu, docs online</strong> agent lấy khi thứ cần không có sẵn trong repo hay kiến thức nền. Vệ tinh xa, chỉ sáng khi tra cứu." },
+  { id:"prompt", code:"PROMPT", hue:0.55, dist:46, ang:5.5,
+    tag:"Người dùng · lệnh + ảnh", body:"Câu lệnh của bạn + <strong>ảnh/video đính kèm + duyệt/phản hồi</strong>. Nguồn khởi động mọi thứ — mỗi lượt chat là một xung sáng bắn vào lõi." },
+];
+
+// ── gom file theo thư mục cấp cao (cho chế độ codebase) ──
+function topDir(p){ const i=p.indexOf("/"); return i<0 ? "(root)" : p.slice(0,i); }
+const galaxies=new Map();
+FILES.forEach(f=>{ const d=topDir(f.path); if(!galaxies.has(d)) galaxies.set(d,[]); galaxies.get(d).push(f); });
+const DIR_HUE={ "src":0.55,"web":0.08,"docs":0.28,".claude":0.78,"(root)":0.6,"scripts":0.13,".github":0.42,".vscode":0.5,"examples":0.9,".agents":0.83 };
+function dirColor(d){ const h=DIR_HUE[d] ?? (Math.abs(hashCode(d))%100)/100; return new THREE.Color().setHSL(h,0.6,0.62); }
+
+const app=document.getElementById("app");
+const scene=new THREE.Scene();
+scene.fog=new THREE.FogExp2(0x03040A,0.006);
+const camera=new THREE.PerspectiveCamera(58, innerWidth/innerHeight, 0.1, 1000);
+camera.position.set(0,10,120);
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2)); renderer.setSize(innerWidth,innerHeight);
+renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=1.12;
+app.appendChild(renderer.domElement); const glCanvas=renderer.domElement;
+
+const composer=new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene,camera));
+const bloom=new UnrealBloomPass(new THREE.Vector2(innerWidth,innerHeight),0.9,0.6,0.72);
+composer.addPass(bloom);
+
+function glowTexture(){ const s=128,c=document.createElement("canvas"); c.width=c.height=s; const g=c.getContext("2d");
+  const gr=g.createRadialGradient(s/2,s/2,0,s/2,s/2,s/2);
+  gr.addColorStop(0,"rgba(255,255,255,1)"); gr.addColorStop(0.25,"rgba(255,255,255,0.5)");
+  gr.addColorStop(0.5,"rgba(255,255,255,0.12)"); gr.addColorStop(1,"rgba(255,255,255,0)");
+  g.fillStyle=gr; g.fillRect(0,0,s,s); return new THREE.CanvasTexture(c); }
+const SPRITE=glowTexture();
+
+// bg stars
+function bgStars(count,radius){
+  const g=new THREE.BufferGeometry(); const pos=new Float32Array(count*3),sz=new Float32Array(count); const R=rng(7);
+  for(let i=0;i<count;i++){ const u=R(),v=R(),th=u*6.283,ph=Math.acos(2*v-1); const r=radius*(0.5+0.5*Math.cbrt(R()));
+    pos[i*3]=r*Math.sin(ph)*Math.cos(th); pos[i*3+1]=r*Math.sin(ph)*Math.sin(th)*0.7; pos[i*3+2]=r*Math.cos(ph); sz[i]=0.5+R()*1.5; }
+  g.setAttribute("position",new THREE.BufferAttribute(pos,3)); g.setAttribute("aSize",new THREE.BufferAttribute(sz,1));
+  const m=new THREE.ShaderMaterial({ uniforms:{uTex:{value:SPRITE},uTime:{value:0},uPix:{value:renderer.getPixelRatio()}},
+    transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,
+    vertexShader:`attribute float aSize; varying float vTw; uniform float uTime,uPix;
+      void main(){ vTw=0.5+0.5*sin(uTime*1.5+position.x*0.6); vec4 mv=modelViewMatrix*vec4(position,1.0);
+        gl_PointSize=aSize*uPix*(300.0/-mv.z); gl_Position=projectionMatrix*mv; }`,
+    fragmentShader:`uniform sampler2D uTex; varying float vTw;
+      void main(){ vec4 t=texture2D(uTex,gl_PointCoord); gl_FragColor=vec4(vec3(0.7,0.75,0.95),t.a*vTw*0.65); }`});
+  return new THREE.Points(g,m); }
+const bg=bgStars(2600,520); scene.add(bg);
+
+// ── LÕI CODEBASE ở giữa (chế độ vũ trụ = 1 khối; chế độ repo = nở thành file) ──
+const CORE=new THREE.Vector3(0,0,0);
+const coreGrp=new THREE.Group(); scene.add(coreGrp);
+const coreCore=new THREE.Mesh(new THREE.SphereGeometry(3.4,32,32), new THREE.MeshBasicMaterial({color:0xFFB347}));
+const coreHot=new THREE.Mesh(new THREE.SphereGeometry(1.9,24,24), new THREE.MeshBasicMaterial({color:0xffffff}));
+const coreHalo=new THREE.Sprite(new THREE.SpriteMaterial({map:SPRITE,color:0xFFB347,transparent:true,opacity:0.9,blending:THREE.AdditiveBlending,depthWrite:false}));
+coreHalo.scale.setScalar(26);
+const coreRing=new THREE.Mesh(new THREE.RingGeometry(5.4,5.6,96),new THREE.MeshBasicMaterial({color:0xFFB347,transparent:true,opacity:0.5,side:THREE.DoubleSide}));
+coreRing.rotation.x=Math.PI/2.3;
+coreGrp.add(coreCore,coreHot,coreHalo,coreRing);
+
+// ── FILE POINTS (bản đồ codebase) — dựng sẵn, ẩn ở chế độ vũ trụ ──
+const total=FILES.length;
+const posArr=new Float32Array(total*3), colArr=new Float32Array(total*3), sizeArr=new Float32Array(total), litArr=new Float32Array(total);
+const stars=[]; const galaxyInfo=[];
+const galList=[...galaxies.entries()].sort((a,b)=>b[1].length-a[1].length);
+const nG=galList.length; const maxLines=Math.max(...FILES.map(f=>f.lines||1));
+let idx=0;
+galList.forEach(([dir,files],gi)=>{
+  const ang=(gi/nG)*Math.PI*2, ringR=30;
+  const cx=Math.cos(ang)*ringR, cz=Math.sin(ang)*ringR, cy=(gi%2?1:-1)*(4+gi*1.2);
+  const center=new THREE.Vector3(cx,cy,cz); const gcol=dirColor(dir);
+  galaxyInfo.push({dir,center,count:files.length,color:gcol});
+  const Rg=rng((hashCode(dir)&0xffff)||1); const spread=4+Math.sqrt(files.length)*1.6;
+  files.forEach((f,fi)=>{
+    const arm=fi%3; const rr=spread*(0.2+0.8*Math.sqrt(Rg())); const th=rr*0.4+arm*(Math.PI*2/3)+(Rg()-0.5)*0.7;
+    const x=cx+Math.cos(th)*rr, z=cz+Math.sin(th)*rr, y=cy+(Rg()-0.5)*spread*0.4;
+    posArr[idx*3]=x; posArr[idx*3+1]=y; posArr[idx*3+2]=z;
+    const c=gcol.clone(); const lum=0.5+0.4*Math.min(1,(f.lines||1)/maxLines); c.offsetHSL(0,0,lum-0.62);
+    colArr[idx*3]=c.r; colArr[idx*3+1]=c.g; colArr[idx*3+2]=c.b;
+    sizeArr[idx]=1.2+Math.log2((f.lines||1)+1)*0.85; litArr[idx]=0;
+    stars.push({path:f.path,lines:f.lines||0,dir,ext:(f.path.split(".").pop()||""),worldPos:new THREE.Vector3(x,y,z),i:idx});
+    idx++;
+  });
+});
+const fileGeo=new THREE.BufferGeometry();
+fileGeo.setAttribute("position",new THREE.BufferAttribute(posArr,3));
+fileGeo.setAttribute("color",new THREE.BufferAttribute(colArr,3));
+fileGeo.setAttribute("aSize",new THREE.BufferAttribute(sizeArr,1));
+fileGeo.setAttribute("aLit",new THREE.BufferAttribute(litArr,1));
+const fileMat=new THREE.ShaderMaterial({
+  uniforms:{uTex:{value:SPRITE},uTime:{value:0},uPix:{value:renderer.getPixelRatio()},uReveal:{value:0}},
+  vertexColors:true,transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,
+  vertexShader:`attribute float aSize; attribute float aLit; varying vec3 vColor; varying float vLit; uniform float uTime,uPix,uReveal;
+    void main(){ float pulse=1.0+aLit*0.8*sin(uTime*6.0); vColor=mix(color,vec3(1.0,1.0,0.85),aLit*0.7); vLit=aLit;
+      vec4 mv=modelViewMatrix*vec4(position,1.0);
+      gl_PointSize=aSize*uPix*(300.0/-mv.z)*(1.0+aLit*1.4)*pulse*uReveal;
+      gl_Position=projectionMatrix*mv; }`,
+  fragmentShader:`uniform sampler2D uTex; uniform float uReveal; varying vec3 vColor; varying float vLit;
+    void main(){ vec4 t=texture2D(uTex,gl_PointCoord); gl_FragColor=vec4(vColor,t.a*(0.75+vLit*0.25)*uReveal); }`
+});
+const filePoints=new THREE.Points(fileGeo,fileMat); scene.add(filePoints);
+// halo thiên hà (repo mode)
+galaxyInfo.forEach(g=>{ const s=new THREE.Sprite(new THREE.SpriteMaterial({map:SPRITE,color:g.color,transparent:true,opacity:0,blending:THREE.AdditiveBlending,depthWrite:false}));
+  s.scale.setScalar(5+Math.sqrt(g.count)*3); s.position.copy(g.center); scene.add(s); g.halo=s; });
+
+// ── SOURCE nodes + inflow streams ──
+const srcGroup=new THREE.Group(); scene.add(srcGroup);
+const srcObjs=[]; const nebulae=[];
+SOURCES.forEach(sc=>{
+  const col=new THREE.Color().setHSL(sc.hue,0.62,0.62);
+  const pos=new THREE.Vector3(Math.cos(sc.ang)*sc.dist, (Math.sin(sc.ang*1.7))*10, Math.sin(sc.ang)*sc.dist);
+  sc._pos=pos; sc._col=col;
+  const grp=new THREE.Group(); grp.position.copy(pos);
+  const size=sc.id==="brain"?3.0:2.0;
+  const core=new THREE.Mesh(new THREE.SphereGeometry(size*0.5,28,28),new THREE.MeshBasicMaterial({color:col}));
+  const hot=new THREE.Mesh(new THREE.SphereGeometry(size*0.25,20,20),new THREE.MeshBasicMaterial({color:0xffffff}));
+  const halo=new THREE.Sprite(new THREE.SpriteMaterial({map:SPRITE,color:col,transparent:true,opacity:0.7,blending:THREE.AdditiveBlending,depthWrite:false}));
+  halo.scale.setScalar(size*6.5);
+  grp.add(core,hot,halo); grp.userData={sc,core,hot,halo,size};
+  srcGroup.add(grp); srcObjs.push(grp);
+  // NÃO AI = tinh vân nền lớn bao trùm
+  if(sc.nebula){ for(let k=0;k<4;k++){ const n=new THREE.Sprite(new THREE.SpriteMaterial({map:SPRITE,color:col,transparent:true,opacity:0.09,blending:THREE.AdditiveBlending,depthWrite:false}));
+    n.position.copy(pos).add(new THREE.Vector3((Math.random()-.5)*30,(Math.random()-.5)*20,(Math.random()-.5)*20)); n.scale.setScalar(40+k*14); n.userData={ph:Math.random()*6.28,spd:0.1,baseOp:0.09}; nebulae.push(n); scene.add(n); } }
+});
+// inflow: hạt chảy source→core
+const inflow=srcObjs.map(g=>{ const n=32; const geo=new THREE.BufferGeometry(); const pos=new Float32Array(n*3); const ts=new Float32Array(n);
+  for(let i=0;i<n;i++) ts[i]=Math.random();
+  geo.setAttribute("position",new THREE.BufferAttribute(pos,3));
+  const m=new THREE.PointsMaterial({map:SPRITE,color:g.userData.sc._col,size:1.5,transparent:true,opacity:0.9,blending:THREE.AdditiveBlending,depthWrite:false});
+  const p=new THREE.Points(geo,m); scene.add(p); return {p,from:g.userData.sc._pos.clone(),ts,n}; });
+
+// ── mode ──
+let MODE="uni"; // "uni" | "repo"
+let reveal=0;   // 0 = vũ trụ, 1 = codebase
+const subMode=document.getElementById("subMode"), liveTxt=document.getElementById("liveTxt");
+const searchBox=document.getElementById("searchBox"), hint=document.getElementById("hint");
+const mUni=document.getElementById("mUni"), mRepo=document.getElementById("mRepo");
+function setMode(m){
+  MODE=m; mUni.classList.toggle("on",m==="uni"); mRepo.classList.toggle("on",m==="repo");
+  subMode.textContent = m==="uni" ? "Dòng tri thức của AI" : "Bản đồ codebase · mỗi file một ngôi sao";
+  searchBox.style.opacity = m==="repo"?"1":"0"; searchBox.style.pointerEvents=m==="repo"?"auto":"none";
+  hint.textContent = m==="repo" ? "Kéo xoay · cuộn phóng · bấm sao để mở file · sao sáng nhấp nháy = file đang làm" : "Kéo xoay · cuộn phóng · bấm nguồn để xem · lăn vào lõi để LẶN vào codebase";
+  buildLegend();
+  if(m==="repo"){ tOrbitTarget.set(0,0,0); tDist=44; } else { tOrbitTarget.set(0,0,0); tDist=120; }
+  insp.classList.remove("open"); selected=null;
+}
+mUni.onclick=()=>setMode("uni"); mRepo.onclick=()=>setMode("repo");
+
+// ── camera / interaction ──
+let yaw=0.2, pitch=0.16, tYaw=0.2, tPitch=0.16, dist=120, tDist=120;
+let dragging=false, px=0, py=0, mX=0, mY=0;
+let orbitTarget=new THREE.Vector3(0,0,0), tOrbitTarget=new THREE.Vector3(0,0,0);
+glCanvas.addEventListener("mousedown",e=>{dragging=true;glCanvas.classList.add("dragging");px=e.clientX;py=e.clientY;});
+addEventListener("mouseup",()=>{dragging=false;glCanvas.classList.remove("dragging");});
+addEventListener("mousemove",e=>{ mX=e.clientX/innerWidth-0.5; mY=e.clientY/innerHeight-0.5;
+  if(dragging){ tYaw+=(e.clientX-px)*0.005; tPitch+=(e.clientY-py)*0.005; tPitch=Math.max(-1.3,Math.min(1.3,tPitch)); px=e.clientX; py=e.clientY; }});
+addEventListener("wheel",e=>{ tDist=Math.max(8,Math.min(200,tDist+e.deltaY*0.08));
+  // auto chuyển mode theo khoảng cách (zoom liền mạch)
+  if(tDist<40 && MODE==="uni") setMode("repo");
+  if(tDist>70 && MODE==="repo") setMode("uni");
+},{passive:true});
+
+// ── click ──
+const insp=document.getElementById("insp"); let selected=null;
+glCanvas.addEventListener("click",e=>{
+  if(MODE==="uni"){
+    let best=null,bd=1e9;
+    for(const g of srcObjs){ const wp=new THREE.Vector3(); g.getWorldPosition(wp); const sp=wp.clone().project(camera); if(sp.z>1) continue;
+      const sx=(sp.x*0.5+0.5)*innerWidth, sy=(-sp.y*0.5+0.5)*innerHeight; const d=Math.hypot(e.clientX-sx,e.clientY-sy); if(d<bd){bd=d;best=g;} }
+    // lõi codebase
+    { const sp=CORE.clone().project(camera); const sx=(sp.x*0.5+0.5)*innerWidth, sy=(-sp.y*0.5+0.5)*innerHeight; const d=Math.hypot(e.clientX-sx,e.clientY-sy); if(d<70 && d<bd){ openCore(); return; } }
+    if(best && bd<90) openSource(best.userData.sc);
+  } else {
+    let best=null,bd=1e9;
+    for(const s of stars){ const sp=s.worldPos.clone().project(camera); if(sp.z>1) continue;
+      const sx=(sp.x*0.5+0.5)*innerWidth, sy=(-sp.y*0.5+0.5)*innerHeight; const d=Math.hypot(e.clientX-sx,e.clientY-sy); if(d<bd&&d<24){bd=d;best=s;} }
+    if(best) openFile(best);
+  }
+});
+
+function openSource(sc){
+  selected=null; const hex="#"+new THREE.Color().setHSL(sc.hue,0.62,0.62).getHexString();
+  const st=document.getElementById("inspStatus"); st.className="insp-status"; st.querySelector("b").style.background=hex;
+  document.getElementById("inspStatusTxt").textContent="Nguồn tri thức";
+  document.getElementById("inspTag").textContent=sc.tag; document.getElementById("inspTag").style.color=hex;
+  document.getElementById("inspName").textContent=sc.code;
+  document.getElementById("inspBody").innerHTML=sc.body;
+  document.getElementById("inspMeta").innerHTML="";
+  tOrbitTarget.copy(sc._pos); tDist=24; insp.classList.add("open");
+}
+function openCore(){
+  document.getElementById("inspStatus").className="insp-status live"; document.getElementById("inspStatus").querySelector("b").style.background="#FFB347";
+  document.getElementById("inspStatusTxt").textContent="Lõi đang tổng hợp";
+  document.getElementById("inspTag").textContent="Codebase · lõi tổng hợp"; document.getElementById("inspTag").style.color="#FFB347";
+  document.getElementById("inspName").textContent="CODEBASE";
+  document.getElementById("inspBody").innerHTML=`Nơi mọi tri thức hội tụ và <strong>nung nấu thành hành động</strong>. Đây chính là dự án — lặn vào (cuộn tới) để thấy <strong>bản đồ ${total} file</strong>.`;
+  document.getElementById("inspMeta").innerHTML=`<div class="insp-row"><span>File</span><span>${total}</span></div><div class="insp-row"><span>Thư mục</span><span>${nG}</span></div>`;
+  insp.classList.add("open");
+}
+function openFile(s){
+  selected=s; const dir=s.path.includes("/")?s.path.slice(0,s.path.lastIndexOf("/")):"(root)";
+  const lit=litVal[s.i]>0.5; const hex="#FFB347";
+  document.getElementById("inspStatus").className="insp-status"+(lit?" live":""); document.getElementById("inspStatus").querySelector("b").style.background=lit?hex:"#556";
+  document.getElementById("inspStatusTxt").textContent=lit?"Agent đang làm file này":"Không hoạt động";
+  document.getElementById("inspTag").textContent=dir+"/"; document.getElementById("inspTag").style.color="#8A93A8";
+  document.getElementById("inspName").textContent=s.path.split("/").pop();
+  document.getElementById("inspBody").innerHTML="";
+  document.getElementById("inspMeta").innerHTML=
+    `<div class="insp-row"><span>Thư mục</span><span>${s.dir}</span></div>`+
+    `<div class="insp-row"><span>Số dòng</span><span>${s.lines.toLocaleString("vi")}</span></div>`+
+    `<div class="insp-row"><span>Đuôi</span><span>.${s.ext}</span></div>`;
+  tOrbitTarget.copy(s.worldPos); tDist=16; insp.classList.add("open");
+}
+document.getElementById("inspClose").onclick=()=>{ insp.classList.remove("open"); selected=null; };
+
+// ── legend đổi theo mode ──
+const legendEl=document.getElementById("legend");
+function buildLegend(){
+  legendEl.innerHTML="";
+  if(MODE==="uni"){
+    const sec=document.createElement("div"); sec.className="legend-sec"; sec.textContent="Nguồn tri thức"; legendEl.appendChild(sec);
+    SOURCES.forEach(sc=>{ const hex="#"+new THREE.Color().setHSL(sc.hue,0.62,0.62).getHexString();
+      const el=document.createElement("div"); el.className="legend-item";
+      el.innerHTML=`<i style="background:${hex}"></i><b>${sc.code}</b> ${sc.tag.split(" · ")[0]}`;
+      el.onclick=()=>openSource(sc); legendEl.appendChild(el); });
+    const sec2=document.createElement("div"); sec2.className="legend-sec"; sec2.textContent="Lõi"; legendEl.appendChild(sec2);
+    const el=document.createElement("div"); el.className="legend-item"; el.innerHTML=`<i style="background:#FFB347"></i><b>CODEBASE</b> ${total} file`;
+    el.onclick=openCore; legendEl.appendChild(el);
+  } else {
+    const sec=document.createElement("div"); sec.className="legend-sec"; sec.textContent="Thư mục · thiên hà"; legendEl.appendChild(sec);
+    galList.forEach(([dir,files],gi)=>{ const g=galaxyInfo[gi]; const hex="#"+g.color.getHexString();
+      const el=document.createElement("div"); el.className="legend-item";
+      el.innerHTML=`<i style="background:${hex}"></i><b>${dir}</b> <span class="cnt">${files.length}</span>`;
+      el.onclick=()=>{ tOrbitTarget.copy(g.center); tDist=Math.max(14,6+Math.sqrt(files.length)*3); insp.classList.remove("open"); selected=null; };
+      legendEl.appendChild(el); });
+  }
+}
+document.getElementById("fileCount").textContent=`${total} file · ${nG} thư mục`;
+
+// search (repo mode)
+const q=document.getElementById("q");
+q.oninput=()=>{ const v=q.value.trim().toLowerCase(); if(!v) return; const hit=stars.find(s=>s.path.toLowerCase().includes(v)); if(hit){ tOrbitTarget.copy(hit.worldPos); tDist=16; openFile(hit); } };
+
+// ── mô phỏng "đang làm" (repo mode) ──
+const WORK_SEQ=["web/TaskPane.tsx","web/NeuralBrain.tsx","web/styles.css","src/core/runner.ts","web/App.tsx","src/web/server.ts"];
+const workStars=WORK_SEQ.map(p=>stars.find(s=>s.path===p)).filter(Boolean);
+const litVal=new Float32Array(total); let workPtr=0, workTimer=0;
+// dòng chảy tri thức "đang hút" (uni mode) — text luân phiên
+const UNI_MSG=["Đọc CLAUDE.md…","Nạp memory dự án…","Grep repo…","Gọi Jira MCP…","Áp skill bow-ui…","Tổng hợp ở lõi…"];
+let uniPtr=0, uniTimer=0;
+
+let playing=true;
+document.getElementById("btnPlay").onclick=e=>{ playing=!playing; e.target.textContent=playing?"▐▐ Tạm dừng":"▶ Chạy tiếp"; };
+document.getElementById("btnReset").onclick=()=>{ setMode("uni"); tYaw=0.2; tPitch=0.16; };
+
+// nhãn HTML
+const labelsEl=document.getElementById("labels");
+const srcLabels=SOURCES.map(sc=>{ const el=document.createElement("div"); el.className="lbl";
+  el.innerHTML=`<b style="color:#${new THREE.Color().setHSL(sc.hue,0.62,0.62).getHexString()}">${sc.code}</b><em>${sc.tag.split(" · ")[0]}</em>`; labelsEl.appendChild(el); return {sc,el}; });
+const coreLabel=document.createElement("div"); coreLabel.className="lbl"; coreLabel.innerHTML=`<b style="color:#FFB347">CODEBASE</b><em>lõi tổng hợp</em>`; labelsEl.appendChild(coreLabel);
+const glxLabels=galaxyInfo.map(g=>{ const el=document.createElement("div"); el.className="lbl";
+  el.innerHTML=`<b style="color:#${g.color.getHexString()}">${g.dir}</b><em>${g.count}</em>`; labelsEl.appendChild(el); return {g,el}; });
+const fileLabelEl=document.createElement("div"); fileLabelEl.className="fileLabel"; labelsEl.appendChild(fileLabelEl);
+
+buildLegend();
+const raEl=document.getElementById("ra"), zoomEl=document.getElementById("zoom");
+document.getElementById("loading").style.display="none";
+
+const clock=new THREE.Clock();
+function animate(){
+  requestAnimationFrame(animate);
+  const dt=playing?Math.min(clock.getDelta(),0.05):0; const T=clock.elapsedTime;
+
+  // reveal lerp theo mode
+  reveal += ((MODE==="repo"?1:0)-reveal)*0.06;
+  fileMat.uniforms.uReveal.value=reveal;
+
+  yaw+=(tYaw-yaw)*0.06; pitch+=(tPitch-pitch)*0.06; dist+=(tDist-dist)*0.05;
+  orbitTarget.lerp(tOrbitTarget,0.06);
+  const px2=yaw+mX*0.08, py2=pitch+mY*0.05;
+  camera.position.x=orbitTarget.x+Math.sin(px2)*Math.cos(py2)*dist;
+  camera.position.y=orbitTarget.y+Math.sin(py2)*dist+6;
+  camera.position.z=orbitTarget.z+Math.cos(px2)*Math.cos(py2)*dist;
+  camera.lookAt(orbitTarget);
+
+  bg.rotation.y+=dt*0.003; bg.material.uniforms.uTime.value=T; fileMat.uniforms.uTime.value=T;
+
+  // ── UNI: nguồn hiện, inflow chảy, lõi sáng; REPO: nguồn mờ, file hiện ──
+  const uniVis=1-reveal;
+  srcGroup.visible = uniVis>0.02; srcGroup.traverse(o=>{ if(o.material&&o.material.opacity!==undefined && o.material.map===SPRITE){} });
+  srcObjs.forEach(g=>{ const sc=g.userData.sc; const s=1+Math.sin(T*1.6+g.position.x)*0.08;
+    g.userData.core.scale.setScalar(s); g.userData.hot.scale.setScalar(s);
+    g.userData.halo.material.opacity=(0.6+Math.sin(T*2+g.position.y)*0.15)*uniVis;
+    g.userData.core.material.opacity=uniVis; g.userData.core.material.transparent=true;
+    g.userData.hot.material.opacity=uniVis; g.userData.hot.material.transparent=true; });
+  nebulae.forEach(n=>{ n.material.opacity=n.userData.baseOp*(0.7+0.3*Math.sin(T*n.userData.spd+n.userData.ph))*uniVis; });
+  inflow.forEach(s=>{ const arr=s.p.geometry.attributes.position.array;
+    for(let i=0;i<s.n;i++){ s.ts[i]+=dt*0.45; if(s.ts[i]>1)s.ts[i]-=1; const t=s.ts[i], e=t*t;
+      const p=s.from.clone().multiplyScalar(1-e).add(CORE.clone().multiplyScalar(e)); p.y+=Math.sin(t*3.14)*4*(1-t);
+      arr[i*3]=p.x;arr[i*3+1]=p.y;arr[i*3+2]=p.z; }
+    s.p.geometry.attributes.position.needsUpdate=true; s.p.material.opacity=0.9*uniVis; });
+
+  // lõi codebase pulse (uni) — ở repo mode thu nhỏ nhường chỗ file
+  const coreScale = 1*uniVis + 0.15*reveal;
+  coreGrp.scale.setScalar(Math.max(0.05,coreScale));
+  coreCore.scale.setScalar(1+Math.sin(T*3)*0.12); coreHot.scale.setScalar(1+Math.sin(T*3)*0.12);
+  coreHalo.material.opacity=(0.85+Math.sin(T*2)*0.1)*(0.3+0.7*uniVis);
+  coreRing.rotation.z+=dt*0.5;
+
+  // halo thiên hà (repo)
+  galaxyInfo.forEach(g=> g.halo.material.opacity=(0.09+0.03*Math.sin(T*0.5+g.center.x))*reveal);
+
+  // ── work highlight (repo) ──
+  if(playing){
+    if(MODE==="repo" && workStars.length){ workTimer+=dt; if(workTimer>1.5){workTimer=0;workPtr=(workPtr+1)%workStars.length;}
+      const cur=workStars[workPtr]; liveTxt.textContent=`Agent đang làm: ${cur.path.split("/").pop()}`;
+      for(let i=0;i<total;i++) litVal[i]*=0.94; litVal[cur.i]=1;
+    } else if(MODE==="uni"){ uniTimer+=dt; if(uniTimer>1.6){uniTimer=0;uniPtr=(uniPtr+1)%UNI_MSG.length;} liveTxt.textContent=UNI_MSG[uniPtr]; }
+  }
+  const litAttr=fileGeo.attributes.aLit.array; for(let i=0;i<total;i++) litAttr[i]=litVal[i]; fileGeo.attributes.aLit.needsUpdate=true;
+
+  bloom.strength=0.9 + (selected?0.2:0) + (uniVis*0.15);
+  composer.render();
+
+  // ── nhãn ──
+  srcLabels.forEach(({sc,el})=>{ const sp=sc._pos.clone().project(camera); const behind=sp.z>1;
+    el.style.left=((sp.x*0.5+0.5)*innerWidth)+"px"; el.style.top=((-sp.y*0.5+0.5)*innerHeight)+"px"; el.style.opacity=(behind?0:uniVis*0.95); });
+  { const sp=CORE.clone().project(camera); const behind=sp.z>1;
+    coreLabel.style.left=((sp.x*0.5+0.5)*innerWidth)+"px"; coreLabel.style.top=((-sp.y*0.5+0.5)*innerHeight-30)+"px"; coreLabel.style.opacity=(behind?0:uniVis*0.95); }
+  const showGlx=reveal>0.5 && dist>22;
+  glxLabels.forEach(({g,el})=>{ const sp=g.center.clone().project(camera); const behind=sp.z>1;
+    el.style.left=((sp.x*0.5+0.5)*innerWidth)+"px"; el.style.top=((-sp.y*0.5+0.5)*innerHeight)+"px"; el.style.opacity=(behind||!showGlx)?0:reveal*0.9; });
+  const showFile = MODE==="repo" ? (selected||(workStars.length?workStars[workPtr]:null)) : null;
+  if(showFile){ const sp=showFile.worldPos.clone().project(camera); const behind=sp.z>1;
+    fileLabelEl.textContent=showFile.path.split("/").pop(); fileLabelEl.style.color=(selected?"#EAF0FF":"#FFB347");
+    fileLabelEl.style.left=((sp.x*0.5+0.5)*innerWidth)+"px"; fileLabelEl.style.top=((-sp.y*0.5+0.5)*innerHeight)+"px"; fileLabelEl.style.opacity=behind?0:reveal; } else fileLabelEl.style.opacity=0;
+
+  const raH=((Math.floor((yaw/Math.PI+1)*12))%24+24)%24, raM=Math.floor(Math.abs(yaw*120)%60), dec=Math.round(-pitch*60);
+  raEl.textContent=`RA ${String(raH).padStart(2,'0')}ʰ${String(raM).padStart(2,'0')}ᵐ · DEC ${dec>=0?'+':'−'}${Math.abs(dec)}°`;
+  zoomEl.textContent=`×${(120/dist).toFixed(1)}`;
+}
+animate();
+
+addEventListener("resize",()=>{ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight); composer.setSize(innerWidth,innerHeight); bloom.setSize(innerWidth,innerHeight); });
+</script>
+</body>
+</html>

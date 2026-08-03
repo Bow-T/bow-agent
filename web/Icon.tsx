@@ -60,6 +60,7 @@ import {
   Broom,
   Gps,
   Refresh2,
+  Maximize4,
   type Icon as IconType,
 } from 'iconsax-react';
 
@@ -109,6 +110,7 @@ const ICONS: Record<string, IconType> = {
   // Star Chart — viewport kính thiên văn
   target: Gps,
   refresh: Refresh2,
+  expand: Maximize4,
   // Detect / attach
   search: SearchNormal1,
   folder: Folder,

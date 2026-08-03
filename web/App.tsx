@@ -487,6 +487,9 @@ export function App() {
     setActiveTabId(id);
   }, [activeTabId]);
 
+  // id tab đang chờ xác nhận đóng (mở hộp xác nhận riêng, cùng kiểu modal xóa cuộc). null = không đóng.
+  const [tabCloseId, setTabCloseId] = useState<string | null>(null);
+
   /** Đóng một tab: gỡ khỏi danh sách (TaskPane unmount tự đóng SSE + stop session),
    *  dọn key localStorage của nó. Không cho đóng tab cuối (giữ UI không rỗng). */
   const closeTab = useCallback((id: string) => {
@@ -2378,7 +2381,7 @@ export function App() {
                     type="button"
                     className="tab-bar-close"
                     title={language === 'vi' ? 'Đóng tác vụ (dừng agent nếu đang chạy)' : 'Close task (stops agent if running)'}
-                    onClick={(e) => { e.stopPropagation(); closeTab(t.id); }}
+                    onClick={(e) => { e.stopPropagation(); setTabCloseId(t.id); }}
                   >
                     <Icon name="close" size={13} />
                   </button>
@@ -2394,6 +2397,19 @@ export function App() {
             aria-label={language === 'vi' ? 'Mở tác vụ mới' : 'Open new task'}
           >
             <Icon name="newChat" size={15} />
+          </button>
+          {/* Cosmos — vũ trụ tri thức toàn màn hình cho tab ĐANG mở. Không phải một tab
+              (conversation) riêng; mở overlay của pane active qua handle imperative (dữ liệu
+              steps/activeFiles/filetree đã chảy sẵn trong pane đó). */}
+          <button
+            type="button"
+            className="tab-bar-cosmos"
+            onClick={() => activePaneRef()?.openCosmos()}
+            title={language === 'vi' ? 'Cosmos — du hành trong bộ não AI (vũ trụ tri thức + bản đồ file)' : 'Cosmos — travel inside the AI brain (knowledge universe + file map)'}
+            aria-label={language === 'vi' ? 'Mở vũ trụ Cosmos' : 'Open Cosmos universe'}
+          >
+            <Icon name="starChart" size={15} />
+            <span className="tab-bar-cosmos-lbl">Cosmos</span>
           </button>
         </div>
 
@@ -3010,6 +3026,47 @@ export function App() {
           </div>
         </div>
       )}
+
+      {/* Xác nhận đóng một tab tác vụ (cùng kiểu modal xóa cuộc) */}
+      {tabCloseId && (() => {
+        const st = paneStates[tabCloseId];
+        const idx = tabs.findIndex((t) => t.id === tabCloseId);
+        const tabTitle = (tabs[idx]?.title || st?.title || '').trim()
+          || `${language === 'vi' ? 'Tác vụ' : 'Task'} ${idx >= 0 ? idx + 1 : ''}`.trim();
+        const isRunning = !!st?.running;
+        const pending = st?.pendingCount ?? 0;
+        return (
+          <div className="modal-overlay" onClick={() => setTabCloseId(null)}>
+            <div className="modal-content pixel-panel" style={{ maxWidth: '400px' }} onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <span className="modal-title"><Icon name="close" size={16} /> {language === 'vi' ? 'Đóng tác vụ' : 'Close task'}</span>
+                <button className="close-btn" onClick={() => setTabCloseId(null)}><Icon name="close" size={16} /></button>
+              </div>
+              <div className="modal-body">
+                <p style={{ margin: 0, lineHeight: 1.6 }}>
+                  {isRunning && (
+                    <><Icon name="warning" size={14} /> {language === 'vi'
+                      ? <>Agent <strong>đang chạy</strong> — đóng sẽ dừng phiên ngay.</>
+                      : <>The agent is <strong>running</strong> — closing stops it immediately.</>}<br /></>
+                  )}
+                  {pending > 0 && (
+                    <><Icon name="warning" size={14} /> {language === 'vi'
+                      ? <>Còn <strong>{pending}</strong> yêu cầu chờ duyệt sẽ bị bỏ.</>
+                      : <><strong>{pending}</strong> pending approval(s) will be dropped.</>}<br /></>
+                  )}
+                  {language === 'vi'
+                    ? <>Đóng tác vụ <strong>{tabTitle}</strong>?</>
+                    : <>Close task <strong>{tabTitle}</strong>?</>}
+                </p>
+              </div>
+              <div className="modal-footer" style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '16px' }}>
+                <button className="btn deny" onClick={() => setTabCloseId(null)}>{language === 'vi' ? 'Hủy' : 'Cancel'}</button>
+                <button className="btn stop" onClick={() => { closeTab(tabCloseId); setTabCloseId(null); }}>{language === 'vi' ? 'Đóng' : 'Close'}</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Xác nhận xóa một cuộc trò chuyện */}
       {histDeleteId && (

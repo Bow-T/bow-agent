@@ -795,6 +795,24 @@ a { color: var(--brass); text-underline-offset: 2px; }
 }
 .tab-bar-add:hover { color: var(--ink); background: color-mix(in srgb, var(--surface) 92%, transparent); }
 
+/* Nút Cosmos ở cuối tab-bar: mở vũ trụ tri thức cho tab đang mở. Nhấn accent (--brass) để
+   nổi khỏi hàng tab thường — đây là lối vào "trải nghiệm", không phải một tác vụ. */
+.tab-bar-cosmos {
+  display: inline-flex; align-items: center; gap: 6px;
+  flex-shrink: 0; margin-left: auto;
+  padding: 0 12px; height: 100%;
+  border: none; border-left: 1px solid var(--hairline);
+  background: transparent;
+  color: color-mix(in srgb, var(--ink) 62%, transparent);
+  font: 600 12px/1 var(--sans); letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: background 0.14s var(--ease), color 0.14s var(--ease);
+}
+.tab-bar-cosmos:hover { color: var(--brass); background: color-mix(in srgb, var(--brass) 12%, transparent); }
+.tab-bar-cosmos:focus-visible { outline: 2px solid var(--brass); outline-offset: -2px; }
+.tab-bar-cosmos-lbl { text-transform: uppercase; letter-spacing: 0.08em; }
+@media (max-width: 560px) { .tab-bar-cosmos-lbl { display: none; } }
+
 /* Bọc 1 tab hội thoại (TaskPane). Nằm giữa .app (flex column) và .main-layout — phải là
    flex column tự giãn để .main-layout bên trong vẫn fill như khi chưa tách. [hidden] ẩn tab
    không hoạt động (tab nền vẫn mounted → SSE/timer vẫn chạy). */
@@ -1010,9 +1028,9 @@ a { color: var(--brass); text-underline-offset: 2px; }
   text-overflow: ellipsis;
 }
 /* Nút đưa góc nhìn về mặc định — góc phải trên */
-.viewport-reset {
+.viewport-reset, .viewport-expand {
   position: absolute;
-  right: 8px; top: 8px;
+  top: 8px;
   z-index: 6;
   display: inline-flex;
   align-items: center; justify-content: center;
@@ -1027,8 +1045,11 @@ a { color: var(--brass); text-underline-offset: 2px; }
   transform: translateY(-2px);
   transition: opacity var(--fast), transform var(--fast), background var(--fast), color var(--fast);
 }
-.neural-net-container:hover .viewport-reset { opacity: 1; transform: translateY(0); }
-.viewport-reset:hover {
+.viewport-reset { right: 8px; }
+.viewport-expand { right: 38px; }  /* nằm cạnh trái nút reset */
+.neural-net-container:hover .viewport-reset,
+.neural-net-container:hover .viewport-expand { opacity: 1; transform: translateY(0); }
+.viewport-reset:hover, .viewport-expand:hover {
   color: var(--on-brass, #fff);
   background: var(--brass);
   border-color: var(--brass);
@@ -4247,4 +4268,119 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 [data-theme='figma'] .empty-step b {
   background: rgba(85, 81, 255, 0.16) !important;
   color: var(--brass-bright) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Cosmos Overlay — vũ trụ tri thức toàn màn hình (web/CosmosOverlay.tsx).
+   Nền là "chân không" tối cố định (vũ trụ luôn tối dù theme sáng) nhưng HUD/panel/
+   nhãn ăn theo token app (--brass/--teal/--ink) để hài hoà cả 2 theme.
+   ═══════════════════════════════════════════════════════════════════════════ */
+.cosmos-overlay {
+  position: fixed; inset: 0; z-index: 4000; background: #03040a;
+  font-family: var(--mono, ui-monospace, "SFMono-Regular", monospace);
+  color: #eaf0ff; overflow: hidden; animation: cosmos-fade 0.4s ease;
+}
+@keyframes cosmos-fade { from { opacity: 0; } to { opacity: 1; } }
+.cosmos-canvas-host { position: absolute; inset: 0; }
+.cosmos-canvas-host canvas { display: block; cursor: grab; }
+.cosmos-canvas-host canvas.dragging { cursor: grabbing; }
+.cosmos-labels { position: absolute; inset: 0; pointer-events: none; }
+
+.cosmos-lbl { position: absolute; transform: translate(-50%, -50%); text-align: center;
+  text-shadow: 0 2px 16px rgba(0,0,0,.95); transition: opacity .4s; white-space: nowrap; }
+.cosmos-lbl b { display: block; font-size: 11.5px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+.cosmos-lbl em { font-style: normal; font-size: 8px; letter-spacing: .1em; color: #8a93a8; }
+.cosmos-file-lbl { position: absolute; transform: translate(-50%, -140%); font-size: 10px;
+  letter-spacing: .04em; text-shadow: 0 2px 14px rgba(0,0,0,.95); white-space: nowrap; transition: opacity .2s; color: var(--brass); }
+
+.cosmos-corner { position: absolute; width: 26px; height: 26px; border: 1.5px solid rgba(150,160,190,.2); pointer-events: none; opacity: .85; }
+.cosmos-corner.tl { top: 20px; left: 20px; border-right: 0; border-bottom: 0; }
+.cosmos-corner.tr { top: 20px; right: 20px; border-left: 0; border-bottom: 0; }
+.cosmos-corner.bl { bottom: 20px; left: 20px; border-right: 0; border-top: 0; }
+.cosmos-corner.br { bottom: 20px; right: 20px; border-left: 0; border-top: 0; }
+
+.cosmos-hud-title { position: absolute; top: 30px; left: 40px; pointer-events: none; text-shadow: 0 2px 20px rgba(0,0,0,.85); }
+.cosmos-hud-title h1 { font-size: 13px; font-weight: 700; letter-spacing: .44em; margin: 0; text-transform: uppercase; color: #eaf0ff; }
+.cosmos-sub { margin-top: 7px; font-size: 10px; letter-spacing: .18em; color: #8a93a8; text-transform: uppercase; }
+.cosmos-live { display: inline-flex; align-items: center; gap: 7px; margin-top: 11px; font-size: 9.5px; letter-spacing: .12em; color: var(--brass); text-transform: uppercase; }
+.cosmos-live b { width: 6px; height: 6px; border-radius: 50%; background: var(--brass); box-shadow: 0 0 12px var(--brass); animation: cosmos-pulse 1.6s infinite; }
+@keyframes cosmos-pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.6); } }
+
+.cosmos-coords { position: absolute; top: 78px; right: 40px; text-align: right; font-size: 10px; letter-spacing: .16em; color: #8a93a8; pointer-events: none; font-variant-numeric: tabular-nums; text-shadow: 0 2px 20px rgba(0,0,0,.85); }
+.cosmos-coords .zoom { color: #eaf0ff; font-size: 11px; margin-top: 4px; }
+.cosmos-coords .now { color: var(--brass); margin-top: 8px; font-size: 10px; letter-spacing: .08em; }
+
+/* Góc phải-trên xếp thành CỘT gọn, không chồng đè: coords (top) → modebar (dưới) → close tách trái. */
+.cosmos-modebar { position: absolute; top: 140px; right: 40px; display: flex; gap: 6px; }
+.cosmos-modebar button { background: rgba(8,11,22,.72); border: 1px solid rgba(150,160,190,.2); color: #8a93a8;
+  font-family: inherit; font-size: 9px; letter-spacing: .1em; text-transform: uppercase; padding: 7px 11px; cursor: pointer; backdrop-filter: blur(8px); transition: all .2s; }
+.cosmos-modebar button.on { border-color: var(--brass); color: var(--brass); box-shadow: 0 0 14px var(--brass-soft); }
+
+.cosmos-close, .cosmos-reset { position: absolute; background: rgba(8,11,22,.72); border: 1px solid rgba(150,160,190,.2);
+  color: #eaf0ff; cursor: pointer; backdrop-filter: blur(8px); display: grid; place-items: center; transition: border-color .2s, color .2s; z-index: 6; }
+.cosmos-close { top: 30px; right: 40px; width: 34px; height: 34px; }
+.cosmos-reset { bottom: 34px; right: 40px; width: 34px; height: 34px; }
+.cosmos-close:hover, .cosmos-reset:hover { border-color: var(--brass); color: var(--brass); }
+
+.cosmos-hint { position: absolute; bottom: 36px; left: 50%; transform: translateX(-50%); font-size: 9.5px;
+  letter-spacing: .05em; color: #8a93a8; pointer-events: none; opacity: .7; white-space: nowrap; text-shadow: 0 2px 14px rgba(0,0,0,.85); }
+
+.cosmos-inspector { position: absolute; top: 0; right: 0; height: 100%; width: 356px; background: rgba(8,11,22,.78);
+  backdrop-filter: blur(22px); border-left: 1px solid rgba(150,160,190,.2); padding: 84px 30px 30px; display: flex; flex-direction: column; overflow-y: auto; animation: cosmos-slide .5s cubic-bezier(.16,1,.3,1); }
+@keyframes cosmos-slide { from { transform: translateX(100%); } to { transform: translateX(0); } }
+.cosmos-insp-close { position: absolute; top: 30px; right: 24px; background: none; border: 0; color: #8a93a8; cursor: pointer; display: grid; place-items: center; }
+.cosmos-insp-close:hover { color: #eaf0ff; }
+.cosmos-insp-tag { font-size: 9px; letter-spacing: .2em; text-transform: uppercase; color: #8a93a8; }
+.cosmos-insp-name { font-size: 24px; letter-spacing: .02em; margin: 8px 0 0; word-break: break-all; color: #eaf0ff; }
+.cosmos-insp-status { display: inline-flex; align-items: center; gap: 7px; margin-top: 20px; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: #8a93a8; }
+.cosmos-insp-status b { width: 7px; height: 7px; border-radius: 50%; background: #556; }
+.cosmos-insp-status.live { color: var(--brass); }
+.cosmos-insp-status.live b { background: var(--brass); box-shadow: 0 0 8px var(--brass); animation: cosmos-pulse 1.4s infinite; }
+.cosmos-insp-body { margin-top: 20px; font-size: 12.5px; line-height: 1.75; color: #8a93a8; }
+.cosmos-insp-body strong { color: #eaf0ff; font-weight: 600; }
+/* Ô tìm file (repo mode) — góc trên, HUD tàu vũ trụ. */
+.cosmos-search { position: absolute; top: 108px; left: 50%; transform: translateX(-50%); z-index: 5;
+  display: flex; align-items: center; gap: 8px; padding: 7px 12px;
+  background: rgba(8,11,22,.72); border: 1px solid rgba(150,170,220,.22); border-radius: 4px;
+  backdrop-filter: blur(10px); color: #8a93a8; }
+.cosmos-search input { background: none; border: none; outline: none; color: #eaf0ff; font: 12px var(--mono, monospace);
+  width: 220px; letter-spacing: .02em; }
+.cosmos-search input::placeholder { color: #5a6274; }
+.cosmos-search button { display: grid; place-items: center; background: none; border: none; color: #8a93a8; cursor: pointer; padding: 2px; }
+.cosmos-search button:hover { color: var(--brass); }
+
+/* Badge chất lượng đồ hoạ + FPS — góc dưới phải. */
+.cosmos-tier { position: absolute; bottom: 20px; right: 24px; z-index: 5;
+  display: flex; align-items: center; gap: 8px; padding: 6px 11px;
+  background: rgba(8,11,22,.72); border: 1px solid rgba(150,170,220,.2); border-radius: 4px;
+  backdrop-filter: blur(10px); cursor: pointer; font: 10px var(--mono, monospace); letter-spacing: .1em; }
+.cosmos-tier:hover { border-color: var(--brass); }
+.cosmos-tier-lv { font-weight: 700; text-transform: uppercase; }
+.cosmos-tier-lv.t-ultra { color: #ffb347; } .cosmos-tier-lv.t-high { color: #5fa8ff; }
+.cosmos-tier-lv.t-balanced { color: #49d0a0; } .cosmos-tier-lv.t-lite { color: #8a93a8; }
+.cosmos-tier-fps { color: #cdd6ea; font-variant-numeric: tabular-nums; }
+
+/* Badge tự-hành (attract mode) — giữa trên, nhấp nháy nhẹ để báo camera đang tự bay. */
+.cosmos-autopilot { position: absolute; top: 150px; left: 50%; transform: translateX(-50%); z-index: 5;
+  padding: 5px 12px; font: 10px var(--mono, monospace); letter-spacing: .14em; color: #ffb347;
+  background: rgba(8,11,22,.6); border: 1px solid rgba(255,179,71,.3); border-radius: 3px;
+  backdrop-filter: blur(8px); animation: cosmos-ap-pulse 2.4s ease-in-out infinite; }
+@keyframes cosmos-ap-pulse { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .cosmos-autopilot { animation: none; } }
+
+/* Danh sách skill/MCP THẬT trong inspector — chip nhỏ, cuộn nếu dài. */
+.cosmos-insp-list { margin-top: 14px; font-size: 11.5px; line-height: 1.9; }
+.cosmos-insp-list b { display: block; color: #8a93a8; text-transform: uppercase; letter-spacing: .06em; font-size: 9px; margin-bottom: 8px; }
+.cosmos-insp-list span { display: inline-block; margin: 0 5px 5px 0; padding: 3px 8px; font-size: 10.5px;
+  color: #cdd6ea; background: rgba(120,140,190,.12); border: 1px solid rgba(150,170,220,.18); border-radius: 3px;
+  font-family: var(--mono, monospace); }
+.cosmos-insp-meta { margin-top: 22px; display: flex; flex-direction: column; }
+.cosmos-insp-row { display: flex; justify-content: space-between; font-size: 12px; border-top: 1px solid rgba(150,160,190,.2); padding: 12px 0; }
+.cosmos-insp-row span:first-child { color: #8a93a8; letter-spacing: .06em; text-transform: uppercase; font-size: 9px; align-self: center; }
+.cosmos-insp-row span:last-child { color: #eaf0ff; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 900px) {
+  .cosmos-hud-title { left: 20px; top: 20px; } .cosmos-coords { right: 20px; top: 20px; }
+  .cosmos-modebar { top: 70px; right: 20px; } .cosmos-close { right: 20px; top: 108px; }
+  .cosmos-inspector { width: 100%; } .cosmos-hint { display: none; }
 }
