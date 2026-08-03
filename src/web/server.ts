@@ -1,7 +1,7 @@
 import express from 'express';
 import http from 'node:http';
 import cors from 'cors';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve, basename } from 'node:path';
 import fs from 'node:fs';
@@ -173,6 +173,19 @@ const isDevOpsMode = process.env.BOW_DEVOPS_MODE === 'true';
 // (gọi tới cổng DevOps 4005) → lưu vào devopsCwdOverride, không cần restart.
 let devopsCwdOverride: string | null = null;
 const devopsCwd = () => resolve(devopsCwdOverride || process.env.BOW_DEVOPS_CWD || config.defaultCwd);
+
+/**
+ * Workspace THẬT của agent theo mode đang chạy — nguồn duy nhất để mọi API đọc file/repo
+ * (vd /api/filetree cho bản đồ vũ trụ). Rút từ công thức trong /api/config để không lặp lại
+ * chuỗi ternary dài; đổi cách resolve cwd thì sửa MỘT chỗ này.
+ */
+const effectiveCwd = (): string =>
+  isQcMode ? qcCwd()
+    : isReviewerMode ? reviewerCwd()
+    : isCollabMode ? collabCwd()
+    : isBaMode ? baCwd()
+    : isDevOpsMode ? devopsCwd()
+    : devCwd();
 
 /**
  * Trả về TẤT CẢ địa chỉ IPv4 LAN của máy (bỏ loopback), đã sắp xếp: IP mạng nội bộ
@@ -1692,6 +1705,65 @@ app.get('/api/usage', async (req, res) => {
  * GET /api/skill-stacks — liệt kê stack skill external ĐÃ ADMIN DUYỆT (registry). UI đọc để
  * dựng dropdown chọn stack. Chỉ trả metadata hiển thị (id/label/ref/default), không lộ gì nhạy cảm.
  */
+/**
+ * GET /api/filetree — cây file THẬT của workspace agent, cho "bản đồ vũ trụ" (mỗi file một
+ * ngôi sao). Trả [{path, lines}] tương đối so với cwd. Nguồn: `git ls-files` (bỏ node_modules/
+ * .git, tôn trọng .gitignore) trong cwd; repo không-git thì readdir đệ quy có bỏ thư mục nặng.
+ * File nhị phân/media không đếm dòng (lines: 0). CHỈ ĐỌC — không ghi gì.
+ */
+app.get('/api/filetree', (_req, res) => {
+  const cwd = effectiveCwd();
+  const SKIP_DIR = new Set(['node_modules', '.git', 'dist', 'dist-web', 'build', '.next', 'coverage']);
+  const BINARY = /\.(gif|mp4|mov|png|jpe?g|webp|ico|svg|woff2?|ttf|otf|pdf|zip|lock)$/i;
+  const countLines = (abs: string): number => {
+    try {
+      const buf = fs.readFileSync(abs);
+      // bỏ file quá lớn (>1MB) hoặc chứa NUL (nhị phân) — không đếm để nhẹ.
+      if (buf.length > 1_000_000 || buf.includes(0)) return 0;
+      let n = 1;
+      for (let i = 0; i < buf.length; i++) if (buf[i] === 10) n++;
+      return n;
+    } catch {
+      return 0;
+    }
+  };
+
+  const files: { path: string; lines: number }[] = [];
+  try {
+    // Ưu tiên git: nhanh, đúng .gitignore, bỏ file rác. execFileSync đồng bộ, timeout ngắn.
+    const out = execFileSync('git', ['ls-files'], { cwd, encoding: 'utf8', timeout: 5000, maxBuffer: 8 * 1024 * 1024 });
+    for (const rel of out.split('\n')) {
+      const p = rel.trim();
+      if (!p) continue;
+      files.push({ path: p, lines: BINARY.test(p) ? 0 : countLines(join(cwd, p)) });
+    }
+  } catch {
+    // Không phải git repo (hoặc git thiếu) → readdir đệ quy, bỏ thư mục nặng.
+    const walk = (dir: string, rel: string) => {
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const e of entries) {
+        if (e.name.startsWith('.') && e.name !== '.claude' && e.name !== '.github') continue;
+        if (e.isDirectory()) {
+          if (SKIP_DIR.has(e.name)) continue;
+          walk(join(dir, e.name), rel ? `${rel}/${e.name}` : e.name);
+        } else if (e.isFile()) {
+          const p = rel ? `${rel}/${e.name}` : e.name;
+          if (files.length >= 4000) return; // trần an toàn cho repo khổng lồ
+          files.push({ path: p, lines: BINARY.test(p) ? 0 : countLines(join(dir, e.name)) });
+        }
+      }
+    };
+    walk(cwd, '');
+  }
+
+  res.json({ cwd, repoName: basename(cwd), files });
+});
+
 app.get('/api/skill-stacks', (_req, res) => {
   try {
     const stacks = loadRegistry().map((s) => ({
