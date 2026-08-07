@@ -1398,10 +1398,13 @@ app.post('/api/profiles/login/start', requireAdmin, (req, res) => {
     // profile CŨ vào process.env. `claude auth login` thừa hưởng token rác đó → conflict → THOÁT
     // MÃ 1 KHÔNG OUTPUT (đúng lỗi đã gặp: login chết ngay, server sạch thì login OK). Login tạo
     // token mới, KHÔNG cần token có sẵn → cứ gỡ hết cho chắc. Đây là chốt chặn class lỗi "env bẩn".
+    // Đồng thời, gỡ bỏ NODE_OPTIONS và VSCODE_INSPECTOR_OPTIONS để tránh việc tiến trình con
+    // thừa hưởng debug configurations từ IDE (VS Code / Antigravity), gây lỗi thoát sớm.
     const cleanEnv = { ...process.env };
     for (const k of [
       'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_BASE_URL',
       'ANTHROPIC_BEDROCK_BASE_URL', 'ANTHROPIC_VERTEX_BASE_URL', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX',
+      'NODE_OPTIONS', 'VSCODE_INSPECTOR_OPTIONS',
     ]) {
       delete cleanEnv[k];
     }
