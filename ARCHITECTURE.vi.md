@@ -276,6 +276,21 @@ có Vite dev server ở 5173). Chính sách nằm trong `canUseTool` (`runner.ts
 - **Admin = socket IP thật `127.0.0.1`** (`getSocketIp`, **bỏ qua** `X-Forwarded-For` để LAN
   không spoof header giành quyền admin). Đổi cấu hình (MCP chung/workspace/skill-sync) bị
   `checkReadonlyConfig` chặn 403 ở cả năm mode chia sẻ QC/Reviewer/Collab/BA/DevOps.
+- **Chọn tài khoản Claude = chỉ admin (localhost)**: `GET /api/config` chỉ trả `claudeProfiles`
+  (danh sách profile `~/.claude*` của host) + `currentClaudeProfile` khi `isAdmin`; khách LAN nhận
+  mảng rỗng nên UI **ẩn hẳn** bộ chọn tài khoản (không lộ tên profile của host). Kể cả nếu khách
+  gửi cờ `claudeProfile` lên `/api/run`, runner **bỏ qua** (`effectiveClaudeProfile = undefined`
+  khi `!isAdmin`) và chạy bằng tài khoản env của server — **mọi setup tài khoản chỉ đặt từ `localhost`**.
+- **Autopilot A–Z (chỉ admin localhost)**: toggle 🛸 bật cờ `autopilot` (server ép `effectiveAutopilot
+  = isAdmin && autopilot === true`; khách LAN gửi cờ → BỎ QUA, như `effectiveClaudeProfile`). Chạy như
+  `auto` nhưng: (1) đầu phiên tạo **git checkpoint** (`createCheckpoint` trong `checkpoint.ts` — `baseSHA`
+  + snapshot TOÀN worktree kể cả untracked, pin ở `refs/bow/autopilot/<id>`) + **journal** append-only
+  `conversations/autopilot-<id>.jsonl`, để `git reset --hard baseSHA` / `git checkout snapshot -- .`
+  hoàn tác; (2) **NỚI** cổng cho ghi-file thuần TRONG repo (`mv`/`cp`/`>`/`tee` qua `autopilotBashDecision`
+  trong `autopilotBash.ts` — fail-safe: nghi ngờ / ghi ngoài repo → vẫn hỏi); (3) **SIẾT**: DB/MCP-write,
+  `git push`/`reset --hard`/`--force`/`rebase`/`clean`, `gh pr create`/`merge`, `rm`/xoá, ghi-ngoài-repo,
+  `chmod`/`sudo`… LUÔN hỏi. System-prompt ép verify runtime (analyze+test+trace+impact-sweep) trước khi
+  done; dừng ở commit local trên branch ticket, chờ duyệt push/mở MR.
 - **Duyệt từ xa (Collab)**: `session.ts` có `adminBus` (tách khỏi Session vì mỗi phiên CTV chỉ
   có một consumer SSE). CTV bị treo chờ; admin mở SSE `GET /api/admin/events`, bấm duyệt qua
   `POST /api/admin/approve` → giải Promise treo bên CTV.
