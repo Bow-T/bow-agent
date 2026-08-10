@@ -308,6 +308,23 @@ separate Vite dev server on 5173). The policy lives in `canUseTool` (`runner.ts`
   LAN client can't spoof a header into admin rights). Config changes (shared MCP / workspace /
   skill-sync) are blocked with a 403 by `checkReadonlyConfig` in all five shared modes
   (QC/Reviewer/Collab/BA/DevOps).
+- **Claude account selection = admin (localhost) only**: `GET /api/config` returns `claudeProfiles`
+  (the host's `~/.claude*` profile list) + `currentClaudeProfile` only when `isAdmin`; a LAN client gets
+  an empty array, so the UI **hides** the account picker entirely (host profile names are never leaked).
+  Even if a LAN client sends a `claudeProfile` flag to `/api/run`, the runner **ignores it**
+  (`effectiveClaudeProfile = undefined` when `!isAdmin`) and runs under the server's env account — **all
+  account setup is done from `localhost` only**.
+- **Autopilot A–Z (admin localhost only)**: the 🛸 toggle sets the `autopilot` flag (server forces
+  `effectiveAutopilot = isAdmin && autopilot === true`; a LAN client's flag is IGNORED, like
+  `effectiveClaudeProfile`). Runs like `auto` but: (1) at session start it makes a **git checkpoint**
+  (`createCheckpoint` in `checkpoint.ts` — `baseSHA` + a snapshot of the WHOLE worktree incl. untracked,
+  pinned at `refs/bow/autopilot/<id>`) plus an append-only **journal** `conversations/autopilot-<id>.jsonl`,
+  so `git reset --hard baseSHA` / `git checkout snapshot -- .` can roll back; (2) it **LOOSENS** the gate
+  for pure in-repo file writes (`mv`/`cp`/`>`/`tee` via `autopilotBashDecision` in `autopilotBash.ts` —
+  fail-safe: anything uncertain or out-of-repo still asks); (3) it **TIGHTENS**: DB/MCP writes,
+  `git push`/`reset --hard`/`--force`/`rebase`/`clean`, `gh pr create`/`merge`, `rm`/deletes, out-of-repo
+  writes, `chmod`/`sudo`… always ask. The system prompt forces runtime verification (analyze+test+trace+
+  impact-sweep) before "done" and stops at a local commit on the ticket branch, awaiting push/MR approval.
 - **Remote approval (Collab)**: `session.ts` has an `adminBus` (kept separate from Session because each
   contributor's session has exactly one SSE consumer). The contributor is parked waiting; the admin opens
   the SSE stream `GET /api/admin/events` and approves via `POST /api/admin/approve` → which resolves the

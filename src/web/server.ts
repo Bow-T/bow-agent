@@ -452,6 +452,8 @@ interface RunParams {
   stack?: string;
   /** Bật multi-agent (reviewer/verifier/impact-scout). Chỉ admin. Mặc định tắt. */
   useSubagents?: boolean;
+  /** Autopilot A–Z: nới cổng cho thao tác git-recoverable + checkpoint/journal. Chỉ admin. */
+  autopilot?: boolean;
   model?: string;
   /** Tài khoản Claude cho lượt chạy (per-tab). Runner dựng env riêng, không đổi env server. */
   claudeProfile?: string;
@@ -514,6 +516,8 @@ function runAgentSession(session: ReturnType<typeof createSession>, params: RunP
         : undefined,
     stack: params.stack || undefined,
     useSubagents: params.useSubagents,
+    autopilot: params.autopilot,
+    runId: session.id,
     abortSignal: session.abort.signal,
     onEvent: (ev) => {
       // Bắt lỗi hết hạn mức trước khi đẩy event ra client — để lên lịch tự chạy tiếp.
@@ -637,6 +641,7 @@ app.post('/api/run', async (req, res) => {
       claudeProfile,
       stack,
       useSubagents,
+      autopilot,
       conversationId,
       resumeContext,
     } = req.body ?? {};
@@ -850,6 +855,10 @@ app.post('/api/run', async (req, res) => {
     // admin localhost bật được. Non-admin gửi cờ lên cũng bị bỏ qua → single-agent như cũ.
     const allowSubagents = isAdmin && useSubagents === true;
 
+    // Autopilot A–Z: CHỈ admin localhost mới bật được. Khách LAN (QC/Collab/BA/Reviewer/DevOps)
+    // gửi cờ lên cũng bị BỎ QUA (như effectiveClaudeProfile) — không để khách nới cổng duyệt.
+    const effectiveAutopilot = isAdmin && autopilot === true;
+
     // Tài khoản Claude per-tab: CHỈ admin localhost được tự chọn tài khoản để chạy. Khách LAN
     // (QC/Collab/BA/Reviewer/DevOps) gửi cờ lên cũng bị BỎ QUA → dùng tài khoản env server —
     // tránh khách chạy bằng gói/quyền của tài khoản admin khác. undefined = theo env server.
@@ -894,6 +903,7 @@ app.post('/api/run', async (req, res) => {
         userMcpServers,
         stack: typeof stack === 'string' ? stack : undefined,
         useSubagents: allowSubagents,
+        autopilot: effectiveAutopilot,
         model: effectiveModel,
         claudeProfile: effectiveClaudeProfile,
         isExecuting,
@@ -1207,8 +1217,12 @@ app.get('/api/config', async (req, res) => {
     isBaMode,
     isDevOpsMode,
     isAdmin,
-    claudeProfiles: listClaudeProfiles(),
-    currentClaudeProfile: getCurrentProfile(),
+    // Danh sách tài khoản Claude của host CHỈ lộ cho admin (localhost). Khách LAN
+    // (QC/Collab/BA/Reviewer/DevOps) không được tự chọn tài khoản — runner đã ép
+    // effectiveClaudeProfile=undefined cho non-admin — nên KHÔNG trả danh sách/tên
+    // account ra LAN (tránh rò tên profile + tránh dropdown "chọn được nhưng bị bỏ qua").
+    claudeProfiles: isAdmin ? listClaudeProfiles() : [],
+    currentClaudeProfile: isAdmin ? getCurrentProfile() : '',
     hasAuth: config.hasAuth,
     tokenSet: config.hasTokenSet,
     otherModes: modes

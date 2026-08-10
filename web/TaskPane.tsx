@@ -141,6 +141,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
     profile: tabKey('bow-profile', tabId),
     claudeProfile: tabKey('bow-claudeProfile', tabId),
     autoApprove: tabKey('bow-auto-approve', tabId),
+    autopilot: tabKey('bow-autopilot', tabId),
   };
 
   // ── State/refs PER-TAB ──
@@ -152,6 +153,9 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
   );
   const [effort, setEffort] = useState(() => localStorage.getItem(K.effort) || 'high');
   const [profile, setProfile] = useState(() => localStorage.getItem(K.profile) || 'auto');
+  // Autopilot A–Z (CHỈ admin, server cưỡng chế lại): nới cổng cho thao tác git-recoverable +
+  // checkpoint/journal để hoàn tác. Per-tab, lưu localStorage.
+  const [autopilot, setAutopilot] = useState(() => localStorage.getItem(K.autopilot) === '1');
   // Tài khoản Claude PER-TAB (mỗi tab chạy 1 tài khoản riêng). Khởi tạo: lựa chọn đã lưu của
   // tab, nếu chưa có thì theo tài khoản server đang set (cfg.currentClaudeProfile) hoặc 'default'.
   const [selectedClaudeProfile, setSelectedClaudeProfile] = useState(
@@ -300,6 +304,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
   useEffect(() => { localStorage.setItem(K.effort, effort); }, [K.effort, effort]);
   useEffect(() => { localStorage.setItem(K.profile, profile); }, [K.profile, profile]);
   useEffect(() => { localStorage.setItem(K.claudeProfile, selectedClaudeProfile); }, [K.claudeProfile, selectedClaudeProfile]);
+  useEffect(() => { localStorage.setItem(K.autopilot, autopilot ? '1' : '0'); }, [K.autopilot, autopilot]);
   // Khi cfg về mà tab CHƯA có lựa chọn tài khoản lưu riêng → theo tài khoản server đang set.
   useEffect(() => {
     if (cfg?.currentClaudeProfile && !localStorage.getItem(K.claudeProfile)) {
@@ -794,6 +799,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
       model: selectedModel,
       claudeProfile: selectedClaudeProfile,
       useSubagents,
+      autopilot,
     };
 
     let res: Response;
@@ -817,6 +823,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
           model: selectedModel,
           claudeProfile: selectedClaudeProfile,
           useSubagents,
+          autopilot,
           conversationId: conversationId || undefined,
           resumeContext: sentResumeContext || undefined,
         }),
@@ -2055,7 +2062,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
                 ⚙ <b>{modelLabel}</b> · {modeLabel} · {effortLabel}
               </button>
 
-              {cfg?.claudeProfiles && cfg.claudeProfiles.length > 0 && (
+              {cfg?.isAdmin && cfg?.claudeProfiles && cfg.claudeProfiles.length > 0 && (
                 <button
                   type="button"
                   className="cfg-chip"
@@ -2230,7 +2237,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
           </div>
           {/* Hàng 2 — TÀI KHOẢN & AGENT: profile Claude, effort, đội agent, và repo (đẩy phải). */}
           <div className="control-row" data-group={language === 'vi' ? 'Tác nhân' : 'Agent'}>
-          {cfg?.claudeProfiles && cfg.claudeProfiles.length > 0 && (
+          {cfg?.isAdmin && cfg?.claudeProfiles && cfg.claudeProfiles.length > 0 && (
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
               {language === 'vi' ? 'Tài khoản:' : 'Account:'}
               <PixelSelect
@@ -2394,6 +2401,24 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
               />
               <span className="bow-switch-track" aria-hidden="true"><span className="bow-switch-thumb" /></span>
               <span className="bow-switch-label">🤖 {language === 'vi' ? 'Đội agent' : 'Agent team'}</span>
+            </label>
+          )}
+          {/* Autopilot A–Z: chạy tới khi ticket done, tự duyệt thao tác git-recoverable (checkpoint
+              hoàn tác được); CHỈ hỏi khi xoá/DB/git-push/mở-MR/ghi-ngoài-repo. CHỈ admin; server
+              cưỡng chế lại (effectiveAutopilot = isAdmin && …). Bật ⇒ ép mode 'auto'. */}
+          {cfg?.isAdmin && (
+            <label
+              className={`bow-switch${autopilot ? ' on' : ''}${running ? ' disabled' : ''}`}
+              title={language === 'vi' ? "Autopilot A–Z: agent tự chạy hết ticket (sửa file, test, verify runtime, commit local). Tự duyệt thao tác git khôi phục được; CHỈ dừng hỏi khi xoá/DB/git push/mở MR/ghi ngoài repo. Có git checkpoint để hoàn tác." : "Autopilot A–Z: agent runs the whole ticket (edit, test, runtime-verify, local commit). Auto-approves git-recoverable ops; only asks on delete/DB/git push/open-MR/out-of-repo. Git checkpoint enables rollback."}
+            >
+              <input
+                type="checkbox"
+                checked={autopilot}
+                disabled={running}
+                onChange={(e) => { setAutopilot(e.target.checked); if (e.target.checked) setMode('auto'); }}
+              />
+              <span className="bow-switch-track" aria-hidden="true"><span className="bow-switch-thumb" /></span>
+              <span className="bow-switch-label">🛸 {language === 'vi' ? 'Autopilot' : 'Autopilot'}</span>
             </label>
           )}
           {/* Ô chọn thư mục repo (cwd) — thu gọn, nằm cuối hàng bên phải Effort.

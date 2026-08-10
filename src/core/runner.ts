@@ -23,6 +23,8 @@ import { deployCoreSkills, deployExternalSkills, type ExternalDeployResult } fro
 import { loadMonorepoContext } from '../skills/monorepo.js';
 import { buildMonorepoHooks, buildReadAutoApproveHook } from '../skills/hooks.js';
 import { buildSubagents } from './subagents.js';
+import { createCheckpoint, restoreInstructions, recordAction } from './checkpoint.js';
+import { autopilotBashDecision } from './autopilotBash.js';
 import {
   resolveWorkspace,
   buildWorkspacePrompt,
@@ -243,6 +245,15 @@ export interface RunOptions {
    * tài khoản mà KHÔNG đổi process.env toàn cục của server. Bỏ trống = dùng profile env server.
    */
   claudeProfile?: string;
+  /**
+   * Autopilot A–Z: chạy như 'auto' NHƯNG (1) tạo git checkpoint đầu phiên + journal mọi thao tác
+   * ghi để hoàn tác được; (2) NỚI cổng cho ghi-file thuần TRONG repo (mv/cp/redirect/tee qua
+   * autopilotBashDecision); (3) SIẾT: DB/MCP-write LUÔN hỏi (kể cả admin). Chỉ admin/localhost bật
+   * (server cưỡng chế). Xem checkpoint.ts + autopilotBash.ts.
+   */
+  autopilot?: boolean;
+  /** ID phiên (server truyền session.id) — dùng đặt tên journal autopilot. */
+  runId?: string;
   /** ID phiên chạy cũ cần khôi phục lịch sử chat. */
   resumeSessionId?: string;
   /**
@@ -323,6 +334,20 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   const isExecuting = mode !== 'plan';
 
   const permissionMode: PermissionMode = mode === 'plan' ? 'plan' : 'default';
+
+  // Autopilot: dựng lưới hoàn tác TRƯỚC khi chạy. Có git → baseSHA + snapshot để `git reset --hard`
+  // khôi phục nếu agent làm sai; không git → CẢNH BÁO (không có phao) nhưng vẫn chạy theo lựa chọn
+  // caller. runId đặt tên journal để truy vết mọi thao tác ghi/bash. Xem checkpoint.ts.
+  const autopilotRunId = opts.runId ?? 'autopilot';
+  if (opts.autopilot) {
+    const cp = createCheckpoint(opts.cwd, autopilotRunId);
+    opts.onEvent({
+      type: 'text',
+      text: cp.git
+        ? `🛟 Autopilot checkpoint (base ${cp.baseSHA?.slice(0, 8)}). Khôi phục nếu cần:\n${restoreInstructions(cp)}`
+        : `⚠️ ${opts.cwd} KHÔNG phải git repo — autopilot không có lưới hoàn tác. Cân nhắc dừng.`,
+    });
+  }
 
   // MCP chỉ nạp các server nằm trong danh sách opts.mcpServers.
   // (1) MCP server từ Claude Code (~/.claude.json): supabase, jira, codemagic...
@@ -528,6 +553,7 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     /(?:^|[\s;&|(])mv(?=$|[\s/])/,
     /(?:^|[\s;&|(])cp(?=$|[\s/])/,
     /\bgit\s+push\b/,
+    /\bgh\s+pr\s+(create|merge|close|ready)\b/, // mở/gộp/đóng PR = outward-facing → luôn hỏi (handoff autopilot)
     /\bgit\s+reset\s+--hard\b/,
     /\bgit\s+clean\b/,
     /\bgit\s+checkout\s+--\s/,       // vứt bỏ thay đổi file
@@ -1118,8 +1144,17 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
             if (toolName === 'Bash' && typeof input.command === 'string') {
               const cmd = input.command.trim();
               if (isRiskyCommand(cmd)) {
+                // Autopilot: NỚI cho ghi-file thuần TRONG repo (mv/cp/redirect/tee) — git checkpoint
+                // hoàn tác được. rm/git/chmod/sudo/ln/inline-script/ghi-ngoài-repo… vẫn hỏi
+                // (autopilotBashDecision fail-safe: nghi ngờ → 'ask'). isPathInRepo đã realpath chống
+                // symlink-escape. Journal lại để truy vết.
+                if (opts.autopilot && autopilotBashDecision(cmd, isPathInRepo) === 'auto') {
+                  recordAction(autopilotRunId, 'Bash', { command: cmd });
+                  return allow;
+                }
                 return gate({ decisionReason: 'Lệnh có thể gây hại/không thể hoàn tác — cần bạn xác nhận.', risky: true });
               }
+              if (opts.autopilot) recordAction(autopilotRunId, 'Bash', { command: cmd });
               // Fast-path 'safe' CHỈ cho lệnh đơn (không toán tử nối) — chốt chặn M1.
               if (!hasCommandChaining(cmd) && SAFE_COMMANDS.some((re) => re.test(cmd))) return allow;
               if (opts.requireApprovalForWrites) {
@@ -1139,7 +1174,14 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
                 return gate({ decisionReason: 'Sửa/ghi file cần được duyệt (chế độ cộng tác/không phải admin).' });
               }
               const inRepo = isPathInRepo(target);
-              if ((mode === 'edit-auto' || mode === 'auto') && inRepo) return allow;
+              if ((mode === 'edit-auto' || mode === 'auto') && inRepo) {
+                if (opts.autopilot) {
+                  recordAction(autopilotRunId, toolName, {
+                    target: typeof target === 'string' ? target : undefined,
+                  });
+                }
+                return allow;
+              }
               if ((mode === 'edit-auto' || mode === 'auto') && !inRepo) {
                 return gate({ decisionReason: 'Ghi file NGOÀI thư mục repo — cần bạn xác nhận.' });
               }
@@ -1160,6 +1202,21 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
                 risky: isMcpWrite,
               });
             }
+            // Autopilot SIẾT: MCP write (execute_sql/apply_migration/DROP…) THOÁT lưới git → LUÔN hỏi,
+            // kể cả admin (đóng lỗ admin 'auto' tự chạy DROP ở dòng dưới). Side-effect KHÔNG-MCP còn lại
+            // (vốn hiếm ở nhánh này) → journal rồi auto như 'auto'.
+            if (opts.autopilot) {
+              const isMcpWrite =
+                toolName.startsWith('mcp__') &&
+                !/(?:^|__)(?:list|get|search|describe|read|show|fetch)/i.test(toolName);
+              if (isMcpWrite) {
+                return gate({
+                  decisionReason: `Autopilot: thao tác DB/MCP "${toolName}" thoát lưới git — cần xác nhận.`,
+                  risky: true,
+                });
+              }
+              recordAction(autopilotRunId, toolName);
+            }
             return mode === 'auto' ? allow : gate();
           },
         }
@@ -1175,7 +1232,12 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     auto:
       'Hãy thực hiện task trên theo quy trình một cách tự chủ. Bạn được tự sửa file trong repo và chạy các lệnh an toàn; chỉ dừng hỏi trước thao tác rủi ro/không thể hoàn tác (xóa dữ liệu, git push, ghi ngoài repo…).',
   };
-  const promptText = `${opts.brief}\n\n---\n${modeInstruction[mode]}`;
+  // Autopilot: chỉ thị A–Z bổ sung — chạy tới khi ticket done, ép verify runtime, cấm push/reset,
+  // dừng ở commit local chờ duyệt push/MR. Thao tác xoá/DB/ghi-ngoài-repo vẫn được cổng hỏi.
+  const autopilotDirective = opts.autopilot
+    ? '\n\nCHẾ ĐỘ AUTOPILOT (A–Z): Chạy tự chủ tới khi đạt Acceptance Criteria của ticket. Sửa NỘI DUNG file bằng tool Edit/Write (KHÔNG dùng sed -i/bash để sửa nội dung). KHÔNG tuyên bố hoàn thành cho tới khi analyze + test + TRACE RUNTIME (DB CHECK/FK/trigger, RPC, edge — CLAUDE.md §6) + impact-sweep đều xanh. TUYỆT ĐỐI KHÔNG git push / reset --hard / --force / rebase / clean. Commit local trên branch ticket (feat/DUOCT-XXX) rồi DỪNG, chờ người dùng duyệt push/mở MR. Thao tác xoá / DB / ghi ngoài repo sẽ được hỏi — cứ đề xuất, đừng né.'
+    : '';
+  const promptText = `${opts.brief}\n\n---\n${modeInstruction[mode]}${autopilotDirective}`;
 
   // Nội dung message user đầu tiên: chỉ text, hoặc text + ảnh (wireframe/screenshot).
   const firstContent: MessageParam['content'] =
