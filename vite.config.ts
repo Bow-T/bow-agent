@@ -19,6 +19,24 @@ export default defineConfig({
   build: {
     outDir: '../dist-web',
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // Tách vendor thành chunk riêng thay vì gộp hết vào index:
+        //  - three: chỉ CosmosOverlay dùng (đã lazy) → three tách khỏi chunk cosmos, load
+        //    on-demand khi mở vũ trụ, và cache riêng (three gần như không đổi).
+        //  - react-vendor: react + react-dom + scheduler (eager, hiếm đổi → cache dài).
+        //  - vendor: các lib còn lại (marked/dompurify/iconsax…).
+        // Kết quả: index chỉ còn app code, mỗi chunk gọn dưới ngưỡng cảnh báo.
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return;
+          if (id.includes('/three/')) return 'three';
+          if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/scheduler/')) {
+            return 'react-vendor';
+          }
+          return 'vendor';
+        },
+      },
+    },
   },
   server: {
     port: webPort,
