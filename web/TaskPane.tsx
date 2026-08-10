@@ -2055,7 +2055,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
                 ⚙ <b>{modelLabel}</b> · {modeLabel} · {effortLabel}
               </button>
 
-              {cfg?.claudeProfiles && cfg.claudeProfiles.length > 0 && (
+              {cfg?.isAdmin && cfg?.claudeProfiles && cfg.claudeProfiles.length > 0 && (
                 <button
                   type="button"
                   className="cfg-chip"
@@ -2230,7 +2230,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
           </div>
           {/* Hàng 2 — TÀI KHOẢN & AGENT: profile Claude, effort, đội agent, và repo (đẩy phải). */}
           <div className="control-row" data-group={language === 'vi' ? 'Tác nhân' : 'Agent'}>
-          {cfg?.claudeProfiles && cfg.claudeProfiles.length > 0 && (
+          {cfg?.isAdmin && cfg?.claudeProfiles && cfg.claudeProfiles.length > 0 && (
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
               {language === 'vi' ? 'Tài khoản:' : 'Account:'}
               <PixelSelect

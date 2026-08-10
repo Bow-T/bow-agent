@@ -1207,8 +1207,12 @@ app.get('/api/config', async (req, res) => {
     isBaMode,
     isDevOpsMode,
     isAdmin,
-    claudeProfiles: listClaudeProfiles(),
-    currentClaudeProfile: getCurrentProfile(),
+    // Danh sách tài khoản Claude của host CHỈ lộ cho admin (localhost). Khách LAN
+    // (QC/Collab/BA/Reviewer/DevOps) không được tự chọn tài khoản — runner đã ép
+    // effectiveClaudeProfile=undefined cho non-admin — nên KHÔNG trả danh sách/tên
+    // account ra LAN (tránh rò tên profile + tránh dropdown "chọn được nhưng bị bỏ qua").
+    claudeProfiles: isAdmin ? listClaudeProfiles() : [],
+    currentClaudeProfile: isAdmin ? getCurrentProfile() : '',
     hasAuth: config.hasAuth,
     tokenSet: config.hasTokenSet,
     otherModes: modes
