@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { config, loadActiveProfileToken, hasProfileAuth } from '../config/env.js';
 import { runAgent, fetchUsageSnapshot, type RunOptions } from '../core/runner.js';
+import { screenExternalData, untrustedNotice } from '../core/screener.js';
 import { buildTaskBrief } from '../input/task.js';
 import { pdfToText } from '../input/pdf.js';
 import { getProfile } from '../profiles/index.js';
@@ -885,6 +886,25 @@ app.post('/api/run', async (req, res) => {
     // Nếu người dùng CHỦ ĐỘNG chạy lại một hội thoại đang có lịch tự-chạy-tiếp treo, huỷ lịch
     // đó — họ đã tự tiếp tục bằng tay, khỏi để timer server gọi trùng.
     if (resumeSessionId) cancelResumeSchedule(resumeSessionId);
+
+    // Chống prompt-injection: chấm DỮ LIỆU NGOÀI (ticket Jira, docs, tên ảnh đính kèm) bằng một
+    // lượt LLM nhẹ (screener) TRƯỚC khi vào turn. Chỉ chấm khi có nguồn ngoài thật — text người
+    // dùng tự gõ là "requesting human", coi như tin cậy, khỏi tốn token. Fail-open: screener lỗi/
+    // nghi ngờ đều KHÔNG chặn; nếu nghi injection thì bọc brief bằng nhãn cảnh báo để agent coi là
+    // dữ liệu chứ không phải lệnh — cổng canUseTool vẫn chặn mọi thao tác ghi như thường.
+    const hasExternalData =
+      Boolean(activeJiraRef) || allDocs.length > 0 || jiraImageNames.length > 0;
+    if (hasExternalData) {
+      const verdict = await screenExternalData(brief, effectiveClaudeProfile);
+      if (verdict.decision === 'strict') {
+        logAudit(
+          `IP: ${cleanIp} - SCREENER cảnh báo dữ liệu ngoài nghi chèn lệnh (${verdict.reason ?? 'không rõ'}). Bọc nhãn, vẫn chạy.`,
+          cleanIp,
+          clientName,
+        );
+        brief = `${untrustedNotice(verdict.reason)}\n\n${brief}`;
+      }
+    }
 
     // Chạy agent nền + tự lên lịch chạy tiếp nếu dừng vì hết hạn mức phiên (chỉ khi đang thực thi).
     runAgentSession(
