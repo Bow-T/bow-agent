@@ -43,6 +43,7 @@ import {
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { loadClaudeCodeMcp, listGlobalMcp, addGlobalMcp, removeGlobalMcp } from '../tools/mcp.js';
 import { listUserMcp, addUserMcp, removeUserMcp, loadUserMcpServers } from './userMcp.js';
+import { mountFileApi } from './fileApi.js';
 import { loadRegistry, skillStatus, syncSkills } from '../skills/externalSkills.js';
 import { parseJiraRef } from '../input/jira-ref.js';
 import { fetchJiraTicketImages, fetchJiraTicketVideos } from '../input/jira-attachments.js';
@@ -1780,6 +1781,10 @@ app.get('/api/filetree', (_req, res) => {
 
   res.json({ cwd, repoName: basename(cwd), files });
 });
+
+// Tầng sâu Cosmos (FILE→FUNCTION→CODE): /api/file-source + /api/file-symbols. Cùng nguồn cwd với
+// /api/filetree (effectiveCwd global). Chỉ đọc, chống path-traversal — xem src/web/fileApi.ts.
+mountFileApi(app, effectiveCwd);
 
 app.get('/api/skill-stacks', (_req, res) => {
   try {
