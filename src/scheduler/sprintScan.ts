@@ -1,4 +1,5 @@
 import { runAgent, type AgentEvent } from '../core/runner.js';
+import { matchesAnyScannable } from '../core/scannableCommand.js';
 import { config } from '../config/env.js';
 import { loadClaudeCodeMcp } from '../tools/mcp.js';
 import { loadQcRouting, renderQcRoutingBrief } from './qcRouting.js';
@@ -227,7 +228,9 @@ export function autoApprovalPolicy(toolName: string, input: Record<string, unkno
       /\bcurl\b.*\|\s*(sh|bash)/, // pipe internet vào shell
       /\bsudo\b/, // leo quyền
     ];
-    if (BLOCK.some((re) => re.test(cmd))) return false;
+    // Quét cả bản chuẩn-hoá (chống né bằng bash -c/quote/pipe-to-shell). Sprint-scan chạy
+    // full-auto KHÔNG người duyệt nên lỗ obfuscation ở đây nguy hiểm hơn cả runner interactive.
+    if (matchesAnyScannable(cmd, BLOCK)) return false;
     return true;
   }
   // MCP Jira: cho phép ghi (comment/assign/transition/update) — đó chính là việc của quy trình.

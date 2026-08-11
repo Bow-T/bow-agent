@@ -25,6 +25,7 @@ import { buildMonorepoHooks, buildReadAutoApproveHook } from '../skills/hooks.js
 import { buildSubagents } from './subagents.js';
 import { createCheckpoint, restoreInstructions, recordAction } from './checkpoint.js';
 import { autopilotBashDecision } from './autopilotBash.js';
+import { matchesAnyScannable } from './scannableCommand.js';
 import {
   resolveWorkspace,
   buildWorkspacePrompt,
@@ -277,7 +278,7 @@ export interface RunOptions {
   profileSubagents?: Record<string, AgentDefinition>;
 }
 /** Tìm đường dẫn tuyệt đối của binary claude để bypass lỗi spawn của SDK trong môi trường ESM/tsx. */
-function findClaudeCodeExecutable(workspaceRoot: string): string | undefined {
+export function findClaudeCodeExecutable(workspaceRoot: string): string | undefined {
   const platform = process.platform;
   const arch = process.arch;
   const exeSuffix = platform === 'win32' ? '.exe' : '';
@@ -584,9 +585,10 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   // thay đổi phải duyệt"). Xem thêm requireApprovalForWrites bên dưới.
   const activeRisky = RISKY_COMMANDS;
 
-  /** True nếu lệnh bash bị coi là rủi ro → luôn qua cổng duyệt ngay cả ở mode 'auto'. */
-  const isRiskyCommand = (cmd: string): boolean =>
-    activeRisky.some((re) => re.test(cmd));
+  /** True nếu lệnh bash bị coi là rủi ro → luôn qua cổng duyệt ngay cả ở mode 'auto'.
+   *  Quét cả chuỗi GỐC lẫn bản chuẩn-hoá (chống obfuscation, xem scannableCommand.ts) — khớp
+   *  bất kỳ bản nào là rủi ro. Bịt các đường né `r""m`, `bash -c 'rm …'`, `echo … | sh`. */
+  const isRiskyCommand = (cmd: string): boolean => matchesAnyScannable(cmd, activeRisky);
 
   // Lệnh AN TOÀN cho Reviewer Mode: git/gh ĐỌC (diff/status/log/show, gh pr view/diff/list/
   // checks/status, gh repo view) + gh GHI REVIEW đúng vai (gh pr comment / gh pr review). Neo
@@ -1642,7 +1644,7 @@ export async function fetchUsageSnapshot(model?: string, claudeProfile?: string)
  * của profile (xoá key có giá trị undefined). Trả undefined nếu không có profileName (dùng
  * process.env như cũ). Tách riêng để runAgent và fetchUsageSnapshot cùng dùng.
  */
-function buildPerTabEnv(profileName: string | undefined): Record<string, string> | undefined {
+export function buildPerTabEnv(profileName: string | undefined): Record<string, string> | undefined {
   const name = profileName && profileName.trim() ? profileName.trim() : undefined;
   if (!name) return undefined;
   const merged: Record<string, string | undefined> = { ...process.env, ...resolveProfileEnvPatch(name) };
