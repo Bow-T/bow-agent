@@ -2432,8 +2432,9 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
               title={cwd || 'Chưa chọn thư mục repo (cwd)'}
             >
               {cfg?.isAdmin ? (
-                /* Gộp input + nút thành MỘT nút icon-thư-mục kèm tên repo gọn — bấm mở picker.
-                   Bỏ ô input 130px cũ cho hàng ngắn lại; cwd đầy đủ vẫn ở tooltip cha. */
+                <>
+                {/* Gộp input + nút thành MỘT nút icon-thư-mục kèm tên repo gọn — bấm mở picker.
+                   Bỏ ô input 130px cũ cho hàng ngắn lại; cwd đầy đủ vẫn ở tooltip cha. */}
                 <button
                   className="btn cwd-pick"
                   type="button"
@@ -2446,6 +2447,44 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
                     {cwd.trim() ? (cwd.trim().split('/').filter(Boolean).pop() ?? cwd) : 'Chọn repo'}
                   </span>
                 </button>
+                {/* Tạo git worktree riêng cho một ticket ("<repo>-<ticket>", branch feat/<ticket>)
+                    đặt cạnh cwd hiện tại — để mở cửa sổ mới trỏ vào đó làm ticket song song mà
+                    không dẫm chân lên cwd đang mở ở tab này. */}
+                <button
+                  className="btn icon-only"
+                  type="button"
+                  disabled={running || !cwd.trim()}
+                  onClick={async () => {
+                    if (running || !cwd.trim()) return;
+                    const ticket = await showClaudePrompt(
+                      'Worktree ticket mới',
+                      'Tên ticket (vd: PROJ-123) — tạo thư mục riêng cạnh repo hiện tại để làm song song ở cửa sổ khác:',
+                    );
+                    if (!ticket || !ticket.trim()) return;
+                    try {
+                      const res = await apiFetch('/api/worktree/create', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ cwd, ticket: ticket.trim() }),
+                      });
+                      const data = await res.json();
+                      if (!res.ok) {
+                        await showClaudeAlert('Không tạo được worktree', data.error ?? 'Lỗi không rõ.');
+                        return;
+                      }
+                      await showClaudeAlert(
+                        'Đã tạo worktree',
+                        `${data.path}\nbranch: ${data.branch}\n\nMở cửa sổ/tab mới rồi chọn thư mục này làm cwd để làm ticket song song.`,
+                      );
+                    } catch (e) {
+                      await showClaudeAlert('Lỗi', (e as Error).message);
+                    }
+                  }}
+                  title="Tạo git worktree cho ticket mới (làm song song ở cửa sổ khác)"
+                >
+                  🌳
+                </button>
+                </>
               ) : (
                 <div
                   style={{

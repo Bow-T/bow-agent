@@ -48,6 +48,7 @@ import { mountFileApi } from './fileApi.js';
 import { loadRegistry, skillStatus, syncSkills } from '../skills/externalSkills.js';
 import { parseJiraRef } from '../input/jira-ref.js';
 import { fetchJiraTicketImages, fetchJiraTicketVideos } from '../input/jira-attachments.js';
+import { createTicketWorktree, listWorktrees } from '../core/gitWorktree.js';
 import {
   listWorkspaces,
   resolveWorkspace,
@@ -2075,6 +2076,40 @@ app.delete('/api/workspace/repo', requireAdmin, checkReadonlyConfig, (req, res) 
     res.json({ ok: true, workspaces: listWorkspaces() });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+/**
+ * GET /api/worktree/list?cwd=... — liệt kê git worktree hiện có của repo (để hiển thị các
+ * ticket đang chạy song song). Không phải thao tác ghi nên không cần checkReadonlyConfig.
+ */
+app.get('/api/worktree/list', requireAdmin, (req, res) => {
+  const cwd = (req.query.cwd as string) || config.defaultCwd;
+  try {
+    res.json({ worktrees: listWorktrees(cwd) });
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+  }
+});
+
+/**
+ * POST /api/worktree/create — tạo git worktree riêng cho một ticket, đặt cạnh repo gốc
+ * ("<repo>-<ticket>", branch "feat/<ticket>"), để mở cửa sổ mới trỏ vào đó làm ticket song
+ * song mà không dẫm chân lên cwd hiện tại. body: { cwd, ticket }. Ghi filesystem thật (tạo
+ * thư mục + branch) nên gate như /api/workspace/repo: requireAdmin + checkReadonlyConfig.
+ */
+app.post('/api/worktree/create', requireAdmin, checkReadonlyConfig, (req, res) => {
+  const cwd = typeof req.body?.cwd === 'string' ? req.body.cwd.trim() : '';
+  const ticket = typeof req.body?.ticket === 'string' ? req.body.ticket.trim() : '';
+  if (!cwd || !ticket) {
+    res.status(400).json({ error: 'Thiếu cwd hoặc ticket.' });
+    return;
+  }
+  try {
+    const result = createTicketWorktree({ repoCwd: cwd, ticket });
+    res.json({ ok: true, path: result.path, branch: result.branch });
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
   }
 });
 

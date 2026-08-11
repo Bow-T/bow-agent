@@ -3,6 +3,7 @@ import { buildTaskBrief, type TaskInput } from '../input/task.js';
 import { parseJiraRef } from '../input/jira-ref.js';
 import { fetchJiraTicketImages, fetchJiraTicketVideos } from '../input/jira-attachments.js';
 import { runAgent, type AgentEvent } from '../core/runner.js';
+import { createTicketWorktree, listWorktrees, removeTicketWorktree } from '../core/gitWorktree.js';
 import { config } from '../config/env.js';
 import { getProfile, profileNames } from '../profiles/index.js';
 import { loadClaudeCodeMcp } from '../tools/mcp.js';
@@ -33,6 +34,9 @@ Cách dùng:
   bow-agent schedule set …            Cấu hình lịch tự chạy (giờ + project + chế độ)
   bow-agent schedule install          Cài LaunchAgent (macOS) để tự kích theo lịch
   bow-agent schedule status           Xem lịch + trạng thái launchd
+  bow-agent worktree add <TICKET>     Tạo git worktree riêng cho ticket (chạy song song nhiều cửa sổ)
+  bow-agent worktree list             Liệt kê worktree hiện có của repo (--cwd)
+  bow-agent worktree remove <TICKET>  Gỡ worktree + xoá branch của ticket đã xong việc
 
 Cờ:
   --execute                Thực thi thật (mặc định chỉ LẬP KẾ HOẠCH, không sửa file)
@@ -66,6 +70,9 @@ Ví dụ:
   bow-agent sprint-scan --project PROJ --cwd ~/GitProject/monorepo   # dry-run, xem agent định làm gì
   bow-agent sprint-scan --project PROJ --execute --assign            # toàn tự động: fix + assign QC
   bow-agent sprint-scan --project PROJ --interval 1h                 # tự lặp mỗi giờ (dry-run)
+  bow-agent worktree add PROJ-123 --cwd ~/GitProject/monorepo   # tạo ../monorepo-PROJ-123, branch feat/PROJ-123
+  bow-agent worktree list --cwd ~/GitProject/monorepo
+  bow-agent worktree remove PROJ-123 --cwd ~/GitProject/monorepo
 `.trim();
 
 type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
@@ -101,6 +108,8 @@ interface ParsedArgs {
   scheduleAction?: string;
   /** (schedule set) mốc giờ chạy trong ngày, "HH:MM", nhiều mốc cách nhau dấu phẩy. */
   atTimes?: string[];
+  /** Đối số không-cờ thứ hai — dùng cho `worktree add|remove <TICKET>` (đối số đầu là action, rơi vào ticketKey). */
+  secondArg?: string;
   help: boolean;
 }
 
@@ -187,9 +196,11 @@ function parseArgs(argv: string[]): ParsedArgs {
           .filter(Boolean);
         break;
       default:
-        // Đối số không cờ đầu tiên = Jira ticket key.
+        // Đối số không cờ đầu tiên = Jira ticket key (hoặc action con của schedule/worktree);
+        // đối số thứ hai chỉ hợp lệ cho `worktree add|remove <TICKET>` → secondArg.
         if (arg.startsWith('-')) fail(`Cờ không nhận diện được: ${arg}`);
         else if (!out.ticketKey) out.ticketKey = arg;
+        else if (!out.secondArg) out.secondArg = arg;
         else fail(`Đối số thừa: ${arg}`);
     }
   }
@@ -476,6 +487,37 @@ async function runScheduleCommand(args: ParsedArgs): Promise<void> {
   );
 }
 
+/**
+ * Xử lý subcommand `worktree`: tạo/liệt kê/gỡ git worktree cho ticket — để mỗi cửa sổ chạy
+ * một ticket riêng trên cùng repo đích mà không dẫm chân nhau. Action con ("add"/"list"/"remove")
+ * là đối số không-cờ đầu tiên → args.ticketKey; tên ticket (nếu action cần) là đối số thứ hai →
+ * args.secondArg (xem parseArgs).
+ */
+async function runWorktreeCommand(action: string | undefined, ticket: string | undefined, cwd: string): Promise<void> {
+  if (action === 'add') {
+    if (!ticket) fail('worktree add cần tên ticket, vd: bow worktree add PROJ-123');
+    const res = createTicketWorktree({ repoCwd: cwd, ticket: ticket! });
+    process.stdout.write(
+      `✅ Đã tạo worktree: ${res.path}\n   branch: ${res.branch}\n` +
+        `→ Mở cửa sổ mới trỏ vào đó, hoặc chạy ngay:\n` +
+        `   bow run ${ticket} --cwd ${res.path}\n`,
+    );
+    return;
+  }
+  if (action === 'remove') {
+    if (!ticket) fail('worktree remove cần tên ticket, vd: bow worktree remove PROJ-123');
+    removeTicketWorktree(cwd, ticket!, true);
+    process.stdout.write(`✅ Đã gỡ worktree + branch của ticket: ${ticket}\n`);
+    return;
+  }
+  // list (mặc định)
+  const entries = listWorktrees(cwd);
+  process.stdout.write(`\n🌳 Worktree của ${cwd}:\n`);
+  for (const w of entries) {
+    process.stdout.write(`   ${w.path}${w.branch ? ` [${w.branch}]` : ' (detached)'}  ${w.head.slice(0, 8)}\n`);
+  }
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
 
@@ -494,8 +536,13 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (args.command === 'worktree') {
+    await runWorktreeCommand(args.ticketKey, args.secondArg, args.cwd);
+    return;
+  }
+
   if (args.command !== 'run') {
-    fail(`Lệnh không hợp lệ: "${args.command}". Hỗ trợ: "run", "sprint-scan", "schedule".`);
+    fail(`Lệnh không hợp lệ: "${args.command}". Hỗ trợ: "run", "sprint-scan", "schedule", "worktree".`);
   }
 
   const input: TaskInput = {
