@@ -4379,6 +4379,12 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .cosmos-insp-row span:first-child { color: #8a93a8; letter-spacing: .06em; text-transform: uppercase; font-size: 9px; align-self: center; }
 .cosmos-insp-row span:last-child { color: #eaf0ff; font-variant-numeric: tabular-nums; }
 
+/* Tầng CODE: panel source thật khi bay sát một file. Cuộn dọc riêng, mono, giữ trong inspector. */
+.cosmos-code { margin-top: 20px; border-top: 1px solid rgba(150,160,190,.2); padding-top: 14px; }
+.cosmos-code-head { font-size: 9px; letter-spacing: .1em; text-transform: uppercase; color: #8a93a8; word-break: break-all; margin-bottom: 8px; }
+.cosmos-code-body { max-height: 46vh; overflow: auto; margin: 0; font: 10.5px/1.55 var(--mono, ui-monospace, monospace);
+  color: #b9c4dc; background: rgba(4,6,14,.6); border: 1px solid rgba(150,160,190,.14); border-radius: 6px; padding: 10px 12px; white-space: pre; tab-size: 2; }
+
 @media (max-width: 900px) {
   .cosmos-hud-title { left: 20px; top: 20px; } .cosmos-coords { right: 20px; top: 20px; }
   .cosmos-modebar { top: 70px; right: 20px; } .cosmos-close { right: 20px; top: 108px; }
