@@ -2414,7 +2414,7 @@ export function App() {
             <Icon name="starChart" size={15} />
             <span className="tab-bar-cosmos-lbl">Cosmos</span>
           </button>
-          {/* Tạo git worktree cho ticket mới ("<repo>-<ticket>", branch feat/<ticket>) — hành
+          {/* Tạo git worktree cho ticket mới ("<repo>-wt-<ticket>", branch feat/<ticket>) — hành
               động cấp phiên làm việc (mở cửa sổ khác làm ticket song song), nên đặt ở tab-bar
               thay vì trong hàng cấu hình 1 lượt chạy (TaskPane). Dùng cwd của tab đang active. */}
           {cfg?.isAdmin && (
@@ -2458,6 +2458,68 @@ export function App() {
             >
               <span aria-hidden="true">🌳</span>
               <span className="tab-bar-cosmos-lbl">{language === 'vi' ? 'Worktree' : 'Worktree'}</span>
+            </button>
+          )}
+          {/* Gỡ worktree của ticket đã xong việc (xoá thư mục + branch feat/<ticket>). KHÔNG
+              tự động — luôn do người bấm chủ động, vì đây là thao tác phá huỷ (mất code chưa
+              commit/push nếu gỡ nhầm lúc chưa xong). Bắt gõ "xoa" để xác nhận, cùng pattern
+              xác nhận xoá tài khoản Claude ở TaskPane. */}
+          {cfg?.isAdmin && (
+            <button
+              type="button"
+              className="tab-bar-cosmos"
+              disabled={!cwd.trim()}
+              onClick={async () => {
+                if (!cwd.trim()) return;
+                const ticket = await showClaudePrompt(
+                  language === 'vi' ? 'Gỡ worktree' : 'Remove worktree',
+                  language === 'vi'
+                    ? 'Tên ticket cần gỡ (vd: PROJ-123) — xoá cả thư mục worktree lẫn branch feat/<ticket>:'
+                    : 'Ticket to remove (e.g. PROJ-123) — deletes both the worktree folder and the feat/<ticket> branch:',
+                );
+                if (!ticket || !ticket.trim()) return;
+                const confirmDel = await showClaudePrompt(
+                  language === 'vi' ? 'Xác nhận gỡ' : 'Confirm removal',
+                  language === 'vi'
+                    ? `Xoá worktree + branch của "${ticket.trim()}"? Thay đổi CHƯA commit/push trong worktree đó sẽ MẤT. Nhập "xoa" để xác nhận:`
+                    : `Delete the worktree + branch for "${ticket.trim()}"? Any UNCOMMITTED/unpushed changes there will be LOST. Type "xoa" to confirm:`,
+                );
+                if (confirmDel !== 'xoa') {
+                  if (confirmDel !== null) {
+                    await showClaudeAlert(
+                      language === 'vi' ? 'Lỗi' : 'Error',
+                      language === 'vi' ? 'Xác nhận không chính xác — đã huỷ.' : 'Confirmation mismatch — cancelled.',
+                    );
+                  }
+                  return;
+                }
+                try {
+                  const res = await apiFetch('/api/worktree/remove', {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cwd, ticket: ticket.trim() }),
+                  });
+                  const data = await res.json();
+                  if (!res.ok) {
+                    await showClaudeAlert(
+                      language === 'vi' ? 'Không gỡ được worktree' : 'Could not remove worktree',
+                      data.error ?? (language === 'vi' ? 'Lỗi không rõ.' : 'Unknown error.'),
+                    );
+                    return;
+                  }
+                  await showClaudeAlert(
+                    language === 'vi' ? 'Đã gỡ worktree' : 'Worktree removed',
+                    language === 'vi' ? `Đã xoá worktree + branch của "${ticket.trim()}".` : `Removed the worktree and branch for "${ticket.trim()}".`,
+                  );
+                } catch (e) {
+                  await showClaudeAlert(language === 'vi' ? 'Lỗi' : 'Error', (e as Error).message);
+                }
+              }}
+              title={language === 'vi' ? 'Gỡ worktree của ticket đã xong việc (xoá thư mục + branch)' : 'Remove a finished ticket\'s worktree (delete folder + branch)'}
+              aria-label={language === 'vi' ? 'Gỡ worktree ticket' : 'Remove ticket worktree'}
+            >
+              <span aria-hidden="true">🗑️</span>
+              <span className="tab-bar-cosmos-lbl">{language === 'vi' ? 'Gỡ' : 'Remove'}</span>
             </button>
           )}
           </div>

@@ -48,7 +48,7 @@ import { mountFileApi } from './fileApi.js';
 import { loadRegistry, skillStatus, syncSkills } from '../skills/externalSkills.js';
 import { parseJiraRef } from '../input/jira-ref.js';
 import { fetchJiraTicketImages, fetchJiraTicketVideos } from '../input/jira-attachments.js';
-import { createTicketWorktree, listWorktrees } from '../core/gitWorktree.js';
+import { createTicketWorktree, listWorktrees, removeTicketWorktree } from '../core/gitWorktree.js';
 import {
   listWorkspaces,
   resolveWorkspace,
@@ -2094,7 +2094,7 @@ app.get('/api/worktree/list', requireAdmin, (req, res) => {
 
 /**
  * POST /api/worktree/create — tạo git worktree riêng cho một ticket, đặt cạnh repo gốc
- * ("<repo>-<ticket>", branch "feat/<ticket>"), để mở cửa sổ mới trỏ vào đó làm ticket song
+ * ("<repo>-wt-<ticket>", branch "feat/<ticket>"), để mở cửa sổ mới trỏ vào đó làm ticket song
  * song mà không dẫm chân lên cwd hiện tại. body: { cwd, ticket }. Ghi filesystem thật (tạo
  * thư mục + branch) nên gate như /api/workspace/repo: requireAdmin + checkReadonlyConfig.
  */
@@ -2108,6 +2108,27 @@ app.post('/api/worktree/create', requireAdmin, checkReadonlyConfig, (req, res) =
   try {
     const result = createTicketWorktree({ repoCwd: cwd, ticket });
     res.json({ ok: true, path: result.path, branch: result.branch });
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+  }
+});
+
+/**
+ * DELETE /api/worktree/remove — gỡ worktree của một ticket đã xong việc (xoá thư mục +
+ * branch feat/<ticket>). KHÔNG có gì tự động gọi route này — luôn do người dùng chủ động bấm,
+ * vì đây là thao tác phá huỷ (mất code chưa commit/push nếu gỡ nhầm lúc chưa xong việc).
+ * body: { cwd, ticket }. Gate như create: requireAdmin + checkReadonlyConfig.
+ */
+app.delete('/api/worktree/remove', requireAdmin, checkReadonlyConfig, (req, res) => {
+  const cwd = typeof req.body?.cwd === 'string' ? req.body.cwd.trim() : '';
+  const ticket = typeof req.body?.ticket === 'string' ? req.body.ticket.trim() : '';
+  if (!cwd || !ticket) {
+    res.status(400).json({ error: 'Thiếu cwd hoặc ticket.' });
+    return;
+  }
+  try {
+    removeTicketWorktree(cwd, ticket, true);
+    res.json({ ok: true });
   } catch (err) {
     res.status(400).json({ error: (err as Error).message });
   }
