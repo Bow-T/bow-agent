@@ -795,11 +795,19 @@ a { color: var(--brass); text-underline-offset: 2px; }
 }
 .tab-bar-add:hover { color: var(--ink); background: color-mix(in srgb, var(--surface) 92%, transparent); }
 
-/* Nút Cosmos ở cuối tab-bar: mở vũ trụ tri thức cho tab đang mở. Nhấn accent (--brass) để
-   nổi khỏi hàng tab thường — đây là lối vào "trải nghiệm", không phải một tác vụ. */
+/* Bọc các nút hành động cuối tab-bar (Cosmos, Worktree, ...) sát mép phải thành 1 cụm liền
+   nhau — margin-left:auto đặt Ở WRAPPER, không phải từng nút, để chúng không bị đẩy xa nhau. */
+.tab-bar-actions {
+  display: inline-flex; align-items: stretch;
+  flex-shrink: 0; margin-left: auto;
+  height: 100%;
+}
+/* Nút Cosmos/Worktree ở cuối tab-bar: mở vũ trụ tri thức / tạo ticket song song cho tab đang
+   mở. Nhấn accent (--brass) để nổi khỏi hàng tab thường — lối vào "trải nghiệm", không phải
+   một tác vụ. */
 .tab-bar-cosmos {
   display: inline-flex; align-items: center; gap: 6px;
-  flex-shrink: 0; margin-left: auto;
+  flex-shrink: 0;
   padding: 0 12px; height: 100%;
   border: none; border-left: 1px solid var(--hairline);
   background: transparent;
