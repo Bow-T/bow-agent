@@ -21,10 +21,19 @@ export interface CreateWorktreeOptions {
 }
 
 export interface CreateWorktreeResult {
-  /** Đường dẫn tuyệt đối worktree mới, đặt cạnh repoCwd: "<repo>-<ticket-slug>". */
+  /** Đường dẫn tuyệt đối worktree mới, đặt cạnh repoCwd: "<repo>-wt-<ticket-slug>". */
   path: string;
   /** Tên branch mới đã tạo, vd "feat/PROJ-123". */
   branch: string;
+}
+
+/** Tiền tố tên thư mục worktree — CỐ Ý khác "feat/" của branch, để tên thư mục KHÔNG bị
+ *  đọc nhầm là tên nhánh (branch có thể đổi tên/prefix khác nhau, thư mục thì không theo). */
+const WORKTREE_DIR_PREFIX = 'wt-';
+
+/** "<repo>" + slug ticket → tên thư mục worktree, vd "bow-agent-wt-PROJ-123". */
+function worktreeDirName(repoName: string, slug: string): string {
+  return `${repoName}-${WORKTREE_DIR_PREFIX}${slug}`;
 }
 
 function git(cwd: string, args: string[]): string {
@@ -64,7 +73,7 @@ export function createTicketWorktree(opts: CreateWorktreeOptions): CreateWorktre
   const slug = slugifyTicket(opts.ticket);
   const branch = `feat/${slug}`;
   const repoName = basename(repoCwd);
-  const worktreePath = resolve(dirname(repoCwd), `${repoName}-${slug}`);
+  const worktreePath = resolve(dirname(repoCwd), worktreeDirName(repoName, slug));
 
   if (existsSync(worktreePath)) {
     throw new Error(`Thư mục worktree đã tồn tại: ${worktreePath}`);
@@ -109,7 +118,7 @@ export function listWorktrees(repoCwd: string): WorktreeEntry[] {
 export function removeTicketWorktree(repoCwd: string, ticket: string, deleteBranch: boolean): void {
   const repo = resolve(repoCwd);
   const slug = slugifyTicket(ticket);
-  const target = resolve(dirname(repo), `${basename(repo)}-${slug}`);
+  const target = resolve(dirname(repo), worktreeDirName(basename(repo), slug));
   const entry = listWorktrees(repo).find((w) => resolve(w.path) === target);
   if (!entry) throw new Error(`Không tìm thấy worktree: ${target}`);
 
