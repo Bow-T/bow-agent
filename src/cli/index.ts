@@ -70,7 +70,7 @@ Ví dụ:
   bow-agent sprint-scan --project PROJ --cwd ~/GitProject/monorepo   # dry-run, xem agent định làm gì
   bow-agent sprint-scan --project PROJ --execute --assign            # toàn tự động: fix + assign QC
   bow-agent sprint-scan --project PROJ --interval 1h                 # tự lặp mỗi giờ (dry-run)
-  bow-agent worktree add PROJ-123 --cwd ~/GitProject/monorepo   # tạo ../monorepo-PROJ-123, branch feat/PROJ-123
+  bow-agent worktree add PROJ-123 --cwd ~/GitProject/monorepo   # tạo ../monorepo-wt-PROJ-123, branch feat/PROJ-123
   bow-agent worktree list --cwd ~/GitProject/monorepo
   bow-agent worktree remove PROJ-123 --cwd ~/GitProject/monorepo
 `.trim();
