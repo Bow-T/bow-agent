@@ -2398,6 +2398,9 @@ export function App() {
           >
             <Icon name="newChat" size={15} />
           </button>
+          {/* Cụm nút hành động sát mép phải tab-bar — margin-left:auto nằm trên wrapper này
+              (không phải từng nút) để Cosmos/Worktree đứng liền nhau, không bị flex đẩy xa. */}
+          <div className="tab-bar-actions">
           {/* Cosmos — vũ trụ tri thức toàn màn hình cho tab ĐANG mở. Không phải một tab
               (conversation) riêng; mở overlay của pane active qua handle imperative (dữ liệu
               steps/activeFiles/filetree đã chảy sẵn trong pane đó). */}
@@ -2411,6 +2414,53 @@ export function App() {
             <Icon name="starChart" size={15} />
             <span className="tab-bar-cosmos-lbl">Cosmos</span>
           </button>
+          {/* Tạo git worktree cho ticket mới ("<repo>-<ticket>", branch feat/<ticket>) — hành
+              động cấp phiên làm việc (mở cửa sổ khác làm ticket song song), nên đặt ở tab-bar
+              thay vì trong hàng cấu hình 1 lượt chạy (TaskPane). Dùng cwd của tab đang active. */}
+          {cfg?.isAdmin && (
+            <button
+              type="button"
+              className="tab-bar-cosmos"
+              disabled={!cwd.trim()}
+              onClick={async () => {
+                if (!cwd.trim()) return;
+                const ticket = await showClaudePrompt(
+                  language === 'vi' ? 'Worktree ticket mới' : 'New ticket worktree',
+                  language === 'vi'
+                    ? 'Tên ticket (vd: PROJ-123) — tạo thư mục riêng cạnh repo hiện tại để làm song song ở cửa sổ khác:'
+                    : 'Ticket name (e.g. PROJ-123) — creates a separate folder next to the current repo to work on in another window:',
+                );
+                if (!ticket || !ticket.trim()) return;
+                try {
+                  const res = await apiFetch('/api/worktree/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cwd, ticket: ticket.trim() }),
+                  });
+                  const data = await res.json();
+                  if (!res.ok) {
+                    await showClaudeAlert(
+                      language === 'vi' ? 'Không tạo được worktree' : 'Could not create worktree',
+                      data.error ?? (language === 'vi' ? 'Lỗi không rõ.' : 'Unknown error.'),
+                    );
+                    return;
+                  }
+                  await showClaudeAlert(
+                    language === 'vi' ? 'Đã tạo worktree' : 'Worktree created',
+                    `${data.path}\nbranch: ${data.branch}\n\n${language === 'vi' ? 'Mở cửa sổ/tab mới rồi chọn thư mục này làm cwd để làm ticket song song.' : 'Open a new window/tab and pick this folder as cwd to work on it in parallel.'}`,
+                  );
+                } catch (e) {
+                  await showClaudeAlert(language === 'vi' ? 'Lỗi' : 'Error', (e as Error).message);
+                }
+              }}
+              title={language === 'vi' ? 'Tạo git worktree cho ticket mới (làm song song ở cửa sổ khác)' : 'Create a git worktree for a new ticket (work in parallel in another window)'}
+              aria-label={language === 'vi' ? 'Tạo worktree ticket mới' : 'Create new ticket worktree'}
+            >
+              <span aria-hidden="true">🌳</span>
+              <span className="tab-bar-cosmos-lbl">{language === 'vi' ? 'Worktree' : 'Worktree'}</span>
+            </button>
+          )}
+          </div>
         </div>
 
       {/* Mỗi tab = 1 instance TaskPane (SSE/session riêng). visible điều khiển hidden —
