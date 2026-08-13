@@ -96,7 +96,7 @@ export interface TaskPaneProps {
    * Báo lên App phần state per-tab mà UI GLOBAL cần đọc (header đồng hồ lượt chạy + panel
    * Lịch sử tô cuộc đang mở). Bước 1: 1 tab nên App chỉ mirror của tab hiển thị.
    */
-  onStateChange: (s: { running: boolean; runStartedAt: number | null; lastRunMs: number | null; activeConvId: string | null; title: string; model: string; claudeProfile: string; usage: UsageSnapshot | null; usageLoading: boolean; pendingCount: number }) => void;
+  onStateChange: (s: { running: boolean; runStartedAt: number | null; lastRunMs: number | null; activeConvId: string | null; title: string; model: string; claudeProfile: string; usage: UsageSnapshot | null; usageLoading: boolean; pendingCount: number; hasContent: boolean }) => void;
 }
 
 /**
@@ -114,6 +114,9 @@ export interface TaskPaneHandle {
   refreshUsage: () => void;
   /** Mở vũ trụ Cosmos toàn màn hình cho ĐÚNG tab này (nút Cosmos ở tab-bar App gọi). */
   openCosmos: () => void;
+  /** Nội dung ô nhập task hiện tại của tab (nút "Tạo worktree" ở tab-bar App đọc để tự
+   *  trích ticket key đang dán, khỏi phải hỏi lại qua dialog riêng). */
+  getTaskText: () => string;
 }
 
 export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskPane(props, ref) {
@@ -493,6 +496,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
     resetForDeleted,
     refreshUsage: () => refreshUsageRef.current(),
     openCosmos,
+    getTaskText: () => task,
   }));
 
   // Kéo giãn ô nhập: App giữ state taskHeight (global), TaskPane gọi setTaskHeight (prop)
@@ -1387,7 +1391,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
   // panel Lịch sử, và NHÃN TAB (title = câu user đầu tiên của cuộc; pendingCount =
   // số thẻ chờ duyệt/câu hỏi → tab-bar tô sáng tab đang cần người dùng bấm).
   useEffect(() => {
-    onStateChange({ running, runStartedAt, lastRunMs, activeConvId, title: deriveTitle(items), model: selectedModel, claudeProfile: selectedClaudeProfile, usage, usageLoading, pendingCount: pending.length + questions.length });
+    onStateChange({ running, runStartedAt, lastRunMs, activeConvId, title: deriveTitle(items), model: selectedModel, claudeProfile: selectedClaudeProfile, usage, usageLoading, pendingCount: pending.length + questions.length, hasContent: items.length > 0 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onStateChange, running, runStartedAt, lastRunMs, activeConvId, items, selectedModel, selectedClaudeProfile, usage, usageLoading, pending.length, questions.length]);
 
