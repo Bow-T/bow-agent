@@ -95,22 +95,32 @@ export interface WorktreeEntry {
   head: string;
 }
 
-/** Liệt kê worktree hiện có của repo (dùng cho UI hiển thị danh sách ticket đang chạy song song). */
+/**
+ * Liệt kê worktree CÒN DÙNG ĐƯỢC của repo (dùng cho UI hiển thị danh sách ticket đang chạy
+ * song song). Lọc bỏ entry `prunable` — git vẫn giữ metadata cho worktree mà thư mục đã bị
+ * xoá bằng cách khác (rm -f trực tiếp, không qua `git worktree remove`); hiện những "bóng ma"
+ * này ra sẽ khiến UI tưởng có worktree để gỡ trong khi thư mục không còn tồn tại.
+ */
 export function listWorktrees(repoCwd: string): WorktreeEntry[] {
   const out = git(resolve(repoCwd), ['worktree', 'list', '--porcelain']);
   const entries: WorktreeEntry[] = [];
-  let current: Partial<WorktreeEntry> = {};
+  let current: Partial<WorktreeEntry & { prunable: boolean }> = {};
+  const flush = () => {
+    if (current.path && !current.prunable) entries.push(current as WorktreeEntry);
+  };
   for (const line of out.split('\n')) {
     if (line.startsWith('worktree ')) {
-      if (current.path) entries.push(current as WorktreeEntry);
+      flush();
       current = { path: line.slice('worktree '.length) };
     } else if (line.startsWith('HEAD ')) {
       current.head = line.slice('HEAD '.length);
     } else if (line.startsWith('branch ')) {
       current.branch = line.slice('branch '.length).replace(/^refs\/heads\//, '');
+    } else if (line === 'prunable' || line.startsWith('prunable ')) {
+      current.prunable = true;
     }
   }
-  if (current.path) entries.push(current as WorktreeEntry);
+  flush();
   return entries;
 }
 
