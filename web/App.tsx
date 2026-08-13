@@ -294,6 +294,18 @@ export function withToken(url: string): string {
   return `${url}${sep}token=${encodeURIComponent(token)}`;
 }
 
+/**
+ * Trích Jira ticket key (vd "PROJ-123") từ text dán vào ô nhập task — cùng regex TaskPane
+ * dùng khi gửi task (jiraRef), để nút "Tạo worktree" tự lấy đúng ticket đang dán thay vì
+ * phải hỏi lại qua dialog riêng. Ưu tiên ?selectedIssue=... (link Jira board) trước khi
+ * quét ticket key trần trong text. Không khớp board/project url (không phải 1 ticket cụ thể).
+ */
+export function extractTicketKey(text: string): string | null {
+  const selected = text.match(/[?&]selectedIssue=([A-Z][A-Z0-9]+-\d+)/i);
+  const ticket = selected ?? text.match(/\b([A-Z][A-Z0-9]+-\d+)\b/);
+  return ticket ? ticket[1].toUpperCase() : null;
+}
+
 /** Đọc file text → {name, content}. */
 export function readText(file: File): Promise<DocAttachment> {
   return new Promise((resolve, reject) => {
@@ -426,8 +438,10 @@ interface PaneState {
   usageLoading: boolean;
   /** Số thẻ đang chờ người dùng (duyệt tool + câu hỏi) — tab-bar tô sáng tab cần bấm. */
   pendingCount: number;
+  /** Tab đã có hội thoại chưa — tab RỖNG thì đóng thẳng, không hỏi xác nhận. */
+  hasContent: boolean;
 }
-const EMPTY_PANE_STATE: PaneState = { running: false, runStartedAt: null, lastRunMs: null, activeConvId: null, title: '', model: 'claude-opus-4-8', claudeProfile: 'default', usage: null, usageLoading: false, pendingCount: 0 };
+const EMPTY_PANE_STATE: PaneState = { running: false, runStartedAt: null, lastRunMs: null, activeConvId: null, title: '', model: 'claude-opus-4-8', claudeProfile: 'default', usage: null, usageLoading: false, pendingCount: 0, hasContent: false };
 
 export function App() {
   // ── Multi-tab: nhiều conversation/session chạy SONG SONG, mỗi tab một <TaskPane> ──
@@ -471,7 +485,8 @@ export function App() {
       const cur = prev[tabId];
       if (cur && cur.running === s.running && cur.runStartedAt === s.runStartedAt &&
           cur.lastRunMs === s.lastRunMs && cur.activeConvId === s.activeConvId && cur.title === s.title &&
-          cur.usage === s.usage && cur.usageLoading === s.usageLoading && cur.pendingCount === s.pendingCount) {
+          cur.usage === s.usage && cur.usageLoading === s.usageLoading && cur.pendingCount === s.pendingCount &&
+          cur.hasContent === s.hasContent) {
         return prev; // không đổi → tránh render thừa
       }
       return { ...prev, [tabId]: s };
@@ -1772,6 +1787,9 @@ export function App() {
   };
 
   const [detected, setDetected] = useState<DetectedSource | null>(null);
+  /** cwd hiện tại có worktree ticket nào khác ngoài chính nó không — quyết định nút "Gỡ"
+   *  ở tab-bar có bật hay không (đừng cho bấm khi chẳng có gì để gỡ). */
+  const [hasOtherWorktrees, setHasOtherWorktrees] = useState(false);
   const [theme, setTheme] = useState<Theme>(() => {
     // Lần đầu: 'brutal' (Neo Brutalism) — khớp landing page. Sau đó ưu tiên lựa chọn user đã lưu.
     // 'newsprint' là tên cũ của theme thứ 2 (đã thay bằng 'figma') — migrate êm cho user cũ.
@@ -1898,7 +1916,7 @@ export function App() {
 
   // Auto-nhận diện source + workspace mỗi khi cwd đổi (debounce nhẹ, dùng chung).
   useEffect(() => {
-    if (!cwd.trim()) { setDetected(null); setCurrentWs(null); return; }
+    if (!cwd.trim()) { setDetected(null); setCurrentWs(null); setHasOtherWorktrees(false); return; }
     const t = setTimeout(() => {
       apiFetch(`/api/detect?cwd=${encodeURIComponent(cwd.trim())}`)
         .then((r) => r.json())
@@ -1907,9 +1925,21 @@ export function App() {
         })
         .catch(() => setDetected(null));
       refreshCurrentWs(cwd);
+      // `git worktree list` luôn liệt kê CẢ cwd hiện tại (repo gốc/worktree đang mở) —
+      // nên "có gì để gỡ" nghĩa là danh sách có NHIỀU HƠN 1 mục, không phải > 0.
+      if (cfg?.isAdmin) {
+        apiFetch(`/api/worktree/list?cwd=${encodeURIComponent(cwd.trim())}`)
+          .then((r) => r.json())
+          .then((d: { worktrees?: unknown[] }) => {
+            setHasOtherWorktrees((d.worktrees ?? []).length > 1);
+          })
+          .catch(() => setHasOtherWorktrees(false));
+      } else {
+        setHasOtherWorktrees(false);
+      }
     }, 400);
     return () => clearTimeout(t);
-  }, [cwd]);
+  }, [cwd, cfg?.isAdmin]);
 
 
   // Admin duyệt/từ chối một yêu cầu Collab (lệnh hủy hoại của CTV). Gỡ lạc quan khỏi UI
@@ -2381,7 +2411,12 @@ export function App() {
                     type="button"
                     className="tab-bar-close"
                     title={language === 'vi' ? 'Đóng tác vụ (dừng agent nếu đang chạy)' : 'Close task (stops agent if running)'}
-                    onClick={(e) => { e.stopPropagation(); setTabCloseId(t.id); }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      // Tab rỗng (chưa hội thoại, không chạy, không thẻ chờ) → đóng luôn, khỏi hỏi.
+                      const isEmpty = !st?.hasContent && !st?.running && (st?.pendingCount ?? 0) === 0;
+                      if (isEmpty) closeTab(t.id); else setTabCloseId(t.id);
+                    }}
                   >
                     <Icon name="close" size={13} />
                   </button>
@@ -2424,11 +2459,16 @@ export function App() {
               disabled={!cwd.trim()}
               onClick={async () => {
                 if (!cwd.trim()) return;
+                // Tự trích ticket key (vd PROJ-123) từ ô nhập task của tab đang mở — nếu
+                // đã dán/gõ ticket sẵn thì điền sẵn vào dialog, khỏi phải gõ lại. Người dùng
+                // vẫn xác nhận/sửa được trước khi tạo (không tự tạo ngầm không hỏi).
+                const detectedTicket = extractTicketKey(activePaneRef()?.getTaskText() ?? '') ?? '';
                 const ticket = await showClaudePrompt(
                   language === 'vi' ? 'Worktree ticket mới' : 'New ticket worktree',
                   language === 'vi'
                     ? 'Tên ticket (vd: PROJ-123) — tạo thư mục riêng cạnh repo hiện tại để làm song song ở cửa sổ khác:'
                     : 'Ticket name (e.g. PROJ-123) — creates a separate folder next to the current repo to work on in another window:',
+                  detectedTicket,
                 );
                 if (!ticket || !ticket.trim()) return;
                 try {
@@ -2445,6 +2485,7 @@ export function App() {
                     );
                     return;
                   }
+                  setHasOtherWorktrees(true);
                   await showClaudeAlert(
                     language === 'vi' ? 'Đã tạo worktree' : 'Worktree created',
                     `${data.path}\nbranch: ${data.branch}\n\n${language === 'vi' ? 'Mở cửa sổ/tab mới rồi chọn thư mục này làm cwd để làm ticket song song.' : 'Open a new window/tab and pick this folder as cwd to work on it in parallel.'}`,
@@ -2468,7 +2509,7 @@ export function App() {
             <button
               type="button"
               className="tab-bar-cosmos"
-              disabled={!cwd.trim()}
+              disabled={!cwd.trim() || !hasOtherWorktrees}
               onClick={async () => {
                 if (!cwd.trim()) return;
                 const ticket = await showClaudePrompt(
@@ -2507,6 +2548,10 @@ export function App() {
                     );
                     return;
                   }
+                  apiFetch(`/api/worktree/list?cwd=${encodeURIComponent(cwd.trim())}`)
+                    .then((r) => r.json())
+                    .then((d: { worktrees?: unknown[] }) => setHasOtherWorktrees((d.worktrees ?? []).length > 1))
+                    .catch(() => {});
                   await showClaudeAlert(
                     language === 'vi' ? 'Đã gỡ worktree' : 'Worktree removed',
                     language === 'vi' ? `Đã xoá worktree + branch của "${ticket.trim()}".` : `Removed the worktree and branch for "${ticket.trim()}".`,
