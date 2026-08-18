@@ -553,6 +553,15 @@ export function App() {
     return valid.includes(saved as NavSection) ? (saved as NavSection) : 'workspace';
   });
   useEffect(() => { localStorage.setItem('bow-nav', navSection); }, [navSection]);
+  /** Mobile: nav trái là drawer trượt (màn hẹp không đủ chỗ cho cột 196px cố định).
+   *  Desktop CSS bỏ qua cờ này — nav luôn hiện, nên không cần đồng bộ theo resize. */
+  const [navOpen, setNavOpen] = useState(false);
+  useEffect(() => {
+    if (!navOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setNavOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [navOpen]);
   const [otherModes, setOtherModes] = useState<{
     dev: { repoName: string; defaultCwd: string; active?: boolean };
     qc: { repoName: string; defaultCwd: string; active?: boolean };
@@ -2144,6 +2153,17 @@ export function App() {
         </div>
       )}
       <header className="topbar">
+        {/* Mở nav trái ở mobile. Ẩn ở desktop (CSS) — nơi nav luôn hiện thành cột. */}
+        <button
+          type="button"
+          className="nav-toggle"
+          onClick={() => setNavOpen((o) => !o)}
+          aria-expanded={navOpen}
+          title={language === 'vi' ? 'Menu điều hướng' : 'Navigation menu'}
+          aria-label={language === 'vi' ? 'Menu điều hướng' : 'Navigation menu'}
+        >
+          <Icon name="menu" size={18} />
+        </button>
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">
             <svg viewBox="0 0 32 32" fill="none">
@@ -2332,7 +2352,7 @@ export function App() {
                 <span className="bar">
                   <i style={{ width: `${Math.min(pct ?? 0, 100)}%` }} />
                 </span>
-                <span><b>{pct != null ? `${pct}%` : '—'}</b> {language === 'vi' ? 'phiên' : 'session'}</span>
+                <span className="m-meter-sess"><b>{pct != null ? `${pct}%` : '—'}</b> {language === 'vi' ? 'phiên' : 'session'}</span>
                 <span><b>{hasCtx ? `${usedCtx}/${maxCtx}` : '—'}</b></span>
               </button>
             );
@@ -2436,15 +2456,19 @@ export function App() {
       <div className="app-body">
       <AppNav
         active={navSection}
-        onSelect={setNavSection}
+        onSelect={(sec) => { setNavSection(sec); setNavOpen(false); }}
         language={language}
         cfg={cfg}
         pendingCount={totalPendingApprovals}
         running={paneRunning}
         agents={activePane.agents}
         modeLabel={modeLabel}
-        onOpenCosmos={() => activePaneRef()?.openCosmos()}
+        onOpenCosmos={() => { setNavOpen(false); activePaneRef()?.openCosmos(); }}
+        mobileOpen={navOpen}
+        onCloseMobile={() => setNavOpen(false)}
       />
+      {/* Nền mờ sau drawer (chỉ mobile) — bấm ra ngoài là đóng. */}
+      {navOpen && <div className="nav-backdrop" onClick={() => setNavOpen(false)} />}
       <div className="app-main">
 
       {/* Thanh tab: nhiều tác vụ/hội thoại chạy SONG SONG. Mỗi tab một <TaskPane> (SSE +

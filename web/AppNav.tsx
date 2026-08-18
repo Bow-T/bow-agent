@@ -60,10 +60,15 @@ interface AppNavProps {
   modeLabel: string;
   /** Mở overlay Cosmos toàn màn hình của tab đang mở. */
   onOpenCosmos: () => void;
+  /** Mobile: nav là drawer trượt từ trái — cờ này mở nó (desktop bỏ qua, CSS luôn hiện). */
+  mobileOpen?: boolean;
+  /** Mobile: đóng drawer (nút ✕ trong nav; backdrop do App xử lý). */
+  onCloseMobile?: () => void;
 }
 
 export function AppNav({
   active, onSelect, language, cfg, pendingCount, running, agents, modeLabel, onOpenCosmos,
+  mobileOpen = false, onCloseMobile,
 }: AppNavProps) {
   const vi = language === 'vi';
   const isAdmin = !!cfg?.isAdmin;
@@ -72,7 +77,20 @@ export function AppNav({
   const stars = agents.length > 0 ? agents : [];
 
   return (
-    <nav className="app-nav" aria-label={vi ? 'Điều hướng chính' : 'Main navigation'}>
+    <nav
+      className={`app-nav${mobileOpen ? ' open' : ''}`}
+      aria-label={vi ? 'Điều hướng chính' : 'Main navigation'}
+    >
+      {/* Chỉ hiện ở mobile (CSS) — drawer che gần hết màn nên phải có lối đóng rõ ràng. */}
+      <button
+        type="button"
+        className="nav-close"
+        onClick={onCloseMobile}
+        title={vi ? 'Đóng menu' : 'Close menu'}
+        aria-label={vi ? 'Đóng menu' : 'Close menu'}
+      >
+        <Icon name="close" size={16} />
+      </button>
       <div className="app-nav-items" role="tablist">
         {items.map((it) => {
           const label = vi ? it.vi : it.en;
