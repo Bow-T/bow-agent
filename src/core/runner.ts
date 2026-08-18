@@ -265,6 +265,13 @@ export interface RunOptions {
    */
   onSessionId?: (sessionId: string) => void;
   /**
+   * Trao "kênh nói chen": hàm đẩy THÊM lời người dùng vào lượt đang chạy (streaming input),
+   * giống gõ tiếp khi Claude Code đang nghĩ — message xếp hàng, agent nhận ngay khi nhả tool
+   * hiện tại. Caller (web) giữ hàm này để phục vụ POST /api/say. Không truyền = hành vi cũ
+   * (một lượt một message).
+   */
+  onInputChannel?: (send: (text: string) => void) => void;
+  /**
    * Bật multi-agent: nhồi bộ subagent chuẩn (reviewer/verifier/impact-scout) vào
    * options.agents để agent chính giao việc qua tool `Agent`. MẶC ĐỊNH TẮT (opt-in):
    * tắt thì runner giữ nguyên single-agent, hành vi không đổi. Subagent đều read-only
@@ -1272,7 +1279,11 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   const inputDone = new Promise<void>((r) => {
     releaseInput = r;
   });
-  const prompt = streamingPrompt(firstContent, inputDone);
+  // Kênh input MỞ: message đầu là brief; nếu caller cầm `send` (web: POST /api/say) thì
+  // người dùng nói chen được giữa lượt — SDK xếp hàng và xử lý ngay khi agent nhả tool.
+  const input = createInputChannel(firstContent, inputDone);
+  const prompt = input.stream;
+  opts.onInputChannel?.(input.send);
 
   let finalText: string | null = null;
   // Thời điểm reset hạn mức 5h GẦN NHẤT mà SDK báo (qua message 'rate_limit'), dạng ISO.
@@ -1283,6 +1294,22 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   // Đếm số lượt 'result' trong phiên — để cảnh báo cache đúng lúc: lượt đầu read=0 là
   // BÌNH THƯỜNG (đang tạo cache); từ lượt 2 trở đi read=0 mới là silent invalidator.
   let resultCount = 0;
+  // Số lượt đã chốt bằng 'result'. So với input.count() (số lời đã gửi vào SDK) để biết
+  // còn lời chen nào chưa được xử lý hay không.
+  let doneTurns = 0;
+  // Phanh chống treo: khi ta cố ý giữ kênh mở chờ lời chen mà SDK im lặng quá lâu (không
+  // ra message nào), tự đóng để phiên không kẹt vĩnh viễn.
+  let idleTimer: NodeJS.Timeout | null = null;
+  const clearIdleGuard = () => {
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      idleTimer = null;
+    }
+  };
+  const armIdleGuard = () => {
+    clearIdleGuard();
+    idleTimer = setTimeout(() => releaseInput(), PENDING_INPUT_IDLE_MS);
+  };
 
   // Cập nhật context window THEO THỜI GIAN THỰC trong lúc agent chạy (sau mỗi assistant
   // turn / tool-result), thay vì chỉ một lần khi kết thúc lượt ở 'result'. Chỉ đọc
@@ -1313,6 +1340,8 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   };
   try {
   for await (const message of q) {
+    // SDK còn ra message = phiên còn sống → gỡ phanh idle (nếu đang giữ kênh chờ lời chen).
+    clearIdleGuard();
     switch (message.type) {
       case 'system': {
         // system/init phát ngay đầu mỗi lượt, mang session_id THẬT mà SDK dùng để lưu
@@ -1441,8 +1470,13 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
             null;
           opts.onEvent({ type: 'error', subtype: message.subtype, isSessionLimit, resetsAt });
         }
-        // Giải phóng streaming input → SDK kết thúc query, vòng for..of thoát.
-        releaseInput();
+        // Giải phóng streaming input → SDK kết thúc query, vòng for..of thoát. NHƯNG nếu
+        // người dùng đã nói chen (input.count > số result đã nhận) thì GIỮ MỞ: lời kế còn
+        // chờ agent xử lý, đóng bây giờ là nuốt mất. Phanh chống treo: SDK im quá lâu →
+        // idle guard đóng hộ.
+        doneTurns++;
+        if (doneTurns >= input.count()) releaseInput();
+        else armIdleGuard();
         break;
       }
       // Các message type khác (stream_event, system, ...) bỏ qua cho gọn.
@@ -1451,6 +1485,7 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   } finally {
     // Luôn giải phóng streaming input (kể cả khi lỗi/abort giữa chừng, chưa tới
     // 'result') để generator không treo vô hạn giữ query sống.
+    clearIdleGuard();
     releaseInput();
   }
 
@@ -1484,6 +1519,71 @@ function condenseForJournal(finalText: string, brief: string): string {
     body = body.slice(0, JOURNAL_ENTRY_MAX_CHARS - header.length - 1).trimEnd() + '…';
   }
   return header + body;
+}
+
+/**
+ * Kênh nói chen im lặng bao lâu thì tự đóng. Chỉ chạm tới khi ta đang CỐ Ý giữ kênh mở
+ * (đã có lời chen chờ) mà SDK không ra message nào nữa — phanh để phiên không kẹt.
+ */
+const PENDING_INPUT_IDLE_MS = 120_000;
+
+/**
+ * Kênh input streaming có HÀNG ĐỢI — cơ chế "gõ tiếp khi agent đang nghĩ" của Claude Code.
+ * Generator sống suốt lượt: yield brief trước, rồi mỗi lần `send(text)` lại yield thêm một
+ * message user (SDK xếp hàng, xử lý ngay khi agent nhả tool hiện tại). `count()` = tổng số
+ * lời đã đưa vào SDK, để runner biết còn lời nào chưa có 'result'. Đóng khi `done` resolve.
+ */
+function createInputChannel(
+  first: MessageParam['content'],
+  done: Promise<void>,
+): { stream: AsyncIterable<SDKUserMessage>; send: (text: string) => void; count: () => number } {
+  const queue: MessageParam['content'][] = [];
+  let total = 1; // message đầu (brief) tính luôn
+  let closed = false;
+  let wake: (() => void) | null = null;
+  const notify = () => {
+    const w = wake;
+    wake = null;
+    w?.();
+  };
+  void done.then(() => {
+    closed = true;
+    notify();
+  });
+
+  const toMessage = (content: MessageParam['content']) =>
+    ({
+      type: 'user',
+      message: { role: 'user', content },
+      parent_tool_use_id: null,
+      session_id: '',
+    }) as SDKUserMessage;
+
+  async function* stream(): AsyncIterable<SDKUserMessage> {
+    yield toMessage(first);
+    for (;;) {
+      const next = queue.shift();
+      if (next !== undefined) {
+        yield toMessage(next);
+        continue;
+      }
+      if (closed) return;
+      await new Promise<void>((r) => {
+        wake = r;
+      });
+    }
+  }
+
+  return {
+    stream: stream(),
+    send: (text: string) => {
+      if (closed) return;
+      total++;
+      queue.push(text);
+      notify();
+    },
+    count: () => total,
+  };
 }
 
 /**
