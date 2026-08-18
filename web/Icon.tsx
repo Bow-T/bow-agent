@@ -37,7 +37,7 @@ import {
   DocumentText,
   Book,
   Gallery,
-  Paperclip,
+  DocumentUpload,
   Trash,
   AddSquare,
   Messages2,
@@ -117,7 +117,7 @@ const ICONS: Record<string, IconType> = {
   doc: DocumentText,
   pdf: Book,
   image: Gallery,
-  attach: Paperclip,
+  attach: DocumentUpload,   // tài liệu + mũi tên lên: đọc ra 'gửi file lên' rõ hơn kẹp giấy ở variant Bold
   trash: Trash,
   newChat: AddSquare,
   history: ArchiveBook,

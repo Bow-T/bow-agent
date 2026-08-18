@@ -40,6 +40,13 @@ export interface Conversation {
   /** Thư mục làm việc của cuộc (để mở lại tự set cwd). */
   cwd: string;
   /**
+   * Cửa sổ chat (tab tác vụ) đã tạo cuộc này — để tab Lịch sử chỉ hiện lịch sử CỦA CHÍNH
+   * cửa sổ đó thay vì trộn mọi tác vụ. Gắn MỘT LẦN lúc tạo (mở lại cuộc ở tab khác không
+   * đổi chủ). Bản ghi cũ không có field này → coi là "không thuộc tab nào", chỉ hiện khi
+   * người dùng bấm xem tất cả.
+   */
+  tabId?: string;
+  /**
    * IP người tạo cuộc — để chia sẻ LAN (QC), mỗi máy chỉ thấy/đọc cuộc của chính nó.
    * Admin (localhost 127.0.0.1) xem được tất cả để review. Bản ghi cũ không có field
    * này (undefined) → coi như "vô chủ", chỉ admin thấy (xem canAccess).
@@ -63,6 +70,8 @@ export interface ConversationSummary {
   id: string;
   title: string;
   cwd: string;
+  /** Cửa sổ chat đã tạo cuộc (xem Conversation.tabId) — tab Lịch sử lọc theo field này. */
+  tabId?: string;
   /** Số dòng chat (để hiện "trống" vs "có nội dung"). */
   itemCount: number;
   createdAt: number;
@@ -92,6 +101,7 @@ function toSummary(c: Conversation): ConversationSummary {
     id: c.id,
     title: c.title,
     cwd: c.cwd,
+    tabId: c.tabId,
     itemCount: Array.isArray(c.items) ? c.items.length : 0,
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
@@ -128,6 +138,7 @@ export function upsertConversation(
     conversationId?: string | null;
     items?: unknown[];
     cwd?: string;
+    tabId?: string;
   },
   now: number,
   requesterIp: string,
@@ -141,6 +152,7 @@ export function upsertConversation(
       conversationId: patch.conversationId ?? null,
       items: patch.items ?? [],
       cwd: patch.cwd ?? '',
+      tabId: patch.tabId,   // cửa sổ chat khai sinh cuộc — tab Lịch sử lọc theo đây
       ownerIp: requesterIp, // gắn chủ sở hữu ngay khi tạo → về sau lọc theo IP
       createdAt: now,
       updatedAt: now,
@@ -161,6 +173,9 @@ export function upsertConversation(
     conversationId: patch.conversationId !== undefined ? patch.conversationId : cur.conversationId,
     items: patch.items !== undefined ? patch.items : cur.items,
     cwd: patch.cwd !== undefined ? patch.cwd : cur.cwd,
+    // Chủ sở hữu tab gắn MỘT LẦN: cuộc cũ (chưa có tabId) nhận tab đang lưu nó, còn cuộc
+    // đã có chủ thì mở lại ở tab khác cũng không bị cướp khỏi lịch sử tab gốc.
+    tabId: cur.tabId ?? patch.tabId,
     updatedAt: now,
   };
   list[idx] = updated;

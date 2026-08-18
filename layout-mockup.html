@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BOW — Layout mockup</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --cream:#fbf6e9; --card:#fffdf5; --ink:#0a0a0a; --muted:#4a4a4a;
+  --yellow:#ffcf24; --coral:#ff5a5a; --lav:#b8a4ff; --pink:#ff6bb0;
+  --green:#22c55e; --mint:#86efac; --orange:#ff9a3c; --blue:#3b82f6;
+  --mono:'Space Mono',ui-monospace,monospace;
+  --sans:'Space Grotesk',system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;padding:24px;background:var(--cream);color:var(--ink);
+  font-family:var(--mono);font-size:13px;
+  background-image:radial-gradient(rgba(10,10,10,.28) 1.3px,transparent 1.5px);
+  background-size:22px 22px;
+}
+.shell{max-width:1240px;margin:0 auto;border:3px solid var(--ink);background:var(--cream);
+  box-shadow:10px 10px 0 0 var(--ink);overflow:hidden}
+
+/* ─── TOPBAR ─── */
+.top{display:flex;align-items:stretch;gap:0;background:var(--card);
+  border-bottom:3px solid var(--ink);flex-wrap:wrap}
+.logo{display:flex;align-items:center;gap:8px;background:var(--yellow);
+  border-right:3px solid var(--ink);padding:12px 16px;font-weight:700;letter-spacing:.06em}
+.logo b{font-size:15px;line-height:1}
+.logo small{display:block;font-size:8.5px;letter-spacing:.18em;opacity:.75}
+.pill{display:flex;align-items:center;gap:7px;padding:0 13px;border-right:2px solid var(--ink);
+  font-size:11px;letter-spacing:.05em;white-space:nowrap}
+.pill.on{background:#dcfce7;font-weight:700}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--green);flex:none}
+.tag{background:var(--yellow);border:2px solid var(--ink);padding:1px 7px;font-size:10px;font-weight:700}
+.ico{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;
+  border:2px solid var(--ink);background:var(--card);font-size:12px}
+.ico.red{background:var(--coral)}
+.top-right{margin-left:auto;display:flex;align-items:center;gap:7px;padding:0 12px;border-left:2px solid var(--ink)}
+.bell{position:relative}
+.bell span{position:absolute;top:-6px;right:-6px;background:var(--coral);border:1.5px solid var(--ink);
+  font-size:8px;padding:0 3px;font-weight:700}
+
+/* ─── BODY 3 CỘT ─── */
+.body{display:grid;grid-template-columns:196px 1fr 296px;min-height:640px}
+
+/* NAV ĐEN */
+.nav{background:var(--ink);padding:12px 10px;display:flex;flex-direction:column;gap:5px}
+.nv{display:flex;align-items:center;gap:9px;padding:9px 11px;color:#e8e8e8;
+  font-size:11px;letter-spacing:.09em;font-weight:700;cursor:pointer;border:2px solid transparent}
+.nv:hover{background:#1e1e1e}
+.nv.on{background:var(--lav);color:var(--ink);border-color:#fff}
+.nv i{font-style:normal;width:15px;text-align:center}
+.nv b{margin-left:auto;background:var(--coral);color:var(--ink);border:1.5px solid var(--ink);
+  font-size:9px;padding:0 5px}
+.mapbox{margin-top:14px;border:2px solid #3a3a3a;background:#0f0f0f}
+.mapbox h4{margin:0;padding:7px 9px;font-size:9px;letter-spacing:.14em;color:#9a9a9a;
+  border-bottom:2px solid #3a3a3a;display:flex;justify-content:space-between}
+.radar{position:relative;height:112px;background:
+  radial-gradient(circle at 50% 50%,rgba(184,164,255,.16),transparent 62%),#0a0a0a}
+.radar i{position:absolute;font-style:normal;font-size:7.5px;letter-spacing:.1em;
+  padding:2px 5px;border:1.5px solid;font-weight:700}
+.legend{padding:8px 9px;display:flex;flex-direction:column;gap:5px}
+.legend div{display:flex;align-items:center;gap:7px;font-size:8.5px;color:#c8c8c8;letter-spacing:.06em}
+.legend s{width:7px;height:7px;border-radius:50%;text-decoration:none}
+.status{margin-top:12px;background:var(--mint);border:2px solid var(--ink);padding:9px 10px}
+.status h4{margin:0 0 6px;font-size:9px;letter-spacing:.14em}
+.status p{margin:3px 0;font-size:9.5px;display:flex;align-items:center;gap:6px}
+.status p s{width:6px;height:6px;background:var(--ink);border-radius:50%;text-decoration:none}
+
+/* GIỮA */
+.main{border-left:3px solid var(--ink);border-right:3px solid var(--ink);
+  display:flex;flex-direction:column;background:var(--cream)}
+.mhead{display:flex;align-items:center;gap:12px;padding:16px 18px;border-bottom:2px solid var(--ink)}
+.mhead .sq{width:38px;height:38px;background:var(--ink);color:var(--yellow);
+  display:flex;align-items:center;justify-content:center;font-size:19px}
+.mhead h1{margin:0;font-size:17px;letter-spacing:.1em;font-weight:700}
+.mhead p{margin:2px 0 0;font-size:10px;color:var(--muted)}
+.btn{border:2px solid var(--ink);background:var(--card);padding:8px 13px;font-family:var(--mono);
+  font-size:11px;font-weight:700;letter-spacing:.06em;cursor:pointer;box-shadow:3px 3px 0 0 var(--ink)}
+.btn:active{box-shadow:0 0 0 0 var(--ink);transform:translate(3px,3px)}
+.newtask{margin-left:auto}
+.tabs{display:flex;gap:9px;padding:13px 18px;border-bottom:2px solid var(--ink)}
+.tab{display:flex;align-items:center;gap:6px;border:2px solid var(--ink);background:var(--card);
+  padding:7px 14px;font-size:11px;font-weight:700;letter-spacing:.07em;cursor:pointer;
+  box-shadow:3px 3px 0 0 var(--ink)}
+.tab.on{background:var(--pink)}
+.chat{flex:1;padding:16px 18px;display:flex;flex-direction:column;gap:13px;overflow:auto}
+.msg{border:2px solid var(--ink);background:var(--card);box-shadow:4px 4px 0 0 var(--ink)}
+.msg-h{display:flex;align-items:center;gap:9px;padding:9px 12px;border-bottom:2px solid var(--ink)}
+.av{width:26px;height:26px;border:2px solid var(--ink);display:flex;align-items:center;
+  justify-content:center;font-size:12px;background:var(--card)}
+.msg-h b{font-size:10.5px;letter-spacing:.11em}
+.msg-h time{margin-left:auto;font-size:9.5px;color:var(--muted)}
+.msg-b{padding:11px 12px;font-size:12.5px;line-height:1.6}
+.chip{display:inline-flex;align-items:center;gap:5px;border:2px solid var(--ink);
+  background:#dbeafe;padding:2px 8px;font-size:10px;font-weight:700;margin-top:8px}
+.steps{margin:9px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
+.steps li{display:flex;align-items:center;gap:8px;font-size:11.5px}
+.steps s{width:8px;height:8px;border-radius:50%;text-decoration:none;flex:none}
+.steps li.todo{color:#9a9a9a}
+.code{margin-top:9px;border:2px solid var(--ink);background:#f4ecd6;font-size:11px}
+.code div{display:flex;gap:11px;padding:3px 9px}
+.code span{color:#9a9a9a;user-select:none}
+.ago{font-size:9.5px;color:var(--muted);text-align:right;padding:0 12px 8px}
+/* composer */
+.comp{border-top:2px solid var(--ink);padding:12px 18px;background:var(--card)}
+.crow{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:9px}
+.cchip{display:flex;align-items:center;gap:6px;border:2px solid var(--ink);background:var(--card);
+  padding:4px 9px;font-size:10px;font-weight:700;letter-spacing:.04em}
+.cchip s{width:8px;height:8px;border-radius:50%;text-decoration:none}
+.cbox{display:flex;gap:9px;align-items:stretch}
+.cbox textarea{flex:1;border:2px solid var(--ink);background:var(--card);padding:10px;
+  font-family:var(--mono);font-size:12px;resize:none;height:62px}
+.send{background:var(--pink);border:2px solid var(--ink);padding:0 20px;font-family:var(--mono);
+  font-size:12px;font-weight:700;letter-spacing:.06em;cursor:pointer;box-shadow:4px 4px 0 0 var(--ink)}
+
+/* PHẢI */
+.side{display:flex;flex-direction:column;background:var(--cream);overflow:auto}
+.sec{border-bottom:2px solid var(--ink);padding:12px 13px}
+.sec h3{margin:0 0 10px;font-size:9.5px;letter-spacing:.14em;display:flex;align-items:center;gap:8px}
+.sec h3::after{content:'';flex:1;height:2px;background:var(--ink);opacity:.25}
+.sec h3 a{font-size:8.5px;color:var(--muted);text-decoration:none;letter-spacing:.1em}
+.act{display:flex;align-items:flex-start;gap:8px;font-size:10.5px;padding:4px 0;line-height:1.45}
+.act s{width:7px;height:7px;border-radius:50%;margin-top:4px;text-decoration:none;flex:none}
+.act time{color:var(--muted);flex:none}
+.badge{background:var(--coral);border:2px solid var(--ink);color:var(--ink);
+  font-size:9px;font-weight:700;padding:0 6px;margin-left:4px}
+.apv{border:2px solid var(--ink);background:var(--card);margin-bottom:9px;
+  box-shadow:3px 3px 0 0 var(--ink);border-left-width:7px}
+.apv.a{border-left-color:var(--pink)}
+.apv.b{border-left-color:var(--yellow)}
+.apv.c{border-left-color:var(--orange)}
+.apv-h{display:flex;align-items:center;gap:8px;padding:8px 10px}
+.apv-h i{font-style:normal;width:19px;height:19px;border:2px solid var(--ink);
+  display:flex;align-items:center;justify-content:center;font-size:10px}
+.apv.a .apv-h i{background:var(--pink)} .apv.b .apv-h i{background:var(--yellow)}
+.apv.c .apv-h i{background:var(--orange)}
+.apv-h b{font-size:10px;letter-spacing:.09em}
+.apv-h em{margin-left:auto;font-style:normal;font-size:9px;color:var(--muted)}
+.apv p{margin:0;padding:0 10px 7px;font-size:10px;color:var(--muted);line-height:1.45}
+.apv .more{padding:0 10px 8px;font-size:9.5px;color:var(--muted)}
+.apv-a{display:flex;gap:7px;padding:0 10px 10px}
+.apv-a button{flex:1;border:2px solid var(--ink);background:var(--card);padding:5px;
+  font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.08em;cursor:pointer}
+.apv.a .ok{background:var(--pink)} .apv.b .ok{background:var(--yellow)} .apv.c .ok{background:var(--orange)}
+.task{display:flex;align-items:center;gap:8px;padding:6px 0;font-size:10.5px}
+.task s{width:7px;height:7px;border-radius:50%;text-decoration:none;flex:none}
+.task div{flex:1;min-width:0}
+.task b{display:block;font-size:10.5px}
+.task span{display:block;font-size:9.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.st{border:2px solid var(--ink);font-size:8.5px;font-weight:700;padding:1px 5px;letter-spacing:.06em}
+.st.run{background:#e9d5ff} .st.done{background:#bbf7d0}
+.st.rev{background:var(--yellow)} .st.blk{background:var(--coral)}
+.note{max-width:1240px;margin:16px auto 0;border:3px solid var(--ink);background:var(--yellow);
+  padding:13px 16px;font-size:12px;line-height:1.6;box-shadow:6px 6px 0 0 var(--ink)}
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <!-- TOPBAR -->
+  <div class="top">
+    <div class="logo"><span style="font-size:18px">✳</span><span><b>BOW</b><small>OBSERVATORY</small></span></div>
+    <div class="pill on"><s class="dot"></s>ONLINE</div>
+    <div class="pill">monorepo / develop ⌄</div>
+    <div class="pill">AGENT <span class="tag">CLAUDE 4.8</span></div>
+    <div class="pill">MODE &nbsp;AUTO</div>
+    <div class="pill">COST &nbsp;$2.95 / session</div>
+    <div class="pill">UTC &nbsp;03:31:09</div>
+    <div class="top-right">
+      <div class="pill" style="border:0">TIẾNG VIỆT ⌄</div>
+      <span class="ico">&gt;_</span>
+      <span class="ico bell">🔔<span>3</span></span>
+      <span class="ico">?</span>
+      <span class="ico red">🤖</span>
+    </div>
+  </div>
+
+  <div class="body">
+    <!-- NAV -->
+    <nav class="nav">
+      <div class="nv on"><i>▣</i>WORKSPACE</div>
+      <div class="nv"><i>◎</i>AGENTS</div>
+      <div class="nv"><i>⛨</i>APPROVALS<b>3</b></div>
+      <div class="nv"><i>◈</i>JIRA</div>
+      <div class="nv"><i>▤</i>REPOS</div>
+      <div class="nv"><i>✳</i>COSMOS</div>
+      <div class="nv"><i>◔</i>ACTIVITY</div>
+      <div class="nv"><i>⚙</i>SETTINGS</div>
+
+      <div class="mapbox">
+        <h4><span>COSMOS MAP</span><span>⤢</span></h4>
+        <div class="radar">
+          <i style="top:14px;left:56px;color:#c4b5fd;border-color:#c4b5fd">LYRA</i>
+          <i style="top:44px;left:8px;color:#ff9a3c;border-color:#ff9a3c">ORION</i>
+          <i style="top:52px;left:62px;color:#ff6bb0;border-color:#ff6bb0">SOL</i>
+          <i style="top:76px;left:96px;color:#4ade80;border-color:#4ade80">VEGA</i>
+        </div>
+        <div class="legend">
+          <div><s style="background:#ff6bb0"></s>SOL &nbsp;Điều phối</div>
+          <div><s style="background:#4ade80"></s>VEGA &nbsp;Rà soát</div>
+          <div><s style="background:#ff9a3c"></s>ORION &nbsp;Kiểm thử</div>
+          <div><s style="background:#c4b5fd"></s>LYRA &nbsp;Khảo sát</div>
+        </div>
+      </div>
+
+      <div class="status">
+        <h4>SYSTEM STATUS</h4>
+        <p><s></s>All systems operational</p>
+        <p><s></s>Agent idle</p>
+      </div>
+    </nav>
+
+    <!-- GIỮA -->
+    <div class="main">
+      <div class="mhead">
+        <div class="sq">✳</div>
+        <div><h1>AGENT WORKSPACE</h1><p>Giao việc cho agent — bắt đầu từ một câu mô tả</p></div>
+        <button class="btn newtask">+ NEW TASK</button>
+      </div>
+
+      <div class="tabs">
+        <div class="tab on">💬 CHAT</div>
+        <div class="tab">🗂 FILES</div>
+        <div class="tab">◫ CONTEXT</div>
+        <div class="tab">◷ HISTORY</div>
+      </div>
+
+      <div class="chat">
+        <div class="msg">
+          <div class="msg-h"><span class="av">👤</span><b>YOU</b><time>10:32</time></div>
+          <div class="msg-b">
+            Fix lỗi crash ở màn checkout khi thanh toán qua Apple Pay
+            <br><span class="chip">◆ DUOCT-2808</span>
+          </div>
+        </div>
+
+        <div class="msg">
+          <div class="msg-h"><span class="av">🤖</span><b>AGENT</b><time>10:32</time></div>
+          <div class="msg-b">
+            Tôi sẽ kiểm tra luồng thanh toán, tìm nguyên nhân crash và đề xuất hướng fix.
+            <ul class="steps">
+              <li><s style="background:#22c55e"></s>Đọc thông tin Jira</li>
+              <li><s style="background:#22c55e"></s>Phân tích yêu cầu</li>
+              <li><s style="background:#8b5cf6"></s>Tìm các file liên quan</li>
+              <li class="todo"><s style="background:#d4d4d4"></s>Đọc code</li>
+              <li class="todo"><s style="background:#d4d4d4"></s>Đề xuất hướng fix</li>
+            </ul>
+          </div>
+          <div class="ago">3s ago</div>
+        </div>
+
+        <div class="msg">
+          <div class="msg-h"><span class="av">🤖</span><b>AGENT</b><time>10:33</time></div>
+          <div class="msg-b">
+            Tôi đã tìm thấy 3 file có liên quan có thể gây ra crash. Đề xuất cần sửa các file sau:
+            <div class="code">
+              <div><span>1</span>lib/features/checkout/payment_service.dart</div>
+              <div><span>2</span>lib/features/checkout/apple_pay_handler.dart</div>
+              <div><span>3</span>lib/features/checkout/payment_state.dart</div>
+            </div>
+          </div>
+          <div class="ago">just now</div>
+        </div>
+      </div>
+
+      <div class="comp">
+        <div class="crow">
+          <span class="cchip"><s style="background:#8b5cf6"></s>AGENT: CLAUDE 4.8 ⌄</span>
+          <span class="cchip"><s style="background:#ffcf24"></s>MODE: AUTO ⌄</span>
+          <span class="cchip"><s style="background:#ff5a5a"></s>PRIORITY: HIGH ⌄</span>
+          <span class="cchip"><s style="background:#22c55e"></s>CONTEXT: monorepo/develop</span>
+          <span class="cchip">⇄</span>
+        </div>
+        <div class="cbox">
+          <textarea placeholder="Describe what you want the agent to do...&#10;(Ctrl + Enter to send)"></textarea>
+          <button class="send">➤ SEND</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- PHẢI -->
+    <aside class="side">
+      <div class="sec">
+        <h3>AGENT ACTIVITY<a>VIEW ALL</a></h3>
+        <div class="act"><s style="background:#22c55e"></s><time>10:33:21</time><span>Đọc file: payment_service.dart</span></div>
+        <div class="act"><s style="background:#22c55e"></s><time>10:33:18</time><span>Đọc file: apple_pay_handler.dart</span></div>
+        <div class="act"><s style="background:#8b5cf6"></s><time>10:33:12</time><span>Tìm kiếm: "ApplePay crash"</span></div>
+        <div class="act"><s style="background:#ff9a3c"></s><time>10:33:09</time><span>Phân tích stack trace</span></div>
+        <div class="act"><s style="background:#22c55e"></s><time>10:32:57</time><span>Đọc CLAUDE.md</span></div>
+        <div class="act"><s style="background:#22c55e"></s><time>10:32:41</time><span>Tải thông tin Jira DUOCT-2808</span></div>
+      </div>
+
+      <div class="sec">
+        <h3>APPROVAL QUEUE<span class="badge">3</span><a>VIEW ALL</a></h3>
+
+        <div class="apv a">
+          <div class="apv-h"><i>✎</i><b>EDIT FILES</b><em>2 files</em></div>
+          <p>Agent muốn chỉnh sửa các file</p>
+          <div class="more">Xem chi tiết ›</div>
+          <div class="apv-a"><button>DENY</button><button class="ok">APPROVE</button></div>
+        </div>
+
+        <div class="apv b">
+          <div class="apv-h"><i>▶</i><b>RUN COMMAND</b><em>npm test</em></div>
+          <p>Agent muốn chạy lệnh trong terminal</p>
+          <div class="more">Xem chi tiết ›</div>
+          <div class="apv-a"><button>DENY</button><button class="ok">APPROVE</button></div>
+        </div>
+
+        <div class="apv c">
+          <div class="apv-h"><i>◈</i><b>JIRA COMMENT</b><em>DUOCT-2808</em></div>
+          <p>Agent muốn bình luận lên ticket</p>
+          <div class="more">Xem chi tiết ›</div>
+          <div class="apv-a"><button>DENY</button><button class="ok">APPROVE</button></div>
+        </div>
+      </div>
+
+      <div class="sec">
+        <h3>RECENT TASKS<a>VIEW ALL</a></h3>
+        <div class="task"><s style="background:#22c55e"></s><div><b>DUOCT-2808</b><span>Fix checkout crash</span></div><span class="st run">RUNNING</span></div>
+        <div class="task"><s style="background:#22c55e"></s><div><b>DUOCT-2805</b><span>Add new payment method</span></div><span class="st done">DONE</span></div>
+        <div class="task"><s style="background:#ffcf24"></s><div><b>DUOCT-2799</b><span>Improve map performance</span></div><span class="st rev">REVIEW</span></div>
+        <div class="task"><s style="background:#ff5a5a"></s><div><b>DUOCT-2795</b><span>Refactor auth flow</span></div><span class="st blk">BLOCKED</span></div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<div class="note">
+  <b>MOCKUP TĨNH</b> — dựng lại đúng ảnh bạn gửi, chưa nối vào app.<br>
+  Duyệt xong sẽ port sang React: nav đen + Cosmos map + System status, heading + NEW TASK,
+  4 tab, bubble có avatar, và cột phải 3 khối (Activity / Approval Queue / Recent Tasks).
+</div>
+
+</body>
+</html>

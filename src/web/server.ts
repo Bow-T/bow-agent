@@ -49,6 +49,8 @@ import { loadRegistry, skillStatus, syncSkills } from '../skills/externalSkills.
 import { parseJiraRef } from '../input/jira-ref.js';
 import { fetchJiraTicketImages, fetchJiraTicketVideos } from '../input/jira-attachments.js';
 import { createTicketWorktree, listWorktrees, removeTicketWorktree } from '../core/gitWorktree.js';
+import { STANDARD_SUBAGENTS } from '../core/subagents.js';
+import { listSprints, listSprintIssues, readJiraAuth } from '../scheduler/jiraApi.js';
 import {
   listWorkspaces,
   resolveWorkspace,
@@ -1663,6 +1665,63 @@ app.post('/api/qc-cwd', requireAdmin, (req, res) => {
   res.json({ ok: true, cwd: dir, repoName: basename(dir) });
 });
 
+/**
+ * GET /api/agents — ĐỊNH NGHĨA bộ subagent chuẩn (màn "Đội agent" ở web đọc để hiển thị
+ * tên/mô tả/model/tool thật). Chỉ ĐỌC metadata đã khai trong src/core/subagents.ts —
+ * không bật/tắt gì ở đây (bật đội agent vẫn là cờ useSubagents của lượt chạy, và server
+ * cưỡng chế lại allowSubagents = isAdmin && …).
+ */
+app.get('/api/agents', (_req, res) => {
+  const agents = Object.entries(STANDARD_SUBAGENTS).map(([id, def]) => ({
+    id,
+    name: id,
+    description: def.description,
+    model: typeof def.model === 'string' ? def.model : undefined,
+    tools: def.tools,
+  }));
+  res.json({ agents });
+});
+
+/**
+ * Jira READ-ONLY cho web (/api/jira/*) — dùng lại đúng module REST đã chạy ở dashboard
+ * sprint-scan (src/scheduler/jiraApi.ts), auth đọc từ env MCP jira. KHÔNG có route ghi:
+ * mọi thao tác ghi Jira vẫn phải đi qua agent + MCP, tức là vẫn qua cổng duyệt canUseTool.
+ */
+app.get('/api/jira/config', (_req, res) => {
+  const auth = readJiraAuth();
+  res.json({
+    projectKey: config.defaultProjectKey ?? null,
+    baseUrl: auth?.baseUrl ?? null,
+    configured: !!auth,
+  });
+});
+
+app.get('/api/jira/sprints', async (req, res) => {
+  const projectKey = ((req.query.project as string) || config.defaultProjectKey || '').trim();
+  if (!projectKey) {
+    res.status(400).json({ error: 'Cần ?project=KEY (hoặc đặt BOW_PROJECT_KEY).' });
+    return;
+  }
+  try {
+    res.json({ projectKey, sprints: await listSprints(projectKey) });
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+app.get('/api/jira/issues', async (req, res) => {
+  const sprintId = Number(req.query.sprint);
+  if (!sprintId) {
+    res.status(400).json({ error: 'Cần ?sprint=<id>.' });
+    return;
+  }
+  try {
+    res.json({ sprintId, issues: await listSprintIssues(sprintId) });
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
 /** GET /api/audit-logs — trả về danh sách lịch sử log kiểm toán (chỉ dành cho localhost admin). */
 app.get('/api/audit-logs', requireAdmin, (_req, res) => {
   try {
@@ -1965,25 +2024,55 @@ app.delete('/api/my-mcp/:name', (req, res) => {
   }
 });
 
-/** GET /api/browse-dirs?path=... — duyệt thư mục local. */
+/**
+ * Các "gốc" để nhảy nhanh trong picker: Home, `/`, và mọi ổ đã mount ở /Volumes (macOS).
+ * Repo nằm ở ổ đĩa ngoài (vd /Volumes/ET512/monorepo) trước đây phải bấm [..] leo lên tận
+ * root rồi mới xuống được — giờ bấm thẳng tên ổ. Symlink "Macintosh HD → /" bị bỏ (trùng `/`).
+ */
+function listPickerRoots(): { label: string; path: string }[] {
+  const roots = [
+    { label: '~', path: os.homedir() },
+    { label: '/', path: '/' },
+  ];
+  try {
+    for (const name of fs.readdirSync('/Volumes').sort()) {
+      const p = join('/Volumes', name);
+      if (fs.lstatSync(p).isDirectory()) roots.push({ label: name, path: p });
+    }
+  } catch {
+    // Không phải macOS (hoặc không đọc được /Volumes) → chỉ còn Home + root.
+  }
+  return roots;
+}
+
+/** GET /api/browse-dirs?path=... — duyệt thư mục local (kèm `roots` = Home/`/`/ổ đĩa). */
 app.get('/api/browse-dirs', requireAdmin, (req, res) => {
   const queryPath = typeof req.query.path === 'string' ? req.query.path : '';
   const currentPath = resolve(queryPath || config.defaultCwd);
+  const roots = listPickerRoots();
   try {
     const items = fs.readdirSync(currentPath, { withFileTypes: true });
     const dirs = items
       .filter((item) => {
-        try {
-          return (
-            item.isDirectory() &&
-            !item.name.startsWith('.') &&
-            item.name !== 'node_modules' &&
-            item.name !== 'dist' &&
-            item.name !== 'dist-web'
-          );
-        } catch {
+        if (
+          item.name.startsWith('.') ||
+          item.name === 'node_modules' ||
+          item.name === 'dist' ||
+          item.name === 'dist-web'
+        ) {
           return false;
         }
+        if (item.isDirectory()) return true;
+        // Symlink trỏ tới thư mục (repo được link, ổ mount qua link…) vẫn phải vào được:
+        // readdir withFileTypes báo kiểu của CHÍNH entry nên isDirectory() = false ở đây.
+        if (item.isSymbolicLink()) {
+          try {
+            return fs.statSync(join(currentPath, item.name)).isDirectory();
+          } catch {
+            return false; // symlink gãy hoặc trỏ tới ổ đã tháo
+          }
+        }
+        return false;
       })
       .map((item) => item.name)
       .sort();
@@ -1994,9 +2083,20 @@ app.get('/api/browse-dirs', requireAdmin, (req, res) => {
       currentPath,
       parent,
       dirs,
+      roots,
     });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    // Lỗi phải nói rõ NGUYÊN NHÂN (trước đây web nuốt hết thành "Không thể đọc thư mục"):
+    // ổ chưa mount ≠ macOS chặn quyền ≠ gõ sai đường dẫn.
+    const error =
+      err?.code === 'ENOENT'
+        ? `Không tồn tại: ${currentPath} (ổ đĩa đã mount chưa?)`
+        : err?.code === 'EACCES' || err?.code === 'EPERM'
+          ? `Không có quyền đọc ${currentPath} — cấp "Full Disk Access" (hoặc quyền Removable Volumes) cho terminal/app đang chạy bow rồi thử lại.`
+          : err?.code === 'ENOTDIR'
+            ? `Không phải thư mục: ${currentPath}`
+            : err?.message ?? 'Không đọc được thư mục.';
+    res.status(400).json({ error, currentPath, roots });
   }
 });
 
@@ -2235,7 +2335,7 @@ app.get('/api/conversations/:id', (req, res) => {
  * auto-lưu. body: { title?, conversationId?, items?, cwd? }. Trả bản ghi sau lưu.
  */
 app.put('/api/conversations/:id', (req, res) => {
-  const { title, conversationId, items, cwd } = req.body ?? {};
+  const { title, conversationId, items, cwd, tabId } = req.body ?? {};
   try {
     const conv = upsertConversation(
       req.params.id,
@@ -2245,6 +2345,7 @@ app.put('/api/conversations/:id', (req, res) => {
           conversationId === null || typeof conversationId === 'string' ? conversationId : undefined,
         items: Array.isArray(items) ? items : undefined,
         cwd: typeof cwd === 'string' ? cwd : undefined,
+        tabId: typeof tabId === 'string' && tabId ? tabId : undefined,
       },
       Date.now(),
       getSocketIp(req), // R2: IP socket thật (không tin x-forwarded-for)

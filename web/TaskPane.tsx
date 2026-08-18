@@ -1,13 +1,15 @@
 import { forwardRef, lazy, Suspense, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { NeuralBrain, type CameraInfo, type NeuralBrainHandle } from './NeuralBrain.js';
 // Cosmos overlay nặng (Three.js ~500KB) → lazy: chỉ tải chunk khi người dùng bấm mở vũ trụ.
 const CosmosOverlay = lazy(() => import('./CosmosOverlay.js').then((m) => ({ default: m.CosmosOverlay })));
+import { RightRail, type RailTask } from './RightRail.js';
+import { FilesTab, ContextTab, HistoryTab } from './panels/WorkTabs.js';
 import { ModeSelect, modeDef } from './ModeSelect.js';
 import { PixelSelect } from './PixelSelect.js';
 import { Markdown } from './Markdown.js';
 import { QuestionCard } from './QuestionCard.js';
 import { Icon, type IconName } from './Icon.js';
 import type {
+  AgentSummary,
   ChatItem,
   ConversationFull,
   DetectedSource,
@@ -33,6 +35,7 @@ import {
   formatCountdown,
   formatResetIn,
   genId,
+  modelLabel,
   nextId,
   QUICK_PROMPTS,
   readDataUrl,
@@ -49,6 +52,15 @@ import {
  * questions/running… + logic run/stream/SSE. Tab "legacy" đọc key gốc không hậu tố nên
  * tương thích ngược dữ liệu single-view cũ.
  */
+/** 4 tab nội dung của một tác vụ (mockup): hội thoại · file · ngữ cảnh · lịch sử. */
+export type WsTabId = 'chat' | 'files' | 'context' | 'history';
+const WS_TAB_DEFS: { id: WsTabId; icon: IconName; vi: string; en: string }[] = [
+  { id: 'chat', icon: 'chat', vi: 'Hội thoại', en: 'Chat' },
+  { id: 'files', icon: 'folder', vi: 'File', en: 'Files' },
+  { id: 'context', icon: 'structure', vi: 'Ngữ cảnh', en: 'Context' },
+  { id: 'history', icon: 'history', vi: 'Lịch sử', en: 'History' },
+];
+
 export interface TaskPaneProps {
   tabId: string;
   /** Tab đang hiển thị — dùng cho hidden attr (bước 2 nhiều tab). */
@@ -76,7 +88,13 @@ export interface TaskPaneProps {
   ba: boolean;
   devops: boolean;
   taskHeight: number | null;
+  /** Các tác vụ (tab) đang mở + trạng thái — cột phải "Tác vụ gần đây" hiển thị. */
+  railTasks: RailTask[];
   // ── Handlers / setters global ──
+  /** Mở một tác vụ khác (nút ở cột phải). */
+  onGoTask: (tabId: string) => void;
+  /** Tạo tác vụ mới (nút "+ Tác vụ mới" ở đầu vùng làm việc). */
+  onNewTask: () => void;
   setCfg: React.Dispatch<React.SetStateAction<Cfg | null>>;
   setSelectedMcps: React.Dispatch<React.SetStateAction<string[]>>;
   setAuthModal: React.Dispatch<React.SetStateAction<AuthModalState | null>>;
@@ -96,7 +114,7 @@ export interface TaskPaneProps {
    * Báo lên App phần state per-tab mà UI GLOBAL cần đọc (header đồng hồ lượt chạy + panel
    * Lịch sử tô cuộc đang mở). Bước 1: 1 tab nên App chỉ mirror của tab hiển thị.
    */
-  onStateChange: (s: { running: boolean; runStartedAt: number | null; lastRunMs: number | null; activeConvId: string | null; title: string; model: string; claudeProfile: string; usage: UsageSnapshot | null; usageLoading: boolean; pendingCount: number; hasContent: boolean }) => void;
+  onStateChange: (s: { running: boolean; runStartedAt: number | null; lastRunMs: number | null; activeConvId: string | null; title: string; model: string; claudeProfile: string; usage: UsageSnapshot | null; usageLoading: boolean; pendingCount: number; hasContent: boolean; agents: AgentSummary[] }) => void;
 }
 
 /**
@@ -117,16 +135,18 @@ export interface TaskPaneHandle {
   /** Nội dung ô nhập task hiện tại của tab (nút "Tạo worktree" ở tab-bar App đọc để tự
    *  trích ticket key đang dán, khỏi phải hỏi lại qua dialog riêng). */
   getTaskText: () => string;
+  /** Nối thêm chữ vào ô nhập task (màn Jira "giao ticket cho agent" dùng). */
+  setTaskText: (text: string) => void;
 }
 
 export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskPane(props, ref) {
   const {
     tabId, visible, cfg, mode, useSubagents, language,
     selectedMcps, stack, cwd, theme, accent, detected, currentWs, skillStacks, skillStatus,
-    skillSyncing, skillSyncMsg, readonlyShare, taskHeight,
+    skillSyncing, skillSyncMsg, readonlyShare, taskHeight, railTasks,
     setCfg, setSelectedMcps, setAuthModal, setAccumulatedCost, openPicker, openWsPanel,
     changeActiveCwd, showClaudePrompt, showClaudeAlert, syncSkillsNow, setTaskHeight,
-    setMode, setStack, setUseSubagents, onStateChange,
+    setMode, setStack, setUseSubagents, onStateChange, onGoTask, onNewTask,
   } = props;
 
   // ── Khoá localStorage per-tab (legacy = key gốc, tab khác thêm ':<tabId>') ──
@@ -172,41 +192,16 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
   // account + context của chính cuộc này). App hiển thị usage của tab đang mở (báo qua onStateChange).
   const [usage, setUsage] = useState<UsageSnapshot | null>(null);
   const [usageLoading, setUsageLoading] = useState(false);
-  const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
-  const [cameraInfo, setCameraInfo] = useState<CameraInfo | null>(null);
-  const neuralBrainRef = useRef<NeuralBrainHandle>(null);
   // Cosmos: vũ trụ tri thức toàn màn hình. Chỉ fetch filetree khi mở (lazy) + load component qua React.lazy.
   const [cosmosOpen, setCosmosOpen] = useState(false);
   const [fileTree, setFileTree] = useState<{ path: string; lines: number }[]>([]);
   const [repoName, setRepoName] = useState('');
-  const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   const [configPopOpen, setConfigPopOpen] = useState(false);
   const configPopRef = useRef<HTMLDivElement | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [activeRailTab, setActiveRailTab] = useState<'toggle' | 'chart' | 'log'>('chart');
-  const sidebarRef = useRef<HTMLElement | null>(null);
-  const starChartRef = useRef<HTMLDivElement | null>(null);
-  const logRef = useRef<HTMLDivElement | null>(null);
-
-  const scrollToSection = useCallback((target: 'chart' | 'log') => {
-    setActiveRailTab(target);
-    const triggerEffect = () => {
-      const el = target === 'chart' ? starChartRef.current : logRef.current;
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        el.classList.remove('flash-highlight');
-        void el.offsetWidth;
-        el.classList.add('flash-highlight');
-        setTimeout(() => el.classList.remove('flash-highlight'), 1100);
-      }
-    };
-    if (!sidebarOpen) {
-      setSidebarOpen(true);
-      setTimeout(triggerEffect, 100);
-    } else {
-      triggerEffect();
-    }
-  }, [sidebarOpen]);
+  /** Tab nội dung đang xem của tác vụ này (hội thoại / file / ngữ cảnh / lịch sử). */
+  const [wsTab, setWsTab] = useState<WsTabId>('chat');
+  /** Bến neo hành động (thẻ duyệt ghim trên composer) — cột phải cuộn tới đây khi cần bấm. */
+  const dockRef = useRef<HTMLDivElement | null>(null);
 
   // Mở vũ trụ Cosmos: fetch cây file THẬT của workspace (lazy, chỉ khi bấm) rồi bung overlay.
   const openCosmos = useCallback(async () => {
@@ -429,6 +424,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
           conversationId: convId,
           items: convItems,
           cwd: cwd.trim(),
+          tabId, // cửa sổ chat khai sinh cuộc → tab Lịch sử chỉ hiện lịch sử của chính nó
         }),
       });
       if (res.status === 403) return 'forbidden';
@@ -468,7 +464,6 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
       setSessionId(null);
       setPending([]);
       setQuestions([]);
-      setSelectedStepId(null);
       // Reset context window — số của cuộc trước không còn đúng; event 'usage' lượt đầu nạp lại.
       setUsage(prev => (prev ? { ...prev, contextTokens: null, contextMaxTokens: null, contextPercentage: null } : prev));
       sessionBaselineRef.current = (conversation.items ?? []).length;
@@ -497,6 +492,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
     refreshUsage: () => refreshUsageRef.current(),
     openCosmos,
     getTaskText: () => task,
+    setTaskText: (text) => setTask((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text)),
   }));
 
   // Kéo giãn ô nhập: App giữ state taskHeight (global), TaskPane gọi setTaskHeight (prop)
@@ -646,7 +642,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
   }, []);
 
   const addItem = (kind: ChatItem['kind'], text: string, tool?: ChatItem['tool']) =>
-    setItems((prev) => [...prev, { id: nextId(), kind, text, tool }]);
+    setItems((prev) => [...prev, { id: nextId(), kind, text, tool, ts: Date.now() }]);
 
   async function addFiles(files: File[]) {
     for (const f of files) {
@@ -749,7 +745,6 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
 
     setPending([]);
     setQuestions([]);
-    setSelectedStepId(null);
     setRunning(true);
 
     const sentText = task.trim();
@@ -885,6 +880,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
                     kind: 'tool',
                     text: ev.describe,
                     tool: { toolId: ev.id, name: ev.name, summary: ev.summary },
+                    ts: Date.now(),
                   },
                 ],
           );
@@ -1391,286 +1387,51 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
   // panel Lịch sử, và NHÃN TAB (title = câu user đầu tiên của cuộc; pendingCount =
   // số thẻ chờ duyệt/câu hỏi → tab-bar tô sáng tab đang cần người dùng bấm).
   useEffect(() => {
-    onStateChange({ running, runStartedAt, lastRunMs, activeConvId, title: deriveTitle(items), model: selectedModel, claudeProfile: selectedClaudeProfile, usage, usageLoading, pendingCount: pending.length + questions.length, hasContent: items.length > 0 });
+    onStateChange({
+      running, runStartedAt, lastRunMs, activeConvId, title: deriveTitle(items),
+      model: selectedModel, claudeProfile: selectedClaudeProfile, usage, usageLoading,
+      pendingCount: pending.length + questions.length, hasContent: items.length > 0,
+      // Đội agent (SOL/VEGA/…) — nav trái vẽ Cosmos map mini, màn AGENTS đọc trạng thái thật.
+      agents: agentNodes.map((a) => ({ id: a.id, label: a.label, role: a.role, type: a.type, active: a.active })),
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onStateChange, running, runStartedAt, lastRunMs, activeConvId, items, selectedModel, selectedClaudeProfile, usage, usageLoading, pending.length, questions.length]);
 
   return (
     <div className="task-pane" hidden={!visible}>
       <div className="main-layout">
-        {/* Rail thu gọn 44px bên trái */}
-        <div className="m-rail">
-          <button
-            type="button"
-            className={`m-iconbtn${sidebarOpen && activeRailTab === 'toggle' ? ' on' : ''}`}
-            onClick={() => {
-              setActiveRailTab('toggle');
-              setSidebarOpen((o) => !o);
-            }}
-            title={sidebarOpen ? (language === 'vi' ? 'Thu gọn sidebar (mở rộng chat thêm 300px)' : 'Collapse sidebar (expand chat by +300px)') : (language === 'vi' ? 'Mở rộng sidebar' : 'Expand sidebar')}
-          >
-            <Icon name="sidebar" size={16} />
-          </button>
-          <button
-            type="button"
-            className={`m-iconbtn${sidebarOpen && activeRailTab === 'chart' ? ' on' : ''}`}
-            onClick={() => scrollToSection('chart')}
-            title={language === 'vi' ? 'Bản đồ sao — Xem trực quan các agent & thiên thể' : 'Star Chart — View visual agent neural map'}
-          >
-            <Icon name="starChart" size={16} />
-          </button>
-          <button
-            type="button"
-            className={`m-iconbtn${sidebarOpen && activeRailTab === 'log' ? ' on' : ''}`}
-            onClick={() => scrollToSection('log')}
-            title={language === 'vi' ? 'Nhật ký hoạt động — Xem chi tiết lệnh, file & log' : 'Activity Log — View execution logs & details'}
-          >
-            <Icon name="activityLog" size={16} />
-          </button>
-        </div>
-
-        <aside ref={sidebarRef} className={`sidebar-pipeline${sidebarOpen ? '' : ' closed'}`}>
-          {/* Usage (Session 5hr + Context) đã chuyển lên header cho gọn. */}
-          {(() => {
-            const liveCount = agentNodes.filter((n) => n.active).length;
-            return (
-              <div ref={starChartRef} className="sidebar-pipeline-title star-chart-title">
-                <span>{language === 'vi' ? 'Bản đồ sao' : 'Star Chart'}</span>
-                <span
-                  className={`star-status${running ? ' live' : ''}`}
-                  title={running ? (language === 'vi' ? 'Agent đang hoạt động' : 'Agent active') : (language === 'vi' ? 'Không có agent hoạt động' : 'Agent idle')}
-                >
-                  <span className="star-status-dot" />
-                  {running ? (liveCount > 0 ? `TRACKING · ${liveCount}` : 'TRACKING') : 'IDLE'}
-                </span>
-              </div>
-            );
-          })()}
-          <div className={`neural-net-container${running ? ' is-live' : ''}`}>
-            <NeuralBrain
-              ref={neuralBrainRef}
-              active={running}
-              steps={agentNodes}
-              selectedId={selectedStepId}
-              onSelect={(s) => setSelectedStepId((prev) => (prev === s.id ? null : s.id))}
-              theme={theme}
-              accent={accent}
-              onCamera={setCameraInfo}
-              // Dừng vẽ khi tab ẩn hoặc sidebar đóng — mỗi tab một canvas, không pause thì
-              // mọi tab nền đều đốt CPU vẽ galaxy vô hình.
-              paused={!visible || !sidebarOpen}
-            />
-            {/* Dấu định vị 4 góc — khung ngắm kính thiên văn */}
-            <span className="viewport-corner tl" />
-            <span className="viewport-corner tr" />
-            <span className="viewport-corner bl" />
-            <span className="viewport-corner br" />
-            {/* Nhãn toạ độ động do camera phát ra (thay nhãn tĩnh cũ trong CSS) */}
-            <div className="viewport-readout">
-              {cameraInfo
-                ? `RA ${cameraInfo.ra} · DEC ${cameraInfo.dec}`
-                : 'RA 12ʰ00ᵐ · DEC +05°'}
+        {/* Đầu vùng làm việc: tiêu đề + nút tạo tác vụ mới (theo mockup). */}
+        <div className="ws-col">
+          <div className="ws-head">
+            <span className="ws-head-mark"><Icon name="starChart" size={19} /></span>
+            <div className="ws-head-titles">
+              <h1>{language === 'vi' ? 'Không gian làm việc' : 'Agent workspace'}</h1>
+              <p>{language === 'vi' ? 'Giao việc cho agent — bắt đầu từ một câu mô tả' : 'Give the agent a task — start with one sentence'}</p>
             </div>
-            {cameraInfo && cameraInfo.zoom > 1.05 && (
-              <div className="viewport-zoom">×{cameraInfo.zoom.toFixed(1)}</div>
-            )}
-            {cameraInfo?.targetLabel && (
-              <div className="viewport-target" title={language === 'vi' ? `Camera đang khoá: ${cameraInfo.targetLabel}` : `Camera locked: ${cameraInfo.targetLabel}`}>
-                <Icon name="target" size={11} />
-                {cameraInfo.targetLabel.replace(/ Agent$/, '')}
-              </div>
-            )}
-            {/* Nút bung vũ trụ tri thức toàn màn hình */}
-            <button
-              className="viewport-expand"
-              title={language === 'vi' ? 'Bung vũ trụ tri thức toàn màn hình' : 'Expand knowledge universe (full screen)'}
-              onClick={openCosmos}
-            >
-              <Icon name="expand" size={13} />
-            </button>
-            {/* Nút đưa góc nhìn về mặc định */}
-            <button
-              className="viewport-reset"
-              title={language === 'vi' ? "Đưa góc nhìn về mặc định" : "Reset view to default"}
-              onClick={() => {
-                neuralBrainRef.current?.resetView();
-                setSelectedStepId(null);
-              }}
-            >
-              <Icon name="refresh" size={13} />
+            <button type="button" className="btn ws-new-task" onClick={onNewTask}>
+              + {language === 'vi' ? 'Tác vụ mới' : 'New task'}
             </button>
           </div>
 
-          {/* Chú giải loại thiên thể + gợi ý điều khiển. Mã sao khớp nhãn trên galaxy. */}
-          <div className="star-legend">
-            <span className="star-legend-item" data-k="approval"><i /> SOL<em>{language === 'vi' ? 'Điều phối' : 'Orchestration'}</em></span>
-            <span className="star-legend-item" data-k="thinking"><i /> VEGA<em>{language === 'vi' ? 'Rà soát' : 'Review'}</em></span>
-            <span className="star-legend-item" data-k="tool"><i /> ORION<em>{language === 'vi' ? 'Kiểm thử' : 'Testing'}</em></span>
-            <span className="star-legend-item" data-k="start"><i /> LYRA<em>{language === 'vi' ? 'Khảo sát' : 'Scoping'}</em></span>
-          </div>
-          <div className="star-hint">
-            <Icon name="info" size={11} /> {language === 'vi' ? 'Kéo để xoay · Ctrl + cuộn để phóng to · bấm thiên thể để xem chi tiết' : 'Drag to rotate · Ctrl + scroll to zoom · click celestial to inspect'}
-          </div>
-
-          {/* Chi tiết bước được bấm trên bản đồ vũ trụ — "đang làm gì ở bước đó". */}
-          {(() => {
-            const sel = selectedStepId ? agentNodes.find((n) => n.id === selectedStepId) : null;
-            if (!sel) {
-              return (
-                <div className="step-detail step-detail-empty">
-                  {language === 'vi' ? 'Bấm vào một thiên thể hoặc chòm sao để xem chi tiết bước hoạt động.' : 'Click a celestial body or constellation to view details.'}
-                </div>
-              );
-            }
-            return (
-              <div className={`step-detail step-${sel.type}`}>
-                <div className="step-detail-head">
-                  <span className="step-detail-label">
-                    {sel.active && <Icon name="pending" size={14} className="step-detail-spin" />}
-                    {sel.label}
-                    {sel.role && <span className="step-detail-role"> · {sel.role}</span>}
-                  </span>
-                  <button
-                    className="step-detail-close"
-                    title="Đóng"
-                    onClick={() => setSelectedStepId(null)}
-                  >
-                    <Icon name="close" size={16} />
-                  </button>
-                </div>
-                {sel.detail && <div className="step-detail-body" style={{ whiteSpace: 'pre-wrap' }}>{sel.detail}</div>}
-              </div>
-            );
-          })()}
-
-          <div ref={logRef} className="sidebar-pipeline-title" style={{ marginTop: '4px', borderTop: 'var(--bd-thin) solid var(--outline)', paddingTop: '12px' }}>
-            {language === 'vi' ? 'Nhật ký hoạt động' : 'Activity Log'}
+          {/* 4 tab nội dung của MỘT tác vụ: hội thoại / file / ngữ cảnh / lịch sử. */}
+          <div className="ws-tabs" role="tablist">
+            {WS_TAB_DEFS.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                aria-selected={wsTab === t.id}
+                className={`ws-tab${wsTab === t.id ? ' on' : ''}`}
+                onClick={() => setWsTab(t.id)}
+              >
+                <Icon name={t.icon} size={14} />
+                {language === 'vi' ? t.vi : t.en}
+              </button>
+            ))}
           </div>
 
-          <div className="pipeline-flow" style={{ flex: 1, overflowY: 'auto' }}>
-            {pipelineNodes.map((node) => {
-              let dotClass = '';
-              let dotIcon: IconName = 'dot';
-              if (node.active) {
-                dotClass = 'active';
-                dotIcon = 'pending';
-              } else if (node.type === 'result') {
-                dotClass = 'success';
-                dotIcon = 'success';
-              } else if (node.type === 'error') {
-                dotClass = 'error';
-                dotIcon = 'error';
-              } else if (node.type === 'tool') {
-                dotIcon = 'tool';
-              } else if (node.type === 'approval') {
-                dotClass = 'active';
-                dotIcon = 'block';
-              }
 
-              const expanded = expandedLogId === node.id;
-              // Có gì để mở rộng: danh sách thao tác con, detail dài, hoặc thông tin duyệt.
-              const hasDetail =
-                (node.ops && node.ops.length > 0) || !!node.detail || !!node.approval;
-              // Dòng preview 1 hàng khi CHƯA mở. Với node có thao tác con, ưu tiên hiện
-              // thao tác GẦN NHẤT (đã làm gì cụ thể) thay vì dòng tiêu đề "Chi tiết...".
-              let preview = node.detail ? node.detail.split('\n')[0] : '';
-              if (node.ops && node.ops.length > 0) {
-                const last = node.ops[node.ops.length - 1];
-                preview = last.summary ? `${last.name}: ${last.summary}` : last.name;
-              }
-
-              return (
-                <div
-                  key={node.id}
-                  className={`pipeline-item${hasDetail ? ' clickable' : ''}${expanded ? ' expanded' : ''}`}
-                  onClick={
-                    hasDetail
-                      ? () => setExpandedLogId((prev) => (prev === node.id ? null : node.id))
-                      : undefined
-                  }
-                >
-                  <div className="pipeline-item-row">
-                    <div className={`pipeline-dot ${dotClass}${dotIcon === 'pending' ? ' spin' : ''}`}>
-                      <Icon name={dotIcon} size={14} />
-                    </div>
-                    <div className="pipeline-content">
-                      <div className="pipeline-label">
-                        {node.label}
-                        {hasDetail && (
-                          <span className="pipeline-caret">
-                            <Icon name={expanded ? 'caretDown' : 'caretRight'} size={14} />
-                          </span>
-                        )}
-                      </div>
-                      {!expanded && preview && <div className="pipeline-detail">{preview}</div>}
-                    </div>
-                  </div>
-
-                  {/* Luôn render (không mount/unmount) để animate mở/đóng mượt bằng grid-rows. */}
-                  <div className={`pipeline-expand-wrap${expanded ? ' open' : ''}`} aria-hidden={!expanded}>
-                    <div className="pipeline-expand-inner">
-                      <div className="pipeline-expand" onClick={(e) => e.stopPropagation()}>
-                        {/* Danh sách thao tác con: đã chạy lệnh gì / đọc-sửa file nào + kết quả. */}
-                        {node.ops && node.ops.length > 0 && (
-                          <ul className="op-list">
-                            {node.ops.map((op, i) => (
-                              <li key={op.toolId || i} className={`op-row${op.resultError ? ' op-error' : ''}`}>
-                                <div className="op-head">
-                                  <span className="op-name">{op.name}</span>
-                                  {op.summary && <span className="op-summary">{op.summary}</span>}
-                                </div>
-                                {op.result && (
-                                  <div className="op-result">
-                                    <span className="op-arrow"><Icon name="caretRight" size={13} /></span>
-                                    <Markdown text={op.result} />
-                                  </div>
-                                )}
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-
-                        {/* Chi tiết yêu cầu duyệt. */}
-                        {node.approval && (
-                          <div className="approval-detail">
-                            <div>
-                              <b>Tool:</b> {node.approval.toolName}
-                            </div>
-                            {node.approval.title && <div>{node.approval.title}</div>}
-                            {node.approval.description && <div>{node.approval.description}</div>}
-                            {node.approval.blockedPath && (
-                              <div className="op-error"><Icon name="lock" size={13} /> {node.approval.blockedPath}</div>
-                            )}
-                            {node.approval.decisionReason && (
-                              <div className="approval-reason">{node.approval.decisionReason}</div>
-                            )}
-                            <div className="approval-hint">
-                              Bấm nút Cho phép / Từ chối ở khung chat để tiếp tục.
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Node không có ops/approval (start/result/error/agent phụ): hiện detail đầy đủ (markdown). */}
-                        {!node.ops?.length && !node.approval && node.detail && (
-                          <div className="pipeline-expand-text md-compact">
-                            <Markdown text={node.detail} />
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-            {pipelineNodes.length === 0 && (
-              <div style={{ textAlign: 'center', color: 'var(--muted)', padding: '28px 12px', fontSize: '13px', lineHeight: 1.5 }}>
-                {language === 'vi' ? 'Chưa có tiến trình hoạt động' : 'No activity logged yet'}
-              </div>
-            )}
-          </div>
-        </aside>
-
-        <div className="chat-container">
+        <div className="chat-container" hidden={wsTab !== 'chat'}>
           {isScrolled && activeQuery && (
             <button
               type="button"
@@ -1874,12 +1635,24 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
 
             const it = row.it;
             const isLastToolRunning = lastToolItem?.id === it.id;
+            // Nhãn người nói (mockup): chỉ cho user/agent — tool/result/error giữ dạng dải gọn.
+            const speaker = it.kind === 'user'
+              ? { icon: '👤', name: language === 'vi' ? 'BẠN' : 'YOU' }
+              : it.kind === 'agent'
+                ? { icon: '🤖', name: 'AGENT' }
+                : null;
             return (
               <div
                 key={it.id}
                 data-id={it.id}
                 className={`bubble ${it.kind}${isLastToolRunning ? ' running' : ''}`}
               >
+                {speaker && (
+                  <div className="bubble-head">
+                    <span className="bubble-av" aria-hidden="true">{speaker.icon}</span>
+                    <b>{speaker.name}</b>
+                  </div>
+                )}
                 {it.kind === 'agent' ? <Markdown text={it.text} /> : it.text}
               </div>
             );
@@ -1895,7 +1668,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
 
       {/* Thẻ tự-chạy-tiếp: hiện khi phiên dừng vì hết hạn mức 5h và server đã lên lịch.
           Đếm ngược tới giờ reset; người dùng có thể huỷ để tự tiếp tục thủ công. */}
-      {autoResume && (
+      {autoResume && wsTab === 'chat' && (
         <div className="chat-action-dock">
           <div className="auto-resume-card" data-tick={resumeTick}>
             <div className="auto-resume-head">
@@ -1925,12 +1698,12 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
           block từng tool), nên xếp chồng nhiều thẻ chỉ làm tràn màn hình và giấu
           mất nút Cho phép/Từ chối. Ưu tiên approval trước, rồi tới câu hỏi. Số thẻ
           còn lại trong hàng chờ hiện ở badge để người dùng biết còn việc phía sau. */}
-      {(pending.length > 0 || questions.length > 0) && (() => {
+      {wsTab === 'chat' && (pending.length > 0 || questions.length > 0) && (() => {
         const p = pending[0];
         const q = !p ? questions[0] : undefined;
         const queued = pending.length + questions.length - 1;
         return (
-        <div className="chat-action-dock">
+        <div className="chat-action-dock" ref={dockRef}>
           {queued > 0 && (
             <div className="action-queue-badge">
               <Icon name="pending" size={13} /> Còn {queued} yêu cầu nữa trong hàng chờ
@@ -2042,6 +1815,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
 
       <div
         className="composer"
+        hidden={wsTab !== 'chat'}
         onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
           e.preventDefault();
@@ -2051,7 +1825,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
         {/* Hàng chip tóm tắt cấu hình + popover config đầy đủ */}
         {(() => {
           const modeLabel = modeDef(mode, language).label;
-          const modelLabel = selectedModel === 'claude-opus-4-8' ? 'Opus 4.8' : selectedModel === 'claude-sonnet-5' ? 'Sonnet 5' : selectedModel === 'claude-haiku-4-5-20251001' ? 'Haiku 4.5' : selectedModel === 'claude-fable-5' ? 'Fable 5' : selectedModel;
+          const modelName = modelLabel(selectedModel);
           const effortLabel = effort === 'high' ? (language === 'vi' ? 'Cao' : 'High') : effort === 'low' ? (language === 'vi' ? 'Thấp' : 'Low') : effort === 'medium' ? (language === 'vi' ? 'Trung bình' : 'Med') : effort === 'xhigh' ? (language === 'vi' ? 'Rất cao' : 'Xhigh') : (language === 'vi' ? 'Tối đa' : 'Max');
 
           return (
@@ -2063,7 +1837,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
                 title={language === 'vi' ? 'Bấm để mở/đóng bảng cấu hình phiên chạy đầy đủ' : 'Click to toggle full run configuration panel'}
               >
                 <Icon name="gear" size={13} />
-                ⚙ <b>{modelLabel}</b> · {modeLabel} · {effortLabel}
+                ⚙ <b>{modelName}</b> · {modeLabel} · {effortLabel}
               </button>
 
               {cfg?.isAdmin && cfg?.claudeProfiles && cfg.claudeProfiles.length > 0 && (
@@ -2535,18 +2309,9 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
 
 
 
-        {/* Tay kéo giãn ô nhập: kéo lên = cao ra, xuống = thấp lại; bấm đúp = trả về
-            mặc định. Đặt trong luồng ngay trên ô nhập nên không che phần đầu khung. */}
-        <div
-          className="composer-resize-handle"
-          onPointerDown={startTaskResize}
-          onDoubleClick={() => setTaskHeight(null)}
-          role="separator"
-          aria-orientation="horizontal"
-          title={language === 'vi' ? "Kéo để đổi chiều cao ô nhập · bấm đúp để trả về mặc định" : "Drag to resize input height · double-click to reset"}
-        >
-          <span className="composer-resize-grip" />
-        </div>
+        {/* Tay kéo giãn ô nhập đã BỎ (mockup không có dải này ở đáy composer). Muốn đổi
+            chiều cao vẫn kéo được ở góc dưới-phải ô nhập — `resize: vertical` sẵn của
+            textarea, không cần thanh kéo riêng chiếm chỗ. */}
 
         {/* Quick prompts KHÔNG còn ở composer — đã dời hẳn lên empty state giữa vùng chat
             (theo mockup đã duyệt); có hội thoại rồi thì composer sạch, chỉ chip + ô nhập. */}
@@ -2578,9 +2343,11 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
             data-lpignore="true"
             data-bwignore="true"
           />
-          <div className="composer-bar">
+          {/* Kẹp file + Gửi nằm CẠNH ô nhập (mockup), không còn ở hàng riêng bên dưới —
+              hàng đó ăn thêm ~40px chiều cao mà chỉ chứa hai nút. */}
+          <div className="composer-send">
             <label className="btn attach" title={language === 'vi' ? "Đính kèm tài liệu / ảnh (hoặc kéo-thả vào ô nhập)" : "Attach documents / images (or drag & drop into the input box)"}>
-              <Icon name="attach" size={18} />
+              <Icon name="attach" size={16} />
               <input
                 type="file"
                 multiple
@@ -2589,20 +2356,64 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
                 disabled={running}
               />
             </label>
-            <span className="composer-spacer" />
             {running ? (
-              <button className="btn stop" onClick={stop}>
-                {language === 'vi' ? 'Dừng' : 'Stop'}
+              <button className="btn stop composer-send-btn" onClick={stop}>
+                {language === 'vi' ? 'DỪNG' : 'STOP'}
               </button>
             ) : (
-              <button className="btn run" onClick={start}>
-                {language === 'vi' ? 'Chạy' : 'Run'}
+              <button className="btn run composer-send-btn" onClick={start}>
+                <Icon name="send" size={14} /> {language === 'vi' ? 'GỬI' : 'SEND'}
               </button>
             )}
           </div>
         </div>
         </div>
-      </div>
+      </div>{/* /.chat-container */}
+
+          {/* Nội dung 3 tab phụ — SIBLING của .chat-container (không phải con của nó: khi
+              wsTab !== 'chat' thì chat-container mang [hidden] → nằm trong sẽ bị ẩn theo,
+              màn hình trống trơn). Chỉ mount tab đang xem để không nạp file/lịch sử thừa. */}
+          {wsTab === 'files' && <FilesTab language={language} />}
+          {wsTab === 'context' && (
+            <ContextTab
+              language={language}
+              cwd={cwd}
+              cfg={cfg}
+              currentWs={currentWs}
+              detected={detected}
+              skillStatus={skillStatus}
+              skillStacks={skillStacks}
+              stack={stack}
+              selectedMcps={selectedMcps}
+              usage={usage}
+            />
+          )}
+          {wsTab === 'history' && (
+            <HistoryTab
+              language={language}
+              activeConvId={activeConvId}
+              tabId={tabId}
+              onOpen={async (id) => {
+                const r = await openConversation(id);
+                if (r.ok) setWsTab('chat');
+                else showClaudeAlert(language === 'vi' ? 'Không mở được' : 'Could not open', r.error ?? '');
+              }}
+            />
+          )}
+        </div>{/* /.ws-col */}
+
+        {/* Cột phải: hoạt động agent · hàng chờ duyệt · tác vụ gần đây (theo mockup). */}
+        <RightRail
+          language={language}
+          items={items}
+          running={running}
+          pending={pending}
+          questions={questions}
+          onApprove={decide}
+          tasks={railTasks}
+          onGoTask={onGoTask}
+          onFocusDock={() => dockRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })}
+        />
       </div>
 
       {/* Vũ trụ tri thức toàn màn hình — chỉ mount khi mở & tab đang hiển thị (tránh nhiều canvas). */}
