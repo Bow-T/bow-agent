@@ -3,7 +3,11 @@
     "allow": [
       "Bash(awk 'NR>=2560 && NR<=3966 && \\(/modal-title/ || /className=\"modal-overlay/ || /PanelOpen &&/ || /Open && \\\\\\(/ || /usagePanelOpen/ || /claudeModal &&/ || /authModal &&/\\)' /Users/tuannguyen/GitProject/bow-agent/web/App.tsx)",
       "Bash(grep -nE '^\\\\.|^\\\\s{0,2}[.#][a-zA-Z][^{]*\\\\{|@media|@keyframes|grid-template|display:\\\\s*\\(grid|flex\\)' /Users/tuannguyen/GitProject/bow-agent/web/styles.css)",
-      "Bash(grep -nE '^\\\\.\\(chat-container|chat|composer|controls|control-row|task|quick-prompts|chat-action-dock|approval|bubble|empty|field|composer-input|composer-bar|attachments|detected\\)[ ,{:.]' /Users/tuannguyen/GitProject/bow-agent/web/styles.css)"
+      "Bash(grep -nE '^\\\\.\\(chat-container|chat|composer|controls|control-row|task|quick-prompts|chat-action-dock|approval|bubble|empty|field|composer-input|composer-bar|attachments|detected\\)[ ,{:.]' /Users/tuannguyen/GitProject/bow-agent/web/styles.css)",
+      "Bash(npx tsc *)",
+      "Bash(echo \"exit=$?\")",
+      "Bash(npm run *)",
+      "Bash(node /private/tmp/claude-501/-Users-tuannguyen-GitProject-bow-agent/8a6ddbb6-a8ab-4fb0-a776-99e0a235da37/scratchpad/tree.mjs)"
     ]
   },
   "hooks": {

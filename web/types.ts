@@ -94,6 +94,9 @@ export interface ChatItem {
   text: string;
   /** Chỉ với kind==='tool': chi tiết cấu trúc để mở rộng ở Activity Log. */
   tool?: ToolDetail;
+  /** Mốc thời gian tạo (ms). Cột "Hoạt động agent" hiện giờ HH:MM:SS. Item cũ lưu
+   *  trước khi có trường này thì không có giờ — hiển thị bỏ trống, KHÔNG bịa. */
+  ts?: number;
 }
 
 /** Yêu cầu duyệt đang chờ người dùng bấm nút. */
@@ -135,6 +138,8 @@ export interface ConversationSummary {
   id: string;
   title: string;
   cwd: string;
+  /** Cửa sổ chat (tab tác vụ) đã tạo cuộc — tab Lịch sử lọc theo field này. */
+  tabId?: string;
   itemCount: number;
   createdAt: number;
   updatedAt: number;
@@ -145,6 +150,32 @@ export interface ConversationFull extends ConversationSummary {
   conversationId: string | null;
   items: ChatItem[];
 }
+
+/**
+ * Một "sao" trong đội agent (SOL/VEGA/ORION/LYRA — xem buildAgentNodes ở TaskPane).
+ * TaskPane báo lên App để nav trái vẽ Cosmos map mini và màn AGENTS đọc trạng thái thật.
+ */
+export interface AgentSummary {
+  id: string;
+  /** Mã thiên văn hiển thị (SOL, VEGA, ORION, LYRA…). */
+  label: string;
+  /** Vai trò đã dịch (Điều phối / Rà soát / Kiểm thử / Khảo sát). */
+  role?: string;
+  /** Loại bước — quyết định màu chấm (§Step colors trong styles.css). */
+  type: string;
+  active: boolean;
+}
+
+/** Mục điều hướng ở nav trái (mỗi mục = một màn trong vùng làm việc). */
+export type NavSection =
+  | 'workspace'
+  | 'agents'
+  | 'approvals'
+  | 'jira'
+  | 'repos'
+  | 'cosmos'
+  | 'activity'
+  | 'settings';
 
 /** Kết quả nhận diện source từ backend. */
 export interface DetectedSource {

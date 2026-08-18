@@ -6,16 +6,20 @@ import { Markdown } from './Markdown.js';
 import { Icon, type IconName } from './Icon.js';
 import { TaskPane, type TaskPaneHandle } from './TaskPane.js';
 import type {
+  AgentSummary,
   ChatItem,
   ConversationSummary,
   DetectedSource,
   DocAttachment,
   ImageAttachment,
   Mode,
+  NavSection,
   PendingApproval,
   ToolDetail,
   UsageSnapshot,
 } from './types.js';
+import { AppNav } from './AppNav.js';
+import { NavSectionView } from './panels/NavSectionView.js';
 
 /** 2 phong cách UI: 'brutal' (Neo Brutalism, kem) + 'figma' (tool UI dark kiểu app Figma). */
 export type Theme = 'brutal' | 'figma';
@@ -413,6 +417,17 @@ export function formatTokens(n: number): string {
   return String(n);
 }
 
+/** Tên model gọn để hiện trên pill header/composer. Không khớp bảng → trả nguyên id. */
+export function modelLabel(id: string): string {
+  switch (id) {
+    case 'claude-opus-4-8': return 'Opus 4.8';
+    case 'claude-sonnet-5': return 'Sonnet 5';
+    case 'claude-haiku-4-5-20251001': return 'Haiku 4.5';
+    case 'claude-fable-5': return 'Fable 5';
+    default: return id;
+  }
+}
+
 /** Một thanh usage: nhãn + % + bar. severity đổi màu khi gần đầy. */
 const API_PORTS = [4000, 4001, 4002, 4003, 4004, 4005];
 
@@ -440,8 +455,16 @@ interface PaneState {
   pendingCount: number;
   /** Tab đã có hội thoại chưa — tab RỖNG thì đóng thẳng, không hỏi xác nhận. */
   hasContent: boolean;
+  /** Đội agent của tab (SOL/VEGA/ORION/LYRA + subagent lạ) — nav trái & màn AGENTS đọc. */
+  agents: AgentSummary[];
 }
-const EMPTY_PANE_STATE: PaneState = { running: false, runStartedAt: null, lastRunMs: null, activeConvId: null, title: '', model: 'claude-opus-4-8', claudeProfile: 'default', usage: null, usageLoading: false, pendingCount: 0, hasContent: false };
+const EMPTY_PANE_STATE: PaneState = { running: false, runStartedAt: null, lastRunMs: null, activeConvId: null, title: '', model: 'claude-opus-4-8', claudeProfile: 'default', usage: null, usageLoading: false, pendingCount: 0, hasContent: false, agents: [] };
+
+/** So 2 danh sách agent theo id + trạng thái sáng — chỉ re-render khi có sao thật sự đổi. */
+function sameAgents(a: AgentSummary[], b: AgentSummary[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((x, i) => x.id === b[i].id && x.active === b[i].active && x.label === b[i].label);
+}
 
 export function App() {
   // ── Multi-tab: nhiều conversation/session chạy SONG SONG, mỗi tab một <TaskPane> ──
@@ -486,7 +509,7 @@ export function App() {
       if (cur && cur.running === s.running && cur.runStartedAt === s.runStartedAt &&
           cur.lastRunMs === s.lastRunMs && cur.activeConvId === s.activeConvId && cur.title === s.title &&
           cur.usage === s.usage && cur.usageLoading === s.usageLoading && cur.pendingCount === s.pendingCount &&
-          cur.hasContent === s.hasContent) {
+          cur.hasContent === s.hasContent && sameAgents(cur.agents, s.agents)) {
         return prev; // không đổi → tránh render thừa
       }
       return { ...prev, [tabId]: s };
@@ -522,6 +545,14 @@ export function App() {
     });
   }, []);
   const [cfg, setCfg] = useState<Cfg | null>(null);
+  /** Màn đang mở ở nav trái. 'workspace' = khung chat (TaskPane); mục khác = panel riêng.
+   *  Nhớ qua reload để mở lại đúng chỗ đang làm (trừ 'cosmos' — đó là overlay, không phải màn). */
+  const [navSection, setNavSection] = useState<NavSection>(() => {
+    const saved = localStorage.getItem('bow-nav');
+    const valid: NavSection[] = ['workspace', 'agents', 'approvals', 'jira', 'repos', 'activity', 'settings'];
+    return valid.includes(saved as NavSection) ? (saved as NavSection) : 'workspace';
+  });
+  useEffect(() => { localStorage.setItem('bow-nav', navSection); }, [navSection]);
   const [otherModes, setOtherModes] = useState<{
     dev: { repoName: string; defaultCwd: string; active?: boolean };
     qc: { repoName: string; defaultCwd: string; active?: boolean };
@@ -681,6 +712,9 @@ export function App() {
   const [pickerParent, setPickerParent] = useState<string | null>(null);
   const [pickerDirs, setPickerDirs] = useState<string[]>([]);
   const [pickerError, setPickerError] = useState('');
+  // Gốc nhảy nhanh do server trả về: Home, `/`, và mỗi ổ đã mount ở /Volumes — để chọn
+  // repo nằm trên ổ đĩa khác không phải leo [..] lên tận root.
+  const [pickerRoots, setPickerRoots] = useState<{ label: string; path: string }[]>([]);
 
   // State for Custom Claude Account Modal
   const [claudeModal, setClaudeModal] = useState<{
@@ -1532,11 +1566,14 @@ export function App() {
   const fetchDirs = (path: string) => {
     setPickerError('');
     apiFetch(`/api/browse-dirs?path=${encodeURIComponent(path)}`)
-      .then((r) => {
-        if (!r.ok) throw new Error('Không thể đọc thư mục');
-        return r.json();
-      })
-      .then((data) => {
+      .then(async (r) => ({ ok: r.ok, data: await r.json().catch(() => ({}) as any) }))
+      .then(({ ok, data }) => {
+        // Lối tắt gốc đi kèm cả khi lỗi → thư mục hỏng vẫn còn đường nhảy sang ổ khác.
+        if (Array.isArray(data.roots)) setPickerRoots(data.roots);
+        if (!ok) {
+          setPickerError(data.error ?? 'Không thể đọc thư mục');
+          return;
+        }
         setPickerPath(data.currentPath);
         setPickerParent(data.parent);
         setPickerDirs(data.dirs);
@@ -1962,10 +1999,24 @@ export function App() {
   const collab = cfg ? !!cfg.isCollabMode : false;
   const ba = cfg ? !!cfg.isBaMode : false;
   const devops = cfg ? !!cfg.isDevOpsMode : false;
+  /** Nhãn mode đang chạy — nav trái (System status) + topbar dùng chung một nguồn. */
+  const modeLabel = qc ? 'QC' : reviewer ? 'Reviewer' : collab ? 'Collab' : ba ? 'BA' : devops ? 'DevOps' : 'Dev';
   const pendingAccessCount = accessUsers.filter((u) => u.status === 'pending').length;
   // Tổng thẻ chờ duyệt/câu hỏi trên MỌI tab → báo lên tiêu đề trình duyệt "(N) ⏳ …"
   // để biết cửa sổ/tab trình duyệt nào đang cần bấm dù không nhìn màn hình đó.
   const totalPendingApprovals = Object.values(paneStates).reduce((n, s) => n + (s?.pendingCount ?? 0), 0);
+  /** Danh sách tác vụ đang mở + trạng thái — cột phải của TaskPane và các màn nav dùng chung. */
+  const railTasks = tabs.map((t, i) => {
+    const st = paneStates[t.id];
+    return {
+      id: t.id,
+      title: (t.title || st?.title || '').trim() || `${language === 'vi' ? 'Tác vụ' : 'Task'} ${i + 1}`,
+      running: !!st?.running,
+      pendingCount: st?.pendingCount ?? 0,
+      hasContent: !!st?.hasContent,
+      active: t.id === activeTabId,
+    };
+  });
   useEffect(() => {
     const base = 'Bow · Design Styles';
     document.title = totalPendingApprovals > 0 ? `(${totalPendingApprovals}) ⏳ ${base}` : base;
@@ -2103,13 +2154,13 @@ export function App() {
           </span>
           <span className="brand-name">BOW</span>
           <span className="brand-tag">Observatory</span>
-          {/* Status pill hiển thị trạng thái chạy trực tiếp */}
-          <div className="m-status">
-            <i />
-            {paneRunning
-              ? `${language === 'vi' ? 'ĐANG CHẠY' : 'RUNNING'}${paneRunStartedAt != null ? ' · ' + fmtDuration(Date.now() - paneRunStartedAt) : ''}`
-              : (language === 'vi' ? 'SẴN SÀNG' : 'IDLE')}
-          </div>
+        </div>
+        {/* Pill trạng thái — khối riêng cạnh logo (logo là khối màu đặc, không nhét pill vào trong). */}
+        <div className={`m-status${paneRunning ? ' running' : ''}`}>
+          <i />
+          {paneRunning
+            ? `${language === 'vi' ? 'ĐANG CHẠY' : 'RUNNING'}${paneRunStartedAt != null ? ' · ' + fmtDuration(Date.now() - paneRunStartedAt) : ''}`
+            : (language === 'vi' ? 'SẴN SÀNG' : 'IDLE')}
         </div>
         <div className="obs-readouts">
           <div className="extra-readouts">
@@ -2232,6 +2283,11 @@ export function App() {
               </span>
             )
           )}
+          {/* Model của tab đang mở — đổi ở composer, hiện lên đây để luôn biết đang chạy model nào. */}
+          <span className="readout" title={language === 'vi' ? 'Model của tác vụ đang mở (đổi ở ô cấu hình dưới khung chat)' : 'Model of the open task (change it in the composer config)'}>
+            <span className="rl">Agent</span>
+            <span className="rv rv-model">{modelLabel(activePane.model)}</span>
+          </span>
           <span className="readout" title={language === 'vi' ? "Giờ UTC" : "UTC Time"}>
             <span className="rl">UTC</span>
             <span className="rv">{utc}</span>
@@ -2376,10 +2432,29 @@ export function App() {
         </div>
       </header>
 
+      {/* Thân app = nav trái (cột đen, cấp app) + vùng làm việc (tab-bar + màn đang chọn). */}
+      <div className="app-body">
+      <AppNav
+        active={navSection}
+        onSelect={setNavSection}
+        language={language}
+        cfg={cfg}
+        pendingCount={totalPendingApprovals}
+        running={paneRunning}
+        agents={activePane.agents}
+        modeLabel={modeLabel}
+        onOpenCosmos={() => activePaneRef()?.openCosmos()}
+      />
+      <div className="app-main">
+
       {/* Thanh tab: nhiều tác vụ/hội thoại chạy SONG SONG. Mỗi tab một <TaskPane> (SSE +
           session riêng); tab nền vẫn chạy thật (ẩn bằng CSS, không unmount). Hiện ở MỌI
           mode (kể cả QC/Reviewer) để ai cũng mở được chat mới qua nút +. */}
-      <div className="tab-bar" role="tablist" aria-label={language === 'vi' ? 'Các tác vụ đang mở' : 'Open tasks'}>
+      <div
+        className={`tab-bar${navSection === 'workspace' ? '' : ' tab-bar-hidden'}`}
+        role="tablist"
+        aria-label={language === 'vi' ? 'Các tác vụ đang mở' : 'Open tasks'}
+      >
           {tabs.map((t, i) => {
             const st = paneStates[t.id];
             const title = (t.title || st?.title || '').trim() || `${language === 'vi' ? 'Tác vụ' : 'Task'} ${i + 1}`;
@@ -2436,19 +2511,8 @@ export function App() {
           {/* Cụm nút hành động sát mép phải tab-bar — margin-left:auto nằm trên wrapper này
               (không phải từng nút) để Cosmos/Worktree đứng liền nhau, không bị flex đẩy xa. */}
           <div className="tab-bar-actions">
-          {/* Cosmos — vũ trụ tri thức toàn màn hình cho tab ĐANG mở. Không phải một tab
-              (conversation) riêng; mở overlay của pane active qua handle imperative (dữ liệu
-              steps/activeFiles/filetree đã chảy sẵn trong pane đó). */}
-          <button
-            type="button"
-            className="tab-bar-cosmos"
-            onClick={() => activePaneRef()?.openCosmos()}
-            title={language === 'vi' ? 'Cosmos — du hành trong bộ não AI (vũ trụ tri thức + bản đồ file)' : 'Cosmos — travel inside the AI brain (knowledge universe + file map)'}
-            aria-label={language === 'vi' ? 'Mở vũ trụ Cosmos' : 'Open Cosmos universe'}
-          >
-            <Icon name="starChart" size={15} />
-            <span className="tab-bar-cosmos-lbl">Cosmos</span>
-          </button>
+          {/* Cosmos ĐÃ DỜI sang nav trái (mục COSMOS) — một lối vào duy nhất, tab-bar chỉ
+              còn các hành động cấp worktree. */}
           {/* Tạo git worktree cho ticket mới ("<repo>-wt-<ticket>", branch feat/<ticket>) — hành
               động cấp phiên làm việc (mở cửa sổ khác làm ticket song song), nên đặt ở tab-bar
               thay vì trong hàng cấu hình 1 lượt chạy (TaskPane). Dùng cwd của tab đang active. */}
@@ -2578,7 +2642,8 @@ export function App() {
           key={t.id}
           ref={(h) => { if (h) paneRefs.current[t.id] = h; else delete paneRefs.current[t.id]; }}
           tabId={t.id}
-          visible={t.id === activeTabId}
+          // Nav mở màn khác (Agents/Jira/…) → mọi pane ẩn nhưng VẪN mounted (agent chạy tiếp).
+          visible={t.id === activeTabId && navSection === 'workspace'}
           cfg={cfg}
           mode={mode}
           useSubagents={useSubagents}
@@ -2601,6 +2666,9 @@ export function App() {
           ba={ba}
           devops={devops}
           taskHeight={taskHeight}
+          railTasks={railTasks}
+          onGoTask={(id) => { setActiveTabId(id); setNavSection('workspace'); }}
+          onNewTask={newTab}
           setCfg={setCfg}
           setSelectedMcps={setSelectedMcps}
           setAuthModal={setAuthModal}
@@ -2619,6 +2687,36 @@ export function App() {
           onStateChange={(s) => reportPaneState(t.id, s)}
         />
       ))}
+
+      {/* Màn mở từ nav trái (Agents / Approvals / Jira / Repos / Activity / Settings).
+          TaskPane vẫn mounted phía trên (ẩn) nên agent đang chạy KHÔNG bị ngắt khi đổi màn. */}
+      {navSection !== 'workspace' && navSection !== 'cosmos' && (
+        <NavSectionView
+          section={navSection}
+          language={language}
+          cfg={cfg}
+          cwd={cwd}
+          agents={activePane.agents}
+          useSubagents={useSubagents}
+          setUseSubagents={setUseSubagents}
+          skillStatus={skillStatus}
+          collabApprovals={collabApprovals}
+          onDecideCollab={decideCollab}
+          tasks={railTasks}
+          onGoTask={(tabId) => { setActiveTabId(tabId); setNavSection('workspace'); }}
+          onUseJiraKey={(key) => { activePaneRef()?.setTaskText(key); setNavSection('workspace'); }}
+          onOpenModal={(id) => {
+            if (id === 'mcp') setMcpPanelOpen(true);
+            else if (id === 'workspace') openWsPanel();
+            else if (id === 'usage') setUsagePanelOpen(true);
+            else if (id === 'history') setHistPanelOpen(true);
+            else if (id === 'picker') openPicker(cwd);
+          }}
+          syncSkillsNow={syncSkillsNow}
+        />
+      )}
+      </div>{/* /.app-main */}
+      </div>{/* /.app-body */}
       {/* Panel ADMIN duyệt Collab: yêu cầu duyệt lệnh hủy hoại do CTV phát lên. Kênh
           riêng, độc lập với approval của chính admin. Chỉ hiện cho admin ở Collab Mode. */}
       {cfg?.isAdmin && collabApprovals.length > 0 && (
@@ -2660,6 +2758,21 @@ export function App() {
               <button className="close-btn" onClick={() => setPickerOpen(false)}><Icon name="close" size={16} /></button>
             </div>
             <div className="modal-body">
+              {pickerRoots.length > 0 && (
+                <div className="picker-roots">
+                  {pickerRoots.map((r) => (
+                    <button
+                      key={r.path}
+                      className={`btn picker-root${pickerPath === r.path || (r.path !== '/' && pickerPath.startsWith(r.path + '/')) ? ' active' : ''}`}
+                      title={r.path}
+                      onClick={() => fetchDirs(r.path)}
+                    >
+                      <Icon name="folder" size={12} /> {r.label === '~' ? (language === 'vi' ? 'Nhà' : 'Home') : r.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
               <div className="picker-path-input-row" style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
                 <input
                   type="text"
