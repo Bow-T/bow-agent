@@ -49,6 +49,13 @@ export type WebEvent =
       type: 'auto-resume-cancelled';
       reason: 'user' | 'exhausted' | 'done';
     }
+  | {
+      // Lời người dùng NÓI CHEN vào lượt đang chạy (POST /api/say). Phát qua SSE để mọi
+      // client đang xem phiên (kể cả admin theo dõi Collab) thấy bong bóng user đúng thứ tự,
+      // và để bản replay lịch sử sau khi reload không mất câu đó.
+      type: 'user-input';
+      text: string;
+    }
   | { type: 'done'; result: string | null }
   | { type: 'fatal'; message: string };
 
@@ -83,6 +90,12 @@ export class Session {
   private pendingQuestions = new Map<string, PendingQuestion>();
   /** Hủy agent giữa chừng. */
   readonly abort = new AbortController();
+  /**
+   * Đẩy thêm lời người dùng vào lượt ĐANG CHẠY (kênh streaming input của runner). Runner
+   * trao hàm này qua onInputChannel khi query khởi động; close() xoá đi → /api/say biết
+   * phiên hết nhận và trả 409 để client chạy lượt mới thay vì nuốt mất câu.
+   */
+  sendInput?: (text: string) => void;
   private closed = false;
   /** Timer ngắt kết nối tạm thời (reload trang). */
   private disconnectTimer: NodeJS.Timeout | null = null;
@@ -237,6 +250,8 @@ export class Session {
   close(): void {
     if (this.closed) return; // idempotent — tránh lên lịch dọn nhiều lần
     this.closed = true;
+    // Hết nhận lời chen: kênh streaming input của runner đã (hoặc sắp) đóng.
+    this.sendInput = undefined;
     // R9: hủy timer ngắt-kết-nối 30s còn treo (nếu có). Nếu không, timer đó nổ sau khi
     // phiên đã đóng và removeSession SỚM (30s), phá vỡ cửa sổ grace 60s của onDispose
     // (SSE muộn mất cơ hội replay history) + gọi abort/removeSession thừa.

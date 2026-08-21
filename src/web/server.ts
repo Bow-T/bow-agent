@@ -534,6 +534,10 @@ function runAgentSession(session: ReturnType<typeof createSession>, params: RunP
     },
     onApproval: params.isExecuting ? approvalHandler : undefined,
     onQuestion: (questions) => session.requestQuestion(questions),
+    // Kênh "nói chen": POST /api/say đẩy lời mới vào ĐÚNG lượt đang chạy qua hàm này.
+    onInputChannel: (send) => {
+      session.sendInput = send;
+    },
     model: params.model,
     claudeProfile: params.claudeProfile,
     resumeSessionId: params.resumeSessionId,
@@ -1084,6 +1088,47 @@ app.post('/api/answer', (req, res) => {
     answers && typeof answers === 'object' ? (answers as Record<string, string>) : null;
   const ok = session.resolveQuestion(id, normalized);
   res.json({ ok });
+});
+
+/**
+ * POST /api/say/:id — NÓI CHEN vào phiên đang chạy (như gõ tiếp khi Claude Code đang nghĩ).
+ * body: { text }. Lời được xếp hàng vào kênh streaming input của runner: agent nhận ngay khi
+ * nhả tool hiện tại, KHÔNG phải chờ phiên kết thúc rồi resume.
+ *
+ * An toàn: không nới quyền gì — lời chen chạy trong CHÍNH phiên đó nên vẫn qua đúng cổng
+ * `canUseTool` (mode/policy đã chốt lúc /api/run). Chỉ chặn chen NHẦM phiên: khách LAN chỉ
+ * nói vào phiên do chính IP mình khởi động, admin localhost chen được mọi phiên (theo dõi Collab).
+ * Không screener: đây là chữ người dùng tự gõ (requesting human), như /api/run.
+ */
+app.post('/api/say/:id', (req, res) => {
+  const cleanIp = getCleanIp(req);
+  const session = getSession(req.params.id);
+  const send = session?.sendInput;
+  if (!session || !send) {
+    // Phiên vừa xong/đã đóng → client tự chuyển sang chạy lượt mới (resume conversationId).
+    res.status(409).json({ error: 'Phiên đã kết thúc, không nhận thêm lời.' });
+    return;
+  }
+  const owner = (session as unknown as { clientIp?: string }).clientIp;
+  if (!isAdminReq(req) && owner && owner !== cleanIp) {
+    logAudit(`IP: ${cleanIp} - TỪ CHỐI nói chen vào phiên của ${owner}: id=${session.id}`, cleanIp);
+    res.status(403).json({ error: 'Không phải phiên của bạn.' });
+    return;
+  }
+  const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+  if (!text) {
+    res.status(400).json({ error: 'Thiếu nội dung.' });
+    return;
+  }
+  logAudit(
+    `IP: ${cleanIp} - NÓI CHEN: session=${session.id}, text=${JSON.stringify(text.slice(0, 200))}`,
+    cleanIp,
+    getClientName(req),
+  );
+  // Phát trước để bong bóng user hiện đúng thứ tự trên MỌI client đang xem + vào lịch sử replay.
+  session.push({ type: 'user-input', text });
+  send(text);
+  res.json({ ok: true });
 });
 
 /** POST /api/stop/:id — dừng agent giữa chừng. */

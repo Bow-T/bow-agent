@@ -61,6 +61,7 @@ import {
   Gps,
   Refresh2,
   Maximize4,
+  HambergerMenu,
   type Icon as IconType,
 } from 'iconsax-react';
 
@@ -111,6 +112,7 @@ const ICONS: Record<string, IconType> = {
   target: Gps,
   refresh: Refresh2,
   expand: Maximize4,
+  menu: HambergerMenu,      // nút mở nav trái ở mobile (drawer)
   // Detect / attach
   search: SearchNormal1,
   folder: Folder,

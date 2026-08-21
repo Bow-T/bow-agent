@@ -196,12 +196,8 @@
   --rail-w: 296px;
 }
 
-/* Nền: brutal = chấm bi lớn; figma = dot-grid canvas thưa (chấm nhỏ mờ như canvas Figma). */
-.app {
-  background-image: radial-gradient(var(--grid) 1.4px, transparent 1.6px);
-  background-size: 22px 22px;
-  background-position: 0 0;
-}
+/* Nền: cả hai phong cách đều là CHẤM BI (không lưới ô vuông).
+ * brutal = chấm đậm 22px (khai ở .app phần shell bên dưới); figma = chấm nhỏ mờ, thưa hơn. */
 [data-theme='figma'] .app {
   background-image: radial-gradient(var(--grid) 1px, transparent 1.2px);
   background-size: 24px 24px;
@@ -296,14 +292,14 @@ a { color: var(--brass); text-underline-offset: 2px; }
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;        /* mobile: trừ thanh địa chỉ động — 100vh bị nó cắt mất đáy */
   position: relative;
   isolation: isolate;
   background-color: var(--bg);
   background-image:
     var(--grain),
-    linear-gradient(var(--grid) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
-  background-size: 140px 140px, 26px 26px, 26px 26px;
+    radial-gradient(var(--grid) 1.4px, transparent 1.6px);
+  background-size: 140px 140px, 22px 22px;
 }
 /* quầng sáng môi trường — bề mặt như được chiếu sáng mềm (Raycast/Linear) */
 .app::before {
@@ -3479,20 +3475,17 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .hist-open-btn:hover:not(:disabled) { background: var(--brass); color: var(--on-brass, var(--ink)); }
 
 /* ───────────────────────────  Responsive  ─────────────────────────── */
-@media (max-width: 940px) {
-  .main-layout { flex-direction: column; padding: 12px; gap: 12px; overflow-y: auto; }
-  .sidebar-pipeline { width: 100%; max-height: 460px; flex-shrink: 0; }
-  /* Chat phải có chiều cao xác định để .chat cuộn nội bộ và composer luôn nằm
-     trong tầm nhìn — nếu chỉ dùng min-height sẽ sinh cuộn lồng, phần cuối bị khuất. */
-  .chat-container { height: 75vh; min-height: 420px; flex-shrink: 0; }
-  .bubble { max-width: 92%; }
+/* Màn hẹp vừa (tablet ngang): layout cột vẫn vừa, chỉ nới bong bóng chat + cho dải số
+   liệu cuộn ngang. Toàn bộ phần MOBILE (drawer nav, header co, composer 2 hàng) nằm ở
+   §MOBILE cuối file — đừng thêm luật mobile ở đây cho khỏi tán ra hai chỗ. */
+/* Từ mốc ẩn cột phải trở xuống, header đã chật: cho dải số liệu CUỘN NGANG thay vì bị
+   overflow:hidden cắt cụt (mất luôn phần Chế độ / Chi phí ở cuối dải). */
+@media (max-width: 1180px) {
   .obs-readouts { overflow-x: auto; }
 }
-@media (max-width: 620px) {
-  .brand-tag { display: none; }
-  .readout { padding: 0 11px; }
-  .chat { padding: 20px 16px 16px; }
-  .composer { margin: 0 10px 10px; }}
+@media (max-width: 940px) {
+  .bubble { max-width: 92%; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -4827,4 +4820,184 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   border-radius: var(--r);
   font-size: 11px;
   line-height: 1;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════════════
+ * §MOBILE · MÀN HẸP — MỌI luật riêng cho điện thoại/tablet dọc gom Ở ĐÂY, một chỗ duy nhất.
+ *
+ * Đặt CUỐI FILE có chủ đích: khối này phải thắng mọi khai báo layout phía trên (kể cả các
+ * override `[data-theme='figma']` ở §PHONG CÁCH FIGMA) mà KHÔNG cần bơm specificity giả
+ * (!important / selector kép). Thêm luật mobile mới thì thêm vào đây, đừng rải lên trên.
+ *
+ * Ba mốc:
+ *   ≤1180px  cột phải (.right-rail) ẩn — khai ở §Layout, không nhắc lại.
+ *   ≤860px   nav trái thành DRAWER trượt (☰ ở header + nền mờ), header co, panel 1 cột.
+ *   ≤560px   siết cho điện thoại: composer xuống 2 hàng, ô nhập 16px (dưới 16px iOS Safari
+ *            TỰ ZOOM khi focus → cả layout nhảy), nút hành động chia đều bề ngang.
+ *
+ * Nút ☰ (.nav-toggle), ✕ (.nav-close) và nền mờ (.nav-backdrop) CHỈ tồn tại ở mobile —
+ * desktop ẩn hẳn vì nav đã là cột thường trực.
+ * ══════════════════════════════════════════════════════════════════════════════════════ */
+.nav-toggle,
+.nav-close,
+.nav-backdrop { display: none; }
+
+@media (max-width: 860px) {
+  /* ── Header: hàng 1 = ☰ + logo + trạng thái; số liệu & cụm nút tự rớt xuống hàng 2 ── */
+  .topbar { height: auto; min-height: 48px; flex-wrap: wrap; }
+  .nav-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    flex: none;
+    border: none;
+    border-right: var(--bd-thin) solid var(--hairline);
+    background: transparent;
+    color: var(--ink);
+  }
+  .nav-toggle:hover { background: var(--surface-2); }
+  .brand { padding: 0 12px; }
+  .brand-name { font-size: 13px; }
+  .brand-tag { display: none; }
+  .m-status { padding: 0 10px; font-size: 10px; }
+  .readout { padding: 0 11px; }
+  /* Dải số liệu + cụm nút chia nhau hàng 2; mỗi bên tự cuộn ngang trong phần của mình. */
+  .obs-readouts { order: 3; flex: 1 1 auto; }
+  .topbar-right { order: 4; margin-left: auto; border-left: none; overflow-x: auto; }
+  /* Nút "Nguồn"/URL LAN là việc quản trị làm trên máy admin → bỏ cho đỡ chật.
+     Meter giữ lại nhưng chỉ phần đáng theo dõi khi đang di động: chi phí + ngữ cảnh. */
+  .extra-readouts { display: none; }
+  .m-meter { padding: 4px 10px; gap: 7px; }
+  .m-meter .bar,
+  .m-meter-sess { display: none; }
+
+  /* ── Nav trái → drawer trượt từ mép trái, che cả header khi mở ── */
+  .app-body { grid-template-columns: minmax(0, 1fr); }
+  .app-nav {
+    position: fixed;
+    top: 0; left: 0; bottom: 0;
+    z-index: 70;
+    width: min(272px, 84vw);
+    padding-top: 46px;                 /* chừa chỗ cho nút ✕ ghim góc trên */
+    transform: translateX(-100%);
+    transition: transform var(--med);
+    box-shadow: var(--depth);
+  }
+  .app-nav.open { transform: none; }
+  .nav-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: absolute;
+    top: 8px; right: 8px;
+    width: 32px; height: 32px;
+    border: var(--bd-thin) solid var(--nav-line);
+    border-radius: var(--r);
+    background: var(--nav-bg);
+    color: var(--nav-fg);
+  }
+  .nav-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 65;
+    background: color-mix(in srgb, #060810 45%, transparent);
+  }
+  /* Mục nav cao hơn cho ngón tay (~44px vùng bấm). */
+  .nv { padding: 12px 12px; }
+
+  /* ── Vùng làm việc: bỏ viền cột (đã hết cột phải), tiêu đề gọn còn một dòng ── */
+  .ws-col { border-right: none; }
+  .ws-head { padding: 10px 12px; gap: 10px; }
+  .ws-head-mark { width: 30px; height: 30px; }
+  .ws-head-titles h1 { font-size: 13px; letter-spacing: 0.06em; }
+  .ws-head-titles p { display: none; }
+  .ws-new-task { padding: 7px 11px; font-size: 10px; }
+  .ws-tabs { padding: 9px 12px; gap: 6px; }
+  .ws-tab { padding: 6px 11px; font-size: 10px; }
+  .chat { padding: 18px 12px 14px; }
+  /* Tab file: cây file nằm TRÊN, nội dung dưới (2 cột 220px+ không vừa màn hẹp). */
+  .files-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(110px, 36%) minmax(0, 1fr);
+  }
+  .files-list {
+    border-right: none;
+    border-bottom: var(--bd-thin) solid var(--hairline);
+  }
+  /* Ô lọc xuống hàng riêng: cùng hàng với nhãn + số đếm thì bóp cả ba thứ. */
+  .files-head { padding: 9px 12px; flex-wrap: wrap; }
+  .files-head .panel-input { order: 3; flex: 1 1 100%; }
+
+  /* ── Các màn mở từ nav (Agents/Jira/Repos/Settings…): 1 cột, lề mỏng ── */
+  /* Hàng 1 = dấu hiệu + tiêu đề; hàng 2 = ô nhập/nút hành động chiếm cả bề ngang
+     (để cùng hàng thì tiêu đề màn Jira/Nguồn mã bị bóp còn hai chữ mỗi dòng). */
+  .section-panel-head { padding: 10px 12px; flex-wrap: wrap; }
+  .section-panel-titles { flex: 1 1 auto; }
+  .section-panel-titles h1 { font-size: 14px; }
+  .section-panel-titles p { font-size: 10px; }
+  .section-panel-actions { flex: 1 1 100%; margin-left: 0; }
+  .section-panel-actions .panel-input { flex: 1 1 auto; min-width: 0; }
+  .section-panel-body { padding: 12px 12px 24px; }
+  .agent-card-grid,
+  .settings-grid,
+  .ctx-grid { grid-template-columns: minmax(0, 1fr); }
+  .ctx-grid { padding: 12px; }
+  .history-tab .panel-list { padding: 12px; }
+
+  /* Bảng cấu hình trong composer: nhãn nhóm thành chữ NẰM TRONG hàng (bỏ cột mốc 86px
+     — ở màn hẹp cột đó ăn 1/4 bề ngang mà field lại bị bóp). */
+  .control-row { padding-left: 0; gap: 8px 10px; }
+  .control-row::before { position: static; transform: none; width: auto; }
+  .control-row::after { display: none; }
+
+  /* Banner mode chia sẻ (Collab/BA/Reviewer/DevOps): 3 dòng chữ 13px ăn gần 1/6 màn
+     điện thoại → co lại, nội dung vẫn đọc được. */
+  .collab-banner,
+  .ba-banner,
+  .reviewer-banner,
+  .devops-banner { padding: 7px 12px; font-size: 11.5px; }
+
+  /* Màn khoá mã truy cập — thứ ĐẦU TIÊN đồng nghiệp thấy khi vào bằng điện thoại. */
+  .access-gate { min-height: 100dvh; padding: 18px; }
+
+  /* Modal/panel nổi: gần full màn và tự cuộn khi nội dung dài hơn màn. */
+  .modal-overlay { padding: 12px; }
+  .modal-content,
+  .pixel-panel { padding: 14px; max-height: 88vh; overflow-y: auto; }
+}
+
+@media (max-width: 560px) {
+  /* ── Composer: ô nhập chiếm cả hàng, cụm nút xuống hàng dưới chia đều bề ngang ──
+     Trước đây nút nằm cạnh ô nhập nên ở màn ~390px ô nhập bị bóp còn một ký tự. */
+  .composer { margin: 0 8px 8px; padding: 9px 10px; }
+  .composer-input { flex-wrap: wrap; }
+  .composer-input .task { flex: 1 1 100%; min-height: 56px; }
+  .composer-send { width: 100%; height: 40px; }
+  .composer-send-btn { flex: 1; padding: 0 12px; }
+  .composer-send .btn.attach { width: 44px; flex: none; }
+  .cfg-chip { padding: 4px 8px; font-size: 9px; }
+
+  /* iOS Safari tự zoom khi focus field có chữ < 16px → khoá 16px cho mọi ô nhập chữ. */
+  .task,
+  .panel-input,
+  .access-gate-input,
+  textarea,
+  select,
+  input[type='text'],
+  input[type='search'],
+  input[type='password'],
+  input[type='number'] { font-size: 16px; }
+
+  .tab-bar-item { min-width: 78px; max-width: 150px; font-size: 11.5px; }
+  .chat { padding: 14px 10px 12px; }
+  .bubble { max-width: 100%; }
+  /* Nút duyệt/trả lời: cho xuống hàng và giãn đều thay vì tràn ra ngoài thẻ. */
+  .approval-actions,
+  .question-actions { flex-wrap: wrap; }
+  .approval-actions .btn,
+  .question-actions .btn { flex: 1 1 auto; }
+  .brand { padding: 0 10px; }
+  .m-status { padding: 0 8px; }
 }

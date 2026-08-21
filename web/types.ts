@@ -70,6 +70,7 @@ export type WebEvent =
     }
   | { type: 'question-request'; id: string; questions: Question[] }
   | { type: 'conversation'; conversationId: string }
+  | { type: 'user-input'; text: string }
   | { type: 'done'; result: string | null }
   | { type: 'fatal'; message: string };
 

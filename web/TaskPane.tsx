@@ -738,8 +738,39 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
     streamEvents(sid);
   }
 
+  /**
+   * Nói chen vào lượt ĐANG CHẠY (POST /api/say) — agent nhận ngay khi nhả tool hiện tại,
+   * không phải chờ phiên xong rồi resume. Bong bóng user KHÔNG add tại đây: server phát lại
+   * qua SSE ('user-input') để mọi client xem cùng phiên thấy đúng thứ tự và replay được.
+   */
+  async function say() {
+    const text = task.trim();
+    if (!text || !sessionId) return;
+    setTask('');
+    try {
+      const res = await apiFetch(`/api/say/${sessionId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      if (!res.ok) {
+        // 409 = phiên vừa đóng. Trả chữ về ô nhập để người dùng gửi lại thành lượt mới
+        // (lượt mới tự resume conversationId nên vẫn nối tiếp hội thoại).
+        const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        setTask(text);
+        addItem('error', body.error ?? `HTTP ${res.status}`);
+      }
+    } catch (err) {
+      setTask(text);
+      addItem('error', `Không gửi được: ${(err as Error).message}`);
+    }
+  }
+
   async function start() {
-    if (running) return;
+    if (running) {
+      void say();
+      return;
+    }
     const hasInput = task.trim() || docs.length || pdfs.length || images.length;
     if (!hasInput) return;
 
@@ -868,6 +899,9 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
       switch (ev.type) {
         case 'text':
           addItem('agent', ev.text);
+          break;
+        case 'user-input':
+          addItem('user', ev.text);
           break;
         case 'tool':
           setItems((prev) =>
@@ -2320,14 +2354,21 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
             ref={taskRef}
             className="task"
             style={taskHeight != null ? { height: taskHeight, maxHeight: 'none' } : undefined}
-            placeholder={language === 'vi' ? "Mô tả task / đề tài…  ·  Ctrl+Enter để chạy  ·  kéo-thả file/ảnh vào đây" : "Describe task / topic...  ·  Ctrl+Enter to run  ·  drag & drop file/image here"}
+            placeholder={
+              running
+                ? (language === 'vi'
+                    ? 'Nói chen vào lượt đang chạy…  ·  Ctrl+Enter để gửi'
+                    : 'Add to the running turn...  ·  Ctrl+Enter to send')
+                : (language === 'vi'
+                    ? 'Mô tả task / đề tài…  ·  Ctrl+Enter để chạy  ·  kéo-thả file/ảnh vào đây'
+                    : 'Describe task / topic...  ·  Ctrl+Enter to run  ·  drag & drop file/image here')
+            }
             value={task}
             onChange={(e) => setTask(e.target.value)}
             onKeyDown={(e) => {
               if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') start();
             }}
             onPaste={onPaste}
-            disabled={running}
             rows={3}
             // Chặn popup iCloud Passwords / autofill mật khẩu nhảy ra khi focus ô task.
             // autoComplete giá trị lạ ("new-password" bị autofill bám; dùng token vô nghĩa
@@ -2356,15 +2397,28 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
                 disabled={running}
               />
             </label>
-            {running ? (
+            {running && (
               <button className="btn stop composer-send-btn" onClick={stop}>
                 {language === 'vi' ? 'DỪNG' : 'STOP'}
               </button>
-            ) : (
-              <button className="btn run composer-send-btn" onClick={start}>
-                <Icon name="send" size={14} /> {language === 'vi' ? 'GỬI' : 'SEND'}
-              </button>
             )}
+            {/* Đang chạy vẫn gửi được: lời vào hàng đợi của chính lượt đó (nói chen). */}
+            <button
+              className="btn run composer-send-btn"
+              onClick={start}
+              title={
+                running
+                  ? (language === 'vi'
+                      ? 'Chen lời vào lượt đang chạy — agent nhận ngay khi xong tool hiện tại'
+                      : 'Queue into the running turn — the agent picks it up after the current tool')
+                  : undefined
+              }
+            >
+              <Icon name="send" size={14} />{' '}
+              {running
+                ? (language === 'vi' ? 'CHEN' : 'QUEUE')
+                : (language === 'vi' ? 'GỬI' : 'SEND')}
+            </button>
           </div>
         </div>
         </div>
