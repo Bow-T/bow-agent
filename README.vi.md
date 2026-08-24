@@ -211,6 +211,43 @@ bow-agent run PROJ-123 --wbs ./ac.md --execute --effort xhigh --cwd ~/GitProject
 
 ---
 
+### Chạy model khác Claude (Grok)
+
+bow-agent chạy agent bằng binary `claude`, mà nó chỉ nói được Anthropic Messages API
+(`/v1/messages`). xAI không có endpoint này (chỉ `/v1/chat/completions`), nên phải có
+gateway dịch ở giữa:
+
+```bash
+# 1. Key lấy ở console.x.ai — gói SuperGrok KHÔNG kèm API credits
+export XAI_API_KEY=xai-...
+export LITELLM_MASTER_KEY=sk-bow-local
+
+# 2. Gateway phục vụ /v1/messages rồi chuyển tiếp sang xAI
+#    (tránh LiteLLM 1.82.7 / 1.82.8 — hai bản này dính malware ăn cắp credential)
+litellm --config examples/litellm.grok.yaml --port 4010
+
+# 3. Trỏ bow vào gateway
+export BOW_PROVIDER=grok
+export BOW_PROVIDER_TOKEN=sk-bow-local
+npm run ui
+```
+
+Không cần đụng `.env`: composer có dropdown **AI** (chỉ admin) — chọn Grok rồi đăng nhập
+bằng đúng panel đăng nhập của Claude (khác mỗi phương thức: token gateway thay vì OAuth).
+Ô **Tài khoản** hoạt động y hệt: nhiều tài khoản Grok (`grok (Default)`, `grok-work`…),
+`+ Thêm tài khoản…`, xoá tài khoản, dấu ✓/⚠️ và nút khoá — mỗi tab chạy một tài khoản riêng.
+Token lưu ở `~/.bow-agent/provider.json` (chmod 600), có tác dụng liền, khỏi khởi động lại. Hai tab chạy hai AI song song
+được. `BOW_PROVIDER` chỉ quyết định AI **mặc định** (CLI, sprint-scan); env đặt token thì env
+thắng và web sẽ báo phải sửa `.env`.
+
+Tên model giữ nguyên khắp nơi — `claude-*` được ánh xạ sang hai bậc của provider
+(`grok-4.6` cho việc thật, `grok-build-0.1` cho screener/scout), nên model picker của web,
+CLI và subagent không phải sửa gì. Cổng duyệt `canUseTool` không đổi.
+
+Hai thứ phải chấp nhận: ô hạn mức gói trong web sẽ trống (gateway không có API `/usage` của
+Anthropic), và skills/hooks/plan-mode đi qua lớp dịch nên độ chuẩn của tool-call thấp hơn
+chạy thẳng Claude. Đây là cấu hình không được Anthropic hỗ trợ chính thức.
+
 ## Cách hoạt động
 
 ```

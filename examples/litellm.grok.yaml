@@ -1,0 +1,34 @@
+# Gateway dịch Anthropic → xAI cho bow-agent.
+#
+# Vì sao cần: bow-agent chạy agent bằng binary `claude`, nó CHỈ nói Anthropic Messages API
+# (/v1/messages). xAI KHÔNG có endpoint đó (chỉ /v1/chat/completions và /v1/responses), nên
+# phải có LiteLLM đứng giữa: nhận /v1/messages → dịch sang xAI → dịch ngược kết quả về.
+#
+# Chạy:
+#   export XAI_API_KEY=xai-...            # key ở console.x.ai (KHÔNG phải gói SuperGrok)
+#   export LITELLM_MASTER_KEY=sk-bow-local # token bow gửi lên gateway, tự đặt
+#   litellm --config docs/litellm.grok.yaml --port 4010
+#
+# CẢNH BÁO: LiteLLM bản PyPI 1.82.7 và 1.82.8 dính malware ăn cắp credential. Pin bản sạch:
+#   pip install 'litellm[proxy]==1.81.9'   (hoặc bản mới hơn đã được kiểm chứng)
+
+model_list:
+  # Bậc "main" — việc nặng: agent chính, plan, subagent reviewer/verifier.
+  - model_name: grok-4.6
+    litellm_params:
+      model: xai/grok-4.6
+      api_key: os.environ/XAI_API_KEY
+
+  # Bậc "fast" — việc rẻ: screener chống injection, impact-scout.
+  - model_name: grok-build-0.1
+    litellm_params:
+      model: xai/grok-build-0.1
+      api_key: os.environ/XAI_API_KEY
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+litellm_settings:
+  # Agent chạy dài, tool-call nhiều vòng — đừng để proxy cắt sớm.
+  request_timeout: 600
+  drop_params: true # tham số Anthropic-only mà xAI không hiểu thì bỏ, đừng nổ 400

@@ -27,6 +27,16 @@ trỏ vào `MEMORY.md`. Thư mục này được commit theo git để đồng b
   là **code module** (đừng nhầm với data đã gỡ). Registry allowlist ở `~/.bow-agent/registry.json`.
   Repo đích đã fork/đổi tên skill bundle thành bộ riêng thì khai `.claude/skills/.bow-skip`
   (mỗi dòng một tên) — bow bỏ qua VÀ tự dọn bản đã lỡ trải, tránh nhân đôi mô tả skill tốn token.
+- **AI có thể KHÔNG phải Claude — và đổi được PER-TAB.** Provider ngoài chạy qua gateway nói
+  giọng Anthropic (LiteLLM, xem `examples/litellm.grok.yaml`) vì xAI không có `/v1/messages`.
+  `BOW_PROVIDER` = AI mặc định; web gửi `provider` trong body `/api/run` để đổi riêng từng tab
+  (chỉ admin — `effectiveProvider` ở `server.ts`, như `claudeProfile`). Ánh xạ model + env-patch
+  nằm ở `resolveModelFor`/`providerEnvPatchFor` (`src/config/env.ts`), áp trong `buildPerTabEnv`;
+  thêm chỗ gọi model mới thì bọc qua đó, đừng hardcode `claude-*`. NHIỀU tài khoản gateway (như profile Claude)
+  nhập TỪ WEB (`GET/POST /api/provider`, `DELETE /api/provider/:name`, chỉ admin) lưu
+  `~/.bow-agent/provider.json` chmod 600 dạng `{profiles:{<tên>:{token,baseUrl}}}`; tab gửi
+  `providerProfile` trong body `/api/run`. Env (`BOW_PROVIDER_TOKEN`) vẫn thắng file — khi đó
+  UI chỉ thấy một tài khoản ảo tên `env` và không sửa được từ web.
 - **MCP tách khỏi profile.** MCP chung lưu `~/.bow-agent/mcp.json` (không phải `~/.claude.json`).
 - **Cổng an toàn duy nhất** = `canUseTool` trong `runner.ts`: tool đọc + Bash an toàn tự chạy;
   mọi thao tác GHI qua cổng duyệt. Đừng mở đường ghi vòng qua cổng này.

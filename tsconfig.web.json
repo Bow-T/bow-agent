@@ -1,0 +1,20 @@
+{
+  // Typecheck cho phần web (React). tsconfig.json chính chỉ include src/** nên web/ TỪNG
+  // không được kiểm gì cả — vite build dùng esbuild, nó bỏ type, nên lỗi kiểu "biến không tồn
+  // tại" chỉ nổ lúc chạy trong trình duyệt. File này đóng lỗ đó; `npm run typecheck` chạy cả hai.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "noEmit": true
+  },
+  "include": ["web/**/*"],
+  "exclude": ["node_modules", "dist", "dist-web"]
+}

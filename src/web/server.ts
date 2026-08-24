@@ -1,12 +1,25 @@
 import express from 'express';
 import http from 'node:http';
 import cors from 'cors';
-import { spawn, execFileSync } from 'node:child_process';
+import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve, basename } from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
-import { config, loadActiveProfileToken, hasProfileAuth } from '../config/env.js';
+import {
+  config,
+  loadActiveProfileToken,
+  hasProfileAuth,
+  availableProviders,
+  providerReady,
+  providerCredsInfo,
+  importGrokCliSession,
+  saveProviderProfile,
+  deleteProviderProfile,
+  listProviderProfiles,
+  DEFAULT_PROVIDER_PROFILE,
+  type ProviderId,
+} from '../config/env.js';
 import { runAgent, fetchUsageSnapshot, type RunOptions } from '../core/runner.js';
 import { screenExternalData, untrustedNotice } from '../core/screener.js';
 import { buildTaskBrief } from '../input/task.js';
@@ -460,6 +473,10 @@ interface RunParams {
   /** Autopilot A–Z: nới cổng cho thao tác git-recoverable + checkpoint/journal. Chỉ admin. */
   autopilot?: boolean;
   model?: string;
+  /** AI cho lượt chạy (per-tab): 'anthropic' (Claude) hoặc provider ngoài qua gateway. Chỉ admin. */
+  provider?: ProviderId;
+  /** Tài khoản gateway cho lượt chạy (per-tab, khi AI ngoài). Chỉ admin. */
+  providerProfile?: string;
   /** Tài khoản Claude cho lượt chạy (per-tab). Runner dựng env riêng, không đổi env server. */
   claudeProfile?: string;
   isExecuting: boolean;
@@ -539,6 +556,8 @@ function runAgentSession(session: ReturnType<typeof createSession>, params: RunP
       session.sendInput = send;
     },
     model: params.model,
+    provider: params.provider,
+    providerProfile: params.providerProfile,
     claudeProfile: params.claudeProfile,
     resumeSessionId: params.resumeSessionId,
     onSessionId: (id) => {
@@ -647,6 +666,8 @@ app.post('/api/run', async (req, res) => {
       language,
       cwd,
       model,
+      provider,
+      providerProfile,
       claudeProfile,
       stack,
       useSubagents,
@@ -868,6 +889,22 @@ app.post('/api/run', async (req, res) => {
     // gửi cờ lên cũng bị BỎ QUA (như effectiveClaudeProfile) — không để khách nới cổng duyệt.
     const effectiveAutopilot = isAdmin && autopilot === true;
 
+    // AI per-tab: CHỈ admin localhost được đổi. Khách LAN (QC/Collab/BA/Reviewer/DevOps) gửi
+    // cờ lên cũng bị BỎ QUA → chạy provider mặc định của server. Chọn provider chưa sẵn sàng
+    // (thiếu token gateway / chưa login Claude) cũng bỏ qua — runner sẽ báo lỗi rõ hơn là để
+    // client tự đoán. undefined = theo BOW_PROVIDER của tiến trình.
+    const requestedProvider =
+      isAdmin && (provider === 'anthropic' || provider === 'grok') ? (provider as ProviderId) : undefined;
+    // Tài khoản gateway per-tab (nhiều acc Grok): cũng CHỈ admin, và phải là tài khoản có token.
+    const requestedProviderProfile =
+      isAdmin && typeof providerProfile === 'string' && providerProfile.trim() ? providerProfile.trim() : undefined;
+    const effectiveProviderProfile =
+      requestedProvider && requestedProviderProfile && providerReady(requestedProvider, requestedProviderProfile)
+        ? requestedProviderProfile
+        : undefined;
+    const effectiveProvider =
+      requestedProvider && providerReady(requestedProvider, effectiveProviderProfile) ? requestedProvider : undefined;
+
     // Tài khoản Claude per-tab: CHỈ admin localhost được tự chọn tài khoản để chạy. Khách LAN
     // (QC/Collab/BA/Reviewer/DevOps) gửi cờ lên cũng bị BỎ QUA → dùng tài khoản env server —
     // tránh khách chạy bằng gói/quyền của tài khoản admin khác. undefined = theo env server.
@@ -933,6 +970,8 @@ app.post('/api/run', async (req, res) => {
         useSubagents: allowSubagents,
         autopilot: effectiveAutopilot,
         model: effectiveModel,
+        provider: effectiveProvider,
+        providerProfile: effectiveProviderProfile,
         claudeProfile: effectiveClaudeProfile,
         isExecuting,
         routeToAdmin,
@@ -1294,6 +1333,16 @@ app.get('/api/config', async (req, res) => {
     currentClaudeProfile: isAdmin ? getCurrentProfile() : '',
     hasAuth: config.hasAuth,
     tokenSet: config.hasTokenSet,
+    // Provider đang chạy: UI đổi danh sách model khi bow chạy qua gateway (BOW_PROVIDER).
+    // Model Claude vẫn gửi được (runner ánh xạ), nhưng hiện đúng tên model thật đỡ nhầm.
+    provider: config.provider,
+    providerModels: config.providerModels,
+    // Danh sách AI để admin đổi ngay trên giao diện. Khách LAN không được đổi (server bỏ qua
+    // cờ provider của họ) nên KHÔNG trả danh sách ra LAN — tránh dropdown "chọn được nhưng
+    // bị bỏ qua", giống cách xử lý claudeProfiles.
+    providers: isAdmin ? availableProviders() : [],
+    // Tài khoản gateway (nhiều acc Grok) — chỉ admin, giống claudeProfiles.
+    providerProfiles: isAdmin ? listProviderProfiles() : [],
     otherModes: modes
   });
 });
@@ -1334,6 +1383,167 @@ function saveActiveProfileToEnv(profileName: string): void {
 }
 
 /** POST /api/profiles — Chuyển tài khoản Claude hoạt động và thiết lập token (chỉ Admin mới làm được) */
+/**
+ * GET /api/provider — trạng thái gateway của AI ngoài (Grok): URL + đã có token chưa.
+ * KHÔNG trả token. Chỉ admin: đây là credential của host, khách LAN không được dòm.
+ */
+app.get('/api/provider', requireAdmin, (_req, res) => {
+  res.json(providerCredsInfo());
+});
+
+/**
+ * POST /api/provider — admin nhập token/URL gateway NGAY TRONG WEB (chỗ "Tài khoản"), khỏi
+ * phải sửa .env rồi khởi động lại server. token: '' = gỡ kết nối. Env vẫn thắng file: máy đã
+ * set BOW_PROVIDER_TOKEN thì báo lỗi rõ thay vì lưu một giá trị không bao giờ được dùng.
+ */
+app.post('/api/provider', requireAdmin, (req, res) => {
+  const { token, baseUrl, name } = req.body ?? {};
+  const profileName = typeof name === 'string' && name.trim() ? name.trim() : DEFAULT_PROVIDER_PROFILE;
+  if (!/^[a-z0-9-]+$/.test(profileName)) {
+    res.status(400).json({ error: 'Tên tài khoản chỉ dùng chữ thường không dấu, số và gạch ngang.' });
+    return;
+  }
+  if (token !== undefined && typeof token !== 'string') {
+    res.status(400).json({ error: 'token phải là chuỗi.' });
+    return;
+  }
+  if (baseUrl !== undefined && typeof baseUrl !== 'string') {
+    res.status(400).json({ error: 'baseUrl phải là chuỗi.' });
+    return;
+  }
+  if (token !== undefined && providerCredsInfo().fromEnv) {
+    res.status(409).json({
+      error: 'Token gateway đang lấy từ biến môi trường (BOW_PROVIDER_TOKEN/XAI_API_KEY) — sửa ở .env rồi khởi động lại, lưu ở đây sẽ không có tác dụng.',
+    });
+    return;
+  }
+  if (baseUrl !== undefined && baseUrl.trim() && !/^https?:\/\//i.test(baseUrl.trim())) {
+    res.status(400).json({ error: 'baseUrl phải bắt đầu bằng http:// hoặc https://' });
+    return;
+  }
+  try {
+    saveProviderProfile(profileName, { token, baseUrl });
+    res.json(providerCredsInfo());
+  } catch (e) {
+    res.status(500).json({ error: `Không lưu được cấu hình gateway: ${(e as Error).message}` });
+  }
+});
+
+/**
+ * ĐĂNG NHẬP GROK BẰNG TÀI KHOẢN (device-code) — tương đương OAuth của Claude.
+ *
+ * Cách làm: gọi `grok login --device-auth` của CLI CHÍNH THỨC xAI, bắt URL + mã nó in ra rồi
+ * hiện trong web. Người dùng (hoặc chủ tài khoản, khi mượn gói) mở URL, duyệt mã, CLI ghi
+ * phiên vào ~/.grok/auth.json và bow CHÉP sang tài khoản riêng của mình — vì file đó chỉ giữ
+ * MỘT phiên, không giữ nhiều acc song song được.
+ */
+type GrokLogin = {
+  name: string;
+  child: ReturnType<typeof spawn>;
+  url?: string;
+  code?: string;
+  state: 'starting' | 'waiting' | 'done' | 'error';
+  email?: string;
+  error?: string;
+};
+const grokLogins = new Map<string, GrokLogin>();
+
+/** Lệnh chạy grok CLI: binary trong PATH nếu có, không thì npx gói chính thức. */
+function grokCliCommand(): { cmd: string; prefix: string[] } {
+  const pinned = process.env.BOW_GROK_CLI;
+  if (pinned) return { cmd: pinned, prefix: [] };
+  const found = spawnSync('which', ['grok'], { encoding: 'utf8' });
+  if (found.status === 0 && found.stdout.trim()) return { cmd: found.stdout.trim(), prefix: [] };
+  return { cmd: 'npx', prefix: ['-y', '@xai-official/grok'] };
+}
+
+app.post('/api/provider/login/start', requireAdmin, (req, res) => {
+  const { name } = req.body ?? {};
+  const profileName = typeof name === 'string' && name.trim() ? name.trim() : DEFAULT_PROVIDER_PROFILE;
+  if (!/^[a-z0-9-]+$/.test(profileName)) {
+    res.status(400).json({ error: 'Tên tài khoản chỉ dùng chữ thường không dấu, số và gạch ngang.' });
+    return;
+  }
+  // Đang có phiên đăng nhập dở cho tài khoản này → huỷ để không hai tiến trình cùng ghi auth.json.
+  grokLogins.get(profileName)?.child.kill();
+
+  const { cmd, prefix } = grokCliCommand();
+  const child = spawn(cmd, [...prefix, 'login', '--device-auth'], { env: process.env });
+  const entry: GrokLogin = { name: profileName, child, state: 'starting' };
+  grokLogins.set(profileName, entry);
+
+  const onData = (buf: Buffer) => {
+    const text = buf.toString('utf8');
+    const url = text.match(/https:\/\/\S*accounts\.x\.ai\S*/)?.[0];
+    const code = text.match(/\b[A-Z0-9]{4}-[A-Z0-9]{4}\b/)?.[0];
+    if (url) entry.url = url.replace(/[)\].,]+$/, '');
+    if (code) entry.code = code;
+    if (entry.url) entry.state = 'waiting';
+  };
+  child.stdout?.on('data', onData);
+  child.stderr?.on('data', onData);
+  child.on('close', (codeExit) => {
+    if (entry.state === 'done') return;
+    if (codeExit === 0) {
+      const email = importGrokCliSession(profileName);
+      if (email === null) {
+        entry.state = 'error';
+        entry.error = 'Đăng nhập xong nhưng không đọc được phiên trong ~/.grok/auth.json.';
+      } else {
+        entry.state = 'done';
+        entry.email = email;
+      }
+    } else {
+      entry.state = 'error';
+      entry.error = entry.error ?? `grok login thoát với mã ${codeExit}.`;
+    }
+  });
+  child.on('error', (e) => {
+    entry.state = 'error';
+    entry.error = `Không chạy được grok CLI (${e.message}). Cài bằng: npm i -g @xai-official/grok`;
+  });
+
+  // Chờ tối đa 15s để CLI in URL + mã rồi trả cho client.
+  const started = Date.now();
+  const tick = setInterval(() => {
+    if (entry.url || entry.state === 'error' || Date.now() - started > 15_000) {
+      clearInterval(tick);
+      if (entry.url) res.json({ url: entry.url, code: entry.code ?? null, name: profileName });
+      else res.status(500).json({ error: entry.error ?? 'grok CLI không in ra link đăng nhập.' });
+    }
+  }, 300);
+});
+
+/** GET /api/provider/login/status?name= — client poll tới khi người dùng duyệt xong. */
+app.get('/api/provider/login/status', requireAdmin, (req, res) => {
+  const name = typeof req.query.name === 'string' ? req.query.name : DEFAULT_PROVIDER_PROFILE;
+  const entry = grokLogins.get(name);
+  if (!entry) {
+    res.status(404).json({ error: 'Không có phiên đăng nhập nào đang chạy.' });
+    return;
+  }
+  res.json({
+    state: entry.state,
+    url: entry.url ?? null,
+    code: entry.code ?? null,
+    email: entry.email ?? null,
+    error: entry.error ?? null,
+  });
+});
+
+/** DELETE /api/provider/:name — xoá hẳn một tài khoản gateway (như xoá profile Claude). */
+app.delete('/api/provider/:name', requireAdmin, (req, res) => {
+  if (providerCredsInfo().fromEnv) {
+    res.status(409).json({ error: 'Token gateway đang lấy từ biến môi trường — không xoá được từ web.' });
+    return;
+  }
+  if (!deleteProviderProfile(req.params.name)) {
+    res.status(404).json({ error: `Không có tài khoản gateway '${req.params.name}'.` });
+    return;
+  }
+  res.json(providerCredsInfo());
+});
+
 app.post('/api/profiles', requireAdmin, (req, res) => {
   const { profile, token } = req.body ?? {};
   if (typeof profile !== 'string' || !profile.trim()) {

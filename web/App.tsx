@@ -173,6 +173,14 @@ export type Cfg = {
   currentClaudeProfile?: string;
   hasAuth?: boolean;
   tokenSet?: boolean;
+  /** 'anthropic' (mặc định) hoặc provider ngoài đang chạy qua gateway, vd 'grok'. */
+  provider?: string;
+  /** Model của provider ngoài: main = việc nặng, fast = việc rẻ. Rỗng khi chạy Anthropic. */
+  providerModels?: { main: string; fast: string };
+  /** Danh sách AI admin được đổi ngay trên giao diện. Rỗng với khách LAN (không được đổi). */
+  providers?: { id: string; label: string; ready: boolean; models: { main: string; fast: string } | null }[];
+  /** Tài khoản gateway của AI ngoài (nhiều acc Grok) — như claudeProfiles. Chỉ admin. */
+  providerProfiles?: { name: string; baseUrl: string; hasToken: boolean }[];
   otherModes?: {
     dev: { repoName: string; defaultCwd: string; active?: boolean };
     qc: { repoName: string; defaultCwd: string; active?: boolean };
@@ -197,7 +205,23 @@ export type SkillStatus = { core: SkillSrc; stack: SkillSrc | null; state: Skill
 /** Modal đăng nhập/token tài khoản Claude. */
 export type AuthModalState = {
   profile: string;
-  mode: 'select' | 'oauth' | 'token';
+  /**
+   * AI của phiên đăng nhập này. Bỏ trống = Claude (luồng cũ: OAuth / API key theo profile).
+   * AI ngoài (vd 'grok') KHÔNG có tài khoản Claude — đăng nhập bằng token gateway, dùng chung
+   * modal này để chỗ đăng nhập của mọi AI là một.
+   */
+  provider?: string;
+  /** Nhãn hiển thị của AI ngoài ('Grok'). */
+  providerLabel?: string;
+  /** URL gateway đang cấu hình (mode 'gateway'). */
+  gatewayUrl?: string;
+  /** Gateway đã có token sẵn chưa — quyết định có hiện nút "Ngắt kết nối" không. */
+  gatewayHasToken?: boolean;
+  /** Đăng nhập bằng tài khoản Grok (device-code): link + mã CLI in ra, và trạng thái chờ duyệt. */
+  deviceUrl?: string;
+  deviceCode?: string;
+  deviceState?: 'idle' | 'starting' | 'waiting' | 'done' | 'error';
+  mode: 'select' | 'oauth' | 'token' | 'gateway';
   oauthUrl?: string;
   oauthCode?: string;
   oauthLoading?: boolean;
@@ -448,6 +472,9 @@ interface PaneState {
   model: string;
   /** Tài khoản Claude per-tab — panel /api/usage đọc hạn mức ĐÚNG tài khoản tab đang mở. */
   claudeProfile: string;
+  /** AI per-tab ('anthropic'|'grok'…) — panel hạn mức đổi thông điệp: provider ngoài không có
+   *  hạn mức phiên kiểu gói Claude, chỉ tính theo token. */
+  provider: string;
   /** Hạn mức gói + context của TÀI KHOẢN tab này (per-tab). App hiển thị của tab đang mở. */
   usage: UsageSnapshot | null;
   usageLoading: boolean;
@@ -458,7 +485,7 @@ interface PaneState {
   /** Đội agent của tab (SOL/VEGA/ORION/LYRA + subagent lạ) — nav trái & màn AGENTS đọc. */
   agents: AgentSummary[];
 }
-const EMPTY_PANE_STATE: PaneState = { running: false, runStartedAt: null, lastRunMs: null, activeConvId: null, title: '', model: 'claude-opus-4-8', claudeProfile: 'default', usage: null, usageLoading: false, pendingCount: 0, hasContent: false, agents: [] };
+const EMPTY_PANE_STATE: PaneState = { running: false, runStartedAt: null, lastRunMs: null, activeConvId: null, title: '', model: 'claude-opus-4-8', claudeProfile: 'default', provider: 'anthropic', usage: null, usageLoading: false, pendingCount: 0, hasContent: false, agents: [] };
 
 /** So 2 danh sách agent theo id + trạng thái sáng — chỉ re-render khi có sao thật sự đổi. */
 function sameAgents(a: AgentSummary[], b: AgentSummary[]): boolean {
@@ -509,6 +536,7 @@ export function App() {
       if (cur && cur.running === s.running && cur.runStartedAt === s.runStartedAt &&
           cur.lastRunMs === s.lastRunMs && cur.activeConvId === s.activeConvId && cur.title === s.title &&
           cur.usage === s.usage && cur.usageLoading === s.usageLoading && cur.pendingCount === s.pendingCount &&
+          cur.provider === s.provider &&
           cur.hasContent === s.hasContent && sameAgents(cur.agents, s.agents)) {
         return prev; // không đổi → tránh render thừa
       }
@@ -608,6 +636,9 @@ export function App() {
   // tab đang mở → không lẫn số giữa các account. Nút "Làm mới" gọi refreshUsage của tab active.
   const usage = activePane.usage;
   const usageLoading = activePane.usageLoading;
+  // AI của tab đang mở. Provider ngoài (Grok…) trả theo token, KHÔNG có hạn mức phiên kiểu gói
+  // Claude → panel/pill đổi thông điệp cho trung thực thay vì hiện "0%/chưa đăng nhập Claude".
+  const paneExternalProvider = (activePane.provider ?? 'anthropic') !== 'anthropic';
   const refreshUsage = () => activePaneRef()?.refreshUsage();
   // Panel usage đầy đủ (liệt kê MỌI cửa sổ hạn mức: Session 5h, Weekly 7d, per-model).
   // Mở khi bấm ô Session trên header. false = đóng.
@@ -826,6 +857,103 @@ export function App() {
     } catch (e) {
       console.error(e);
       setAuthModal(prev => prev ? { ...prev, tokenLoading: false, tokenError: 'Lỗi kết nối.' } : null);
+    }
+  };
+
+  /**
+   * Đăng nhập Grok BẰNG TÀI KHOẢN (device-code) — luồng tương đương OAuth của Claude:
+   * backend chạy `grok login --device-auth`, ta hiện link + mã, rồi poll tới khi duyệt xong.
+   */
+  const startGrokDeviceLogin = async () => {
+    if (!authModal || authModal.mode !== 'gateway') return;
+    const name = authModal.profile || 'default';
+    setAuthModal((prev) => (prev ? { ...prev, deviceState: 'starting', tokenError: '' } : null));
+    try {
+      const res = await apiFetch('/api/provider/login/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setAuthModal((prev) => (prev ? { ...prev, deviceState: 'error', tokenError: err.error || 'Không bắt đầu được đăng nhập.' } : null));
+        return;
+      }
+      const data = await res.json();
+      setAuthModal((prev) =>
+        prev ? { ...prev, deviceState: 'waiting', deviceUrl: data.url, deviceCode: data.code ?? undefined } : null,
+      );
+      // Poll: người dùng (hoặc chủ tài khoản) mở link duyệt xong thì backend chép phiên sang bow.
+      const deadline = Date.now() + 10 * 60_000;
+      const poll = async (): Promise<void> => {
+        if (Date.now() > deadline) {
+          setAuthModal((prev) => (prev ? { ...prev, deviceState: 'error', tokenError: 'Hết thời gian chờ duyệt.' } : null));
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+        const st = await apiFetch(`/api/provider/login/status?name=${encodeURIComponent(name)}`).catch(() => null);
+        if (!st || !st.ok) return poll();
+        const s = await st.json();
+        if (s.state === 'done') {
+          setAuthModal(null);
+          const configRes = await apiFetch('/api/config');
+          if (configRes.ok) setCfg(await configRes.json());
+          await showClaudeAlert('Đã đăng nhập', `Tài khoản '${name}' đã đăng nhập Grok${s.email ? ` (${s.email})` : ''}.`);
+          return;
+        }
+        if (s.state === 'error') {
+          setAuthModal((prev) => (prev ? { ...prev, deviceState: 'error', tokenError: s.error || 'Đăng nhập thất bại.' } : null));
+          return;
+        }
+        return poll();
+      };
+      void poll();
+    } catch (e) {
+      setAuthModal((prev) => (prev ? { ...prev, deviceState: 'error', tokenError: `Lỗi kết nối: ${(e as Error).message}` } : null));
+    }
+  };
+
+  /**
+   * Lưu kết nối gateway của AI ngoài (Grok). Cùng nhịp với submitManualToken: lưu → nạp lại
+   * /api/config để trạng thái AI cập nhật ngay → đóng modal. token rỗng = ngắt kết nối.
+   */
+  const submitGatewayCreds = async (opts?: { disconnect?: boolean }) => {
+    if (!authModal || authModal.mode !== 'gateway') return;
+    setAuthModal((prev) => (prev ? { ...prev, tokenLoading: true, tokenError: '' } : null));
+    try {
+      const res = await apiFetch('/api/provider', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          // authModal.profile = TÊN tài khoản gateway (như tên profile Claude).
+          name: authModal.profile || 'default',
+          token: opts?.disconnect ? '' : authModal.tokenValue ?? '',
+          baseUrl: authModal.gatewayUrl ?? '',
+        }),
+      });
+      if (res.ok) {
+        const saved = await res.json();
+        setAuthModal(null);
+        const configRes = await apiFetch('/api/config');
+        if (configRes.ok) setCfg(await configRes.json());
+        const stillHasToken = (saved.profiles ?? []).some(
+          (pr: { name: string; hasToken: boolean }) => pr.name === (authModal.profile || 'default') && pr.hasToken,
+        );
+        await showClaudeAlert(
+          stillHasToken ? 'Đã kết nối' : 'Đã ngắt kết nối',
+          stillHasToken
+            ? `Tài khoản '${authModal.profile || 'default'}' của ${authModal.providerLabel ?? 'AI'} đã sẵn sàng.`
+            : `Đã gỡ token của tài khoản '${authModal.profile || 'default'}'.`,
+        );
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setAuthModal((prev) =>
+          prev ? { ...prev, tokenLoading: false, tokenError: err.error || 'Lưu kết nối thất bại.' } : null,
+        );
+      }
+    } catch (e) {
+      console.error(e);
+      setAuthModal((prev) => (prev ? { ...prev, tokenLoading: false, tokenError: 'Lỗi kết nối.' } : null));
     }
   };
 
@@ -2342,17 +2470,24 @@ export function App() {
                 type="button"
                 className="m-meter"
                 title={
-                  s
-                    ? `Chi phí: $${accumulatedCost.toFixed(4)} · Hạn mức phiên (5hr): ${pct != null ? pct + '%' : '—'} · Ngữ cảnh: ${hasCtx ? usedCtx + '/' + maxCtx : '—'}. Bấm để mở panel chi tiết.`
-                    : 'Tài nguyên & Ngữ cảnh. Bấm để xem chi tiết.'
+                  paneExternalProvider
+                    ? `Chi phí: $${accumulatedCost.toFixed(4)} · Provider ngoài (tính theo token, không có hạn mức phiên) · Ngữ cảnh: ${hasCtx ? usedCtx + '/' + maxCtx : '—'}. Bấm để mở panel chi tiết.`
+                    : s
+                      ? `Chi phí: $${accumulatedCost.toFixed(4)} · Hạn mức phiên (5hr): ${pct != null ? pct + '%' : '—'} · Ngữ cảnh: ${hasCtx ? usedCtx + '/' + maxCtx : '—'}. Bấm để mở panel chi tiết.`
+                      : 'Tài nguyên & Ngữ cảnh. Bấm để xem chi tiết.'
                 }
                 onClick={() => { setUsagePanelOpen(true); }}
               >
                 <span>$<b>{accumulatedCost.toFixed(4)}</b></span>
-                <span className="bar">
-                  <i style={{ width: `${Math.min(pct ?? 0, 100)}%` }} />
-                </span>
-                <span className="m-meter-sess"><b>{pct != null ? `${pct}%` : '—'}</b> {language === 'vi' ? 'phiên' : 'session'}</span>
+                {/* Provider ngoài không có hạn mức phiên → bỏ thanh + % phiên (hiện 0% gây hiểu nhầm). */}
+                {!paneExternalProvider && (
+                  <>
+                    <span className="bar">
+                      <i style={{ width: `${Math.min(pct ?? 0, 100)}%` }} />
+                    </span>
+                    <span className="m-meter-sess"><b>{pct != null ? `${pct}%` : '—'}</b> {language === 'vi' ? 'phiên' : 'session'}</span>
+                  </>
+                )}
                 <span><b>{hasCtx ? `${usedCtx}/${maxCtx}` : '—'}</b></span>
               </button>
             );
@@ -3107,9 +3242,11 @@ export function App() {
             <div className="modal-body">
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
                 <span style={{ fontSize: '12px', color: 'var(--muted)' }}>
-                  {usage?.subscriptionType
-                    ? `Gói: ${usage.subscriptionType.toUpperCase()}`
-                    : 'Hạn mức gói claude.ai (dùng chung với Claude Code).'}
+                  {paneExternalProvider
+                    ? 'Provider ngoài: tính theo token (pay-as-you-go), không có hạn mức phiên.'
+                    : usage?.subscriptionType
+                      ? `Gói: ${usage.subscriptionType.toUpperCase()}`
+                      : 'Hạn mức gói claude.ai (dùng chung với Claude Code).'}
                 </span>
                 <button
                   className="readout readout-btn"
@@ -3129,7 +3266,9 @@ export function App() {
                     <div style={{ padding: '18px', textAlign: 'center', color: 'var(--muted)', fontSize: '12px' }}>
                       {usageLoading
                         ? 'Đang đọc hạn mức…'
-                        : 'Chưa có dữ liệu hạn mức. Thường do dùng API key/Bedrock/Vertex (không áp hạn mức gói) hoặc chưa đăng nhập Claude.'}
+                        : paneExternalProvider
+                          ? 'Provider ngoài (Grok…) tính theo token — không có hạn mức phiên như gói Claude. Ngữ cảnh vẫn đo bên dưới.'
+                          : 'Chưa có dữ liệu hạn mức. Thường do dùng API key/Bedrock/Vertex (không áp hạn mức gói) hoặc chưa đăng nhập Claude.'}
                     </div>
                   );
                 }
@@ -3948,7 +4087,12 @@ export function App() {
           >
             <div className="modal-header">
               <span className="modal-title">
-                <Icon name="users" size={16} /> {authModal.mode === 'oauth' ? 'Continue in browser' : `Đăng nhập tài khoản '${authModal.profile}'`}
+                <Icon name="users" size={16} />{' '}
+                {authModal.mode === 'gateway'
+                  ? `Đăng nhập ${authModal.providerLabel ?? 'AI'} · '${authModal.profile || 'default'}'`
+                  : authModal.mode === 'oauth'
+                    ? 'Continue in browser'
+                    : `Đăng nhập tài khoản '${authModal.profile}'`}
               </span>
               <button
                 className="close-btn"
@@ -4133,6 +4277,146 @@ export function App() {
               </div>
             )}
 
+            {/* AI ngoài: đăng nhập bằng token gateway (không có OAuth như Claude). */}
+            {authModal.mode === 'gateway' && (
+              <div className="modal-body" style={{ lineHeight: 1.6 }}>
+                <p style={{ margin: '0 0 12px 0', fontSize: '13px', color: 'var(--muted)' }}>
+                  {authModal.providerLabel ?? 'AI này'} chạy qua một gateway nói giọng Anthropic (bow
+                  nói Anthropic API, xAI thì không). Đăng nhập bằng <b>tài khoản {authModal.providerLabel ?? 'Grok'}</b>{' '}
+                  (như OAuth của Claude), hoặc dán token gateway thủ công ở dưới.
+                </p>
+
+                <label style={{ display: 'block', fontSize: '13px', marginBottom: '4px' }}>
+                  Tên tài khoản
+                </label>
+                <input
+                  type="text"
+                  value={authModal.profile}
+                  disabled={authModal.tokenLoading || authModal.gatewayHasToken || authModal.deviceState === 'waiting'}
+                  onChange={(e) => {
+                    // Cùng luật đặt tên với profile Claude: chữ thường không dấu, số, gạch ngang.
+                    const val = e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '');
+                    setAuthModal((prev) => (prev ? { ...prev, profile: val } : null));
+                  }}
+                  placeholder="default, work, ca-nhan…"
+                  style={{ width: '100%', padding: '8px 10px', boxSizing: 'border-box', marginBottom: '12px' }}
+                />
+
+                {/* Cách 1 (khuyên dùng): đăng nhập bằng tài khoản Grok — device-code, song song
+                    với OAuth của Claude. Backend chạy `grok login --device-auth`, in link + mã;
+                    người dùng mở link duyệt xong, bow chép phiên sang tài khoản riêng. */}
+                <div
+                  style={{
+                    border: '1px solid var(--border, #333)',
+                    borderRadius: '8px',
+                    padding: '12px',
+                    marginBottom: '12px',
+                  }}
+                >
+                  <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '8px' }}>
+                    Đăng nhập bằng tài khoản {authModal.providerLabel ?? 'Grok'}
+                  </div>
+                  {authModal.deviceState === 'waiting' && authModal.deviceUrl ? (
+                    <>
+                      <p style={{ margin: '0 0 8px 0', fontSize: '13px' }}>
+                        Mở link này rồi duyệt
+                        {authModal.deviceCode ? (
+                          <>
+                            {' '}với mã{' '}
+                            <code style={{ fontSize: '13px', fontWeight: 700, letterSpacing: '1px' }}>
+                              {authModal.deviceCode}
+                            </code>
+                          </>
+                        ) : (
+                          ''
+                        )}
+                        :
+                      </p>
+                      <a
+                        href={authModal.deviceUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ fontSize: '12px', wordBreak: 'break-all', color: 'var(--accent, #4f8cff)' }}
+                      >
+                        {authModal.deviceUrl}
+                      </a>
+                      <div style={{ marginTop: '8px', fontSize: '12px', color: 'var(--muted)' }}>
+                        ⏳ Đang chờ bạn duyệt trên trình duyệt…
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        className="btn allow"
+                        disabled={
+                          authModal.tokenLoading ||
+                          authModal.deviceState === 'starting' ||
+                          !authModal.profile.trim()
+                        }
+                        onClick={() => void startGrokDeviceLogin()}
+                      >
+                        {authModal.deviceState === 'starting'
+                          ? 'Đang mở đăng nhập…'
+                          : `Đăng nhập bằng tài khoản ${authModal.providerLabel ?? 'Grok'}`}
+                      </button>
+                      <p style={{ margin: '8px 0 0 0', fontSize: '12px', color: 'var(--muted)', lineHeight: 1.5 }}>
+                        Cần CLI chính thức của xAI. Chưa có?{' '}
+                        <code style={{ fontSize: '11px' }}>npm i -g @xai-official/grok</code>
+                      </p>
+                    </>
+                  )}
+                </div>
+
+                <div style={{ fontSize: '12px', color: 'var(--muted)', textAlign: 'center', margin: '4px 0 10px' }}>
+                  — hoặc dán token gateway thủ công (proxy/LiteLLM tự dựng) —
+                </div>
+
+                <label style={{ display: 'block', fontSize: '13px', marginBottom: '4px' }}>Gateway URL</label>
+                <input
+                  type="text"
+                  value={authModal.gatewayUrl ?? ''}
+                  disabled={authModal.tokenLoading}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setAuthModal((prev) => (prev ? { ...prev, gatewayUrl: val } : null));
+                  }}
+                  placeholder="http://127.0.0.1:4010"
+                  style={{ width: '100%', padding: '8px 10px', boxSizing: 'border-box', marginBottom: '12px' }}
+                />
+
+                <label style={{ display: 'block', fontSize: '13px', marginBottom: '4px' }}>
+                  Token gateway {authModal.gatewayHasToken ? '(đã có — nhập mới để thay)' : ''}
+                </label>
+                <input
+                  type="password"
+                  value={authModal.tokenValue ?? ''}
+                  disabled={authModal.tokenLoading}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setAuthModal((prev) => (prev ? { ...prev, tokenValue: val } : null));
+                  }}
+                  placeholder="LITELLM_MASTER_KEY"
+                  style={{ width: '100%', padding: '8px 10px', boxSizing: 'border-box' }}
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !authModal.tokenLoading) submitGatewayCreds();
+                  }}
+                />
+
+                <p style={{ margin: '12px 0 0 0', fontSize: '12px', color: 'var(--muted)', lineHeight: 1.5 }}>
+                  Chưa dựng gateway? Cần API key ở console.x.ai (gói SuperGrok không kèm API credits), rồi:
+                  <br />
+                  <code style={{ fontSize: '11px' }}>litellm --config examples/litellm.grok.yaml --port 4010</code>
+                </p>
+
+                {authModal.tokenError && (
+                  <div style={{ color: '#ff1744', marginTop: '10px', fontSize: '13px' }}>
+                    ⚠️ {authModal.tokenError}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="modal-footer" style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '16px' }}>
               {authModal.mode === 'oauth' ? (
                 <>
@@ -4155,7 +4439,7 @@ export function App() {
                 </>
               ) : (
                 <>
-                  {authModal.mode !== 'select' && (
+                  {authModal.mode === 'token' && (
                     <button
                       className="btn deny"
                       disabled={authModal.tokenLoading}
@@ -4164,6 +4448,17 @@ export function App() {
                       }}
                     >
                       Quay lại
+                    </button>
+                  )}
+                  {authModal.mode === 'gateway' && (
+                    // AI ngoài không có màn 'select' để quay lại: đang kết nối thì cho ngắt,
+                    // chưa kết nối thì chỉ đóng modal.
+                    <button
+                      className="btn deny"
+                      disabled={authModal.tokenLoading}
+                      onClick={() => (authModal.gatewayHasToken ? submitGatewayCreds({ disconnect: true }) : setAuthModal(null))}
+                    >
+                      {authModal.gatewayHasToken ? 'Ngắt kết nối' : 'Hủy'}
                     </button>
                   )}
                   {authModal.mode === 'select' && (
@@ -4181,6 +4476,15 @@ export function App() {
                       onClick={submitManualToken}
                     >
                       {authModal.tokenLoading ? 'Đang lưu...' : 'Lưu'}
+                    </button>
+                  )}
+                  {authModal.mode === 'gateway' && (
+                    <button
+                      className="btn allow"
+                      disabled={authModal.tokenLoading || !authModal.tokenValue?.trim() || !authModal.profile.trim()}
+                      onClick={() => submitGatewayCreds()}
+                    >
+                      {authModal.tokenLoading ? 'Đang lưu...' : 'Kết nối'}
                     </button>
                   )}
                 </>

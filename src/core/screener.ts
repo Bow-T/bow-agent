@@ -14,11 +14,14 @@
  */
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { MessageParam } from '@anthropic-ai/sdk/resources/messages';
-import { config } from '../config/env.js';
+import { config, resolveModel } from '../config/env.js';
 import { findClaudeCodeExecutable, buildPerTabEnv } from './runner.js';
 
-/** Model cham screener - re & nhanh la du cho phan loai nhi phan. Override qua env. */
-const SCREEN_MODEL = process.env.BOW_SCREEN_MODEL || 'claude-haiku-4-5-20251001';
+/**
+ * Model cham screener - re & nhanh la du cho phan loai nhi phan. Override qua env.
+ * resolveModel: chay provider ngoai (BOW_PROVIDER) thi quy ve bac 'fast' cua provider do.
+ */
+const SCREEN_MODEL = resolveModel(process.env.BOW_SCREEN_MODEL || 'claude-haiku-4-5-20251001');
 /** Bo han screener neu nguoi van hanh muon (giu hanh vi cu). */
 const SCREEN_DISABLED = process.env.BOW_SCREEN_DISABLE === '1';
 /** Timeout cung - screener cham KHONG duoc lam treo viec chay. Fail-open sau moc nay. */
@@ -124,7 +127,13 @@ export async function screenExternalData(
   if (!config.hasAuth) return { decision: 'auto', unscreened: true };
 
   const clipped = payload.length > MAX_SCREEN_CHARS ? payload.slice(0, MAX_SCREEN_CHARS) : payload;
-  const perTabEnv = buildPerTabEnv(claudeProfile && claudeProfile.trim() ? claudeProfile.trim() : undefined);
+  // Screener cũng phải đi qua shim khi chạy AI ngoài (nó gọt schema + cấp token đã refresh).
+  const perTabEnv = (
+    await buildPerTabEnv(
+      claudeProfile && claudeProfile.trim() ? claudeProfile.trim() : undefined,
+      config.provider,
+    )
+  )?.env;
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), SCREEN_TIMEOUT_MS);
   try {
