@@ -136,6 +136,44 @@ Feed it any of three inputs, or combine them:
 | **Spec / WBS file** | `run --wbs ./task.md` — see [`examples/task.example.md`](examples/task.example.md) |
 | **Plain text** | `run --text "Fix the crash on the checkout screen"` |
 
+### Running a non-Claude model (Grok)
+
+bow-agent drives the `claude` binary, which only speaks the Anthropic Messages API
+(`/v1/messages`). xAI doesn't expose that endpoint — only `/v1/chat/completions` — so a
+translating gateway has to sit in between:
+
+```bash
+# 1. Key from console.x.ai — a SuperGrok subscription does NOT include API credits
+export XAI_API_KEY=xai-...
+export LITELLM_MASTER_KEY=sk-bow-local
+
+# 2. Gateway that serves /v1/messages and forwards to xAI
+#    (avoid LiteLLM 1.82.7 / 1.82.8 — those releases shipped credential-stealing malware)
+litellm --config examples/litellm.grok.yaml --port 4010
+
+# 3. Point bow at it
+export BOW_PROVIDER=grok
+export BOW_PROVIDER_TOKEN=sk-bow-local
+npm run ui
+```
+
+No `.env` edit required: the composer has an **AI** dropdown (admin only) — pick Grok and log
+in through the same modal Claude uses (only the method differs: a gateway token instead of
+OAuth). The **Account** field behaves identically: multiple Grok accounts (`grok (Default)`,
+`grok-work`…), `+ Add account…`, delete, the ✓/⚠️ badge and the lock button — each tab runs its
+own account. Tokens live in `~/.bow-agent/provider.json` (mode 600) and take effect
+immediately, no restart. Two tabs can run different AIs side by side. `BOW_PROVIDER` only decides the default
+(CLI, sprint-scan); if the token comes from the environment, the environment wins and the web
+UI says so instead of silently saving.
+
+Model names stay the same everywhere — `claude-*` is mapped to the provider's tiers
+(`grok-4.6` for real work, `grok-build-0.1` for the cheap screener/scout passes), so the
+web model picker, CLI and subagents need no changes. The approval gate is untouched.
+
+Two things to expect: the plan-usage panel goes empty (a gateway has no Anthropic `/usage`
+API), and skills/hooks/plan-mode go through a translation layer, so tool-call fidelity is
+lower than on Claude. This setup is not officially supported by Anthropic.
+
 ## How it works
 
 ```

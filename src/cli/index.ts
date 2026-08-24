@@ -594,7 +594,15 @@ async function main(): Promise<void> {
 
   const mode = args.execute ? 'execute' : 'plan';
   const profileLabel = args.profile === 'none' ? 'none' : args.profile;
-  const authLabel = config.hasAuth ? 'Claude CLI login' : 'CHƯA ĐĂNG NHẬP';
+  // Provider ngoài đổi cả nguồn auth: không còn login Claude mà là token gateway.
+  const isExternal = config.provider !== 'anthropic';
+  const authLabel = config.hasAuth
+    ? isExternal
+      ? `gateway ${config.provider}`
+      : 'Claude CLI login'
+    : isExternal
+      ? 'THIẾU BOW_PROVIDER_TOKEN'
+      : 'CHƯA ĐĂNG NHẬP';
   // MCP MẶC ĐỊNH BẬT: tự nạp mọi server đã cấu hình trong Claude Code (Jira/Supabase/
   // Figma...) để agent đọc được ticket Jira. Tùy chọn:
   //   --mcp a,b   : chỉ nạp các server chỉ định

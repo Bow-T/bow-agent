@@ -1,4 +1,5 @@
 import type { AgentDefinition } from '@anthropic-ai/claude-agent-sdk';
+import { resolveModelFor, activeProviderId, type ProviderId } from '../config/env.js';
 
 /**
  * Model cho subagent — CỐ Ý rẻ hơn Opus của phiên chính (ý "complexity-aware dispatch"
@@ -9,6 +10,11 @@ import type { AgentDefinition } from '@anthropic-ai/claude-agent-sdk';
  *  - SUBAGENT_MODEL: reviewer/verifier — cần suy luận, dùng Sonnet 5.
  *  - SCOUT_MODEL: impact-scout — thuần grep, dùng Haiku 4.5 (rẻ/nhanh nhất).
  * Ghi đè được qua env để A/B (vd đặt 'inherit' để so với Opus). Rỗng → mặc định dưới.
+ *
+ * CỐ Ý để RAW ('claude-*') ở đây, KHÔNG resolve tại module-load: provider có thể đổi PER-TAB
+ * (server mặc định Claude nhưng một tab chạy Grok). buildSubagents mới ánh xạ model theo
+ * provider của ĐÚNG lượt chạy — resolve sớm ở đây sẽ đóng băng theo provider mặc định tiến
+ * trình và gửi 'claude-*' sang gateway Grok (xAI trả 400 "unknown model").
  */
 const SUBAGENT_MODEL = process.env.BOW_SUBAGENT_MODEL || 'claude-sonnet-5';
 const SCOUT_MODEL = process.env.BOW_SCOUT_MODEL || 'claude-haiku-4-5-20251001';
@@ -134,9 +140,17 @@ export const STANDARD_SUBAGENTS: Record<string, AgentDefinition> = {
 /**
  * Gộp subagent chuẩn + subagent riêng của profile. Profile GHI ĐÈ chuẩn nếu trùng tên
  * (để một dự án có thể tinh chỉnh vai trò chung cho khuôn của mình).
+ *
+ * `providerId` = AI của LƯỢT CHẠY này (per-tab). Model 'claude-*' của mọi subagent được ánh
+ * xạ sang bậc main/fast của provider đó (Grok không hiểu tên model Claude). Anthropic:
+ * resolveModelFor trả nguyên, model không đổi. Bỏ trống = provider mặc định tiến trình.
  */
 export function buildSubagents(
   profileSubagents?: Record<string, AgentDefinition>,
+  providerId: ProviderId = activeProviderId(),
 ): Record<string, AgentDefinition> {
-  return { ...STANDARD_SUBAGENTS, ...(profileSubagents ?? {}) };
+  const merged = { ...STANDARD_SUBAGENTS, ...(profileSubagents ?? {}) };
+  return Object.fromEntries(
+    Object.entries(merged).map(([name, def]) => [name, { ...def, model: resolveModelFor(providerId, def.model) }]),
+  );
 }

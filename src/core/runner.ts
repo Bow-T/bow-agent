@@ -10,7 +10,18 @@ import type { MessageParam } from '@anthropic-ai/sdk/resources/messages';
 import { existsSync, realpathSync } from 'node:fs';
 import { resolve, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { config, resolveProfileEnvPatch, hasProfileAuth } from '../config/env.js';
+import {
+  config,
+  resolveProfileEnvPatch,
+  hasProfileAuth,
+  resolveModelFor,
+  providerEnvPatchFor,
+  providerReady,
+  providerAccessToken,
+  providerBaseUrl,
+  type ProviderId,
+} from '../config/env.js';
+import { registerXaiSession, releaseXaiSession } from './xaiShim.js';
 import { BOW_AGENT_APPEND } from './systemPrompt.js';
 import {
   loadClaudeCodeMcp,
@@ -241,6 +252,17 @@ export interface RunOptions {
   /** Model sử dụng cho agent. */
   model?: string;
   /**
+   * AI dùng cho lượt chạy NÀY (per-tab): 'anthropic' (Claude) hoặc provider ngoài chạy qua
+   * gateway, vd 'grok'. Bỏ trống = theo BOW_PROVIDER của tiến trình. Web cho admin chọn từng
+   * tab; runner dựng env riêng cho mỗi query() nên hai tab chạy hai hãng song song được.
+   */
+  provider?: ProviderId;
+  /**
+   * Tài khoản gateway cho lượt chạy này (khi provider ngoài) — nhiều acc Grok như nhiều
+   * profile Claude. Bỏ trống = tài khoản 'default'.
+   */
+  providerProfile?: string;
+  /**
    * Tài khoản Claude dùng cho lượt chạy NÀY (per-tab). Tên profile ('default' hoặc tên phụ).
    * Runner dựng env riêng (CLAUDE_CONFIG_DIR + token) truyền vào query() để mỗi tab chạy đúng
    * tài khoản mà KHÔNG đổi process.env toàn cục của server. Bỏ trống = dùng profile env server.
@@ -326,10 +348,27 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   // mà KHÔNG đụng process.env toàn cục — nhờ đó nhiều tab chạy nhiều tài khoản song song.
   const perTabProfile = opts.claudeProfile && opts.claudeProfile.trim() ? opts.claudeProfile.trim() : undefined;
 
+  // AI của lượt chạy này (per-tab). Không truyền = provider mặc định của tiến trình.
+  const providerId: ProviderId = opts.provider ?? config.provider;
+  const usesGateway = providerId !== 'anthropic';
+  const perTabProviderProfile =
+    opts.providerProfile && opts.providerProfile.trim() ? opts.providerProfile.trim() : undefined;
+
   // Cần auth: đã login Claude Code CLI. Kiểm ĐÚNG tài khoản của tab (nếu per-tab), không
   // theo env toàn cục — tránh cho qua khi env server đang trỏ profile khác đã login.
-  const authed = perTabProfile ? hasProfileAuth(perTabProfile) : config.hasAuth;
+  // Gateway: auth là token gateway, KHÔNG phải login Claude → kiểm theo provider của lượt này.
+  const authed = usesGateway
+    ? providerReady(providerId, perTabProviderProfile)
+    : perTabProfile
+      ? hasProfileAuth(perTabProfile)
+      : providerReady('anthropic');
   if (!authed) {
+    if (usesGateway) {
+      const which = perTabProviderProfile ? ` '${perTabProviderProfile}'` : '';
+      throw new Error(
+        `Tài khoản${which} của AI '${providerId}' chưa đăng nhập: thiếu token gateway. Đăng nhập lại trong web (ô Tài khoản), hoặc đặt BOW_PROVIDER_TOKEN trong .env.`,
+      );
+    }
     const which = perTabProfile ? ` (tài khoản: claude-${perTabProfile})` : '';
     throw new Error(
       `Chưa đăng nhập Claude CLI${which}. Đăng nhập lại tài khoản này trong web, hoặc chạy \`claude\` rồi /login (dùng gói Claude sẵn có, không cần API key).`,
@@ -373,7 +412,9 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   // Tool đọc tự cho phép; tool ghi/side-effect mặc định hỏi. Để chạy test/kiểm chứng,
   // agent dùng Bash — đã có cổng SAFE_COMMANDS bên dưới (npm test, flutter test...).
   // Multi-agent (opt-in): bộ subagent chuẩn + subagent riêng profile. Chỉ dựng khi bật.
-  const subagents = opts.useSubagents ? buildSubagents(opts.profileSubagents) : undefined;
+  // Truyền providerId của lượt chạy để model subagent ánh xạ đúng AI (Grok không hiểu
+  // 'claude-*'); nếu không, tab chọn Grok trên server mặc định Claude sẽ nổ 400.
+  const subagents = opts.useSubagents ? buildSubagents(opts.profileSubagents, providerId) : undefined;
 
   // QC Mode (trước đây tên "Safe Mode"): read-only cho QC hỏi đáp, NHƯNG mở tool Skill
   // (chạy qc-triage…) + Jira read/write (comment kết luận, transition ticket). Bật qua env
@@ -791,11 +832,14 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   const hasHooks = Object.keys(hooks).length > 0;
   // (Deploy core + stack đã chạy SỚM ở đầu hàm — cần cho system prompt & hooks trên.)
 
-  // Env cho subprocess `claude` khi tab chọn tài khoản riêng (per-tab). undefined = env server.
-  const perTabEnv = buildPerTabEnv(perTabProfile);
+  // Env cho subprocess `claude` khi tab chọn tài khoản/AI riêng (per-tab). undefined = env server.
+  const perTab = await buildPerTabEnv(perTabProfile, providerId, perTabProviderProfile);
+  const perTabEnv = perTab?.env;
+  const shimSessionKey = perTab?.sessionKey;
 
   const options: Options = {
-    model: opts.model ?? config.model,
+    // Ánh xạ model theo AI của lượt này: gateway không biết 'claude-*' là gì.
+    model: resolveModelFor(providerId, opts.model ?? config.model),
     effort: opts.effort ?? 'high',
     cwd: opts.cwd,
     ...(perTabEnv ? { env: perTabEnv } : {}),
@@ -1487,6 +1531,8 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     // 'result') để generator không treo vô hạn giữ query sống.
     clearIdleGuard();
     releaseInput();
+    // Thu hồi phiên shim: sessionKey chỉ sống trong đúng lượt chạy này.
+    if (shimSessionKey) releaseXaiSession(shimSessionKey);
   }
 
   // Trí nhớ tích lũy: cuối phiên (nếu cwd thuộc workspace & chạy thành công) cô đọng
@@ -1696,11 +1742,14 @@ async function readUsageSnapshot(q: {
  * thoại thực — UI chỉ nên lấy phần rateLimits từ đây; context lấy từ event trong lượt chạy.
  */
 export async function fetchUsageSnapshot(model?: string, claudeProfile?: string): Promise<UsageSnapshot | null> {
+  // Provider ngoài (gateway): /usage là control request RIÊNG của Anthropic — gateway không
+  // có. Trả null NGAY thay vì mở transport rồi chờ hết 30s timeout mỗi lần UI làm mới.
+  if (config.provider !== 'anthropic') return null;
   // Hạn mức đọc theo ĐÚNG tài khoản của tab (per-tab) nếu truyền — không theo env server.
   const perTabProfile = claudeProfile && claudeProfile.trim() ? claudeProfile.trim() : undefined;
   const authed = perTabProfile ? hasProfileAuth(perTabProfile) : config.hasAuth;
   if (!authed) return null;
-  const perTabEnv = buildPerTabEnv(perTabProfile);
+  const perTabEnv = (await buildPerTabEnv(perTabProfile))?.env;
   let release: () => void = () => {};
   const done = new Promise<void>((r) => {
     release = r;
@@ -1714,7 +1763,7 @@ export async function fetchUsageSnapshot(model?: string, claudeProfile?: string)
   const q = query({
     prompt: streamingPrompt('.', done),
     options: {
-      model: model ?? config.model,
+      model: resolveModelFor(config.provider, model ?? config.model),
       permissionMode: 'plan',
       pathToClaudeCodeExecutable: findClaudeCodeExecutable(config.defaultCwd),
       abortController: abort,
@@ -1744,13 +1793,35 @@ export async function fetchUsageSnapshot(model?: string, claudeProfile?: string)
  * của profile (xoá key có giá trị undefined). Trả undefined nếu không có profileName (dùng
  * process.env như cũ). Tách riêng để runAgent và fetchUsageSnapshot cùng dùng.
  */
-export function buildPerTabEnv(profileName: string | undefined): Record<string, string> | undefined {
+export async function buildPerTabEnv(
+  profileName: string | undefined,
+  providerId?: ProviderId,
+  providerProfile?: string,
+): Promise<{ env: Record<string, string>; sessionKey?: string } | undefined> {
   const name = profileName && profileName.trim() ? profileName.trim() : undefined;
-  if (!name) return undefined;
-  const merged: Record<string, string | undefined> = { ...process.env, ...resolveProfileEnvPatch(name) };
-  return Object.fromEntries(
-    Object.entries(merged).filter(([, v]) => v !== undefined) as [string, string][],
-  );
+  const usesGateway = (providerId ?? config.provider) !== 'anthropic';
+  if (!name && !usesGateway && providerId === undefined) return undefined;
+
+  // AI ngoài: KHÔNG đưa token thật vào env của subprocess. Đăng ký một phiên shim và đưa
+  // sessionKey — shim tra ngược ra tài khoản, tự refresh token rồi mới gọi xAI.
+  let shim: { baseUrl: string; sessionKey: string } | undefined;
+  if (usesGateway && providerId !== 'anthropic') {
+    shim = await registerXaiSession({
+      baseUrl: providerBaseUrl(providerProfile),
+      getToken: () => providerAccessToken(providerProfile),
+    });
+  }
+
+  const merged: Record<string, string | undefined> = {
+    ...process.env,
+    ...(name ? resolveProfileEnvPatch(name) : {}),
+    ...(providerId ? providerEnvPatchFor(providerId, providerProfile) : {}),
+    ...(shim ? { ANTHROPIC_BASE_URL: shim.baseUrl, ANTHROPIC_AUTH_TOKEN: shim.sessionKey } : {}),
+  };
+  return {
+    env: Object.fromEntries(Object.entries(merged).filter(([, v]) => v !== undefined) as [string, string][]),
+    sessionKey: shim?.sessionKey,
+  };
 }
 
 /** Bắc cầu AbortSignal → AbortController mà SDK nhận. */
