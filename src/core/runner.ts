@@ -1427,6 +1427,7 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
           if (st.compact_result === 'failed' && contextOverflowHint(st.compact_error)) {
             contextOverTheLimit = true;
             announceOverflow(st.compact_error ?? '');
+            if (doneTurns >= input.count() - 1) releaseInput();
           }
         }
         if (message.subtype === 'compact_boundary') {
@@ -1441,6 +1442,11 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
                 ? `🗜️ Đã nén lịch sử hội thoại: ${pre}k → ${post}k token. Phiên chạy tiếp bình thường.`
                 : '🗜️ Đã nén lịch sử hội thoại. Phiên chạy tiếp bình thường.',
           });
+          // Lượt /compact do BOW tự gửi KHÔNG chốt bằng 'result' → không có gì gọi
+          // releaseInput và phiên treo 2 phút chờ idle guard. Nén xong = lượt đó xong.
+          // Trừ 1 vì chính /compact cũng nằm trong input.count(); còn lời người dùng chen
+          // thì điều kiện sai và kênh vẫn được giữ mở đúng như trước.
+          if (doneTurns >= input.count() - 1) releaseInput();
         }
         break;
       }
@@ -1462,6 +1468,9 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
             if (contextOverflowHint(block.text)) {
               contextOverTheLimit = true;
               announceOverflow(block.text);
+              // Lỗi nén in ra như lời agent (bản CLI không phát system/status): lượt
+              // /compact này cũng sẽ không có 'result' → tự đóng, đừng treo 2 phút.
+              if (compactRequested && doneTurns >= input.count() - 1) releaseInput();
             }
           } else if (block.type === 'tool_use') {
             let describe = describeTool(block.name);
