@@ -45,7 +45,7 @@ export type WebEvent =
       durationMs: number;
     }
   | { type: 'usage'; usage: UsageSnapshot }
-  | { type: 'error'; subtype: string; isSessionLimit?: boolean; resetsAt?: string | null }
+  | { type: 'error'; subtype: string; isSessionLimit?: boolean; resetsAt?: string | null; hint?: string; isContextOverflow?: boolean }
   | {
       // Server đã lên lịch tự chạy tiếp sau khi hết hạn mức phiên (5h).
       type: 'auto-resume-scheduled';
@@ -72,7 +72,9 @@ export type WebEvent =
   | { type: 'conversation'; conversationId: string }
   | { type: 'user-input'; text: string }
   | { type: 'done'; result: string | null }
-  | { type: 'fatal'; message: string };
+  // `contextOverflow` = phiên chết vì tràn context window → tab tự dọn conversationId và
+  // bật cờ gửi kèm tóm tắt, người dùng gõ tiếp là chạy được ngay (không phải mở tab mới).
+  | { type: 'fatal'; message: string; contextOverflow?: boolean };
 
 /** Chi tiết một lần gọi tool — để hiển thị "đã làm gì cụ thể" khi mở rộng Activity Log. */
 export interface ToolDetail {

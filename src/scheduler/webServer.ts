@@ -305,7 +305,7 @@ export function startSprintWebServer(): void {
           if (ev.type === 'text') send('text', { text: ev.text });
           else if (ev.type === 'tool') send('tool', { describe: ev.describe });
           else if (ev.type === 'result') send('result', { costUsd: ev.costUsd, turns: ev.turns });
-          else if (ev.type === 'error') send('agent-error', { subtype: ev.subtype });
+          else if (ev.type === 'error') send('agent-error', { subtype: ev.hint ?? ev.subtype });
         },
       });
       // Tách thẻ triage từ summary để client vẽ ngay (khỏi chờ refresh history).

@@ -20,7 +20,7 @@ import {
   DEFAULT_PROVIDER_PROFILE,
   type ProviderId,
 } from '../config/env.js';
-import { runAgent, fetchUsageSnapshot, type RunOptions } from '../core/runner.js';
+import { runAgent, fetchUsageSnapshot, contextOverflowHint, type RunOptions } from '../core/runner.js';
 import { screenExternalData, untrustedNotice } from '../core/screener.js';
 import { buildTaskBrief } from '../input/task.js';
 import { pdfToText } from '../input/pdf.js';
@@ -590,8 +590,10 @@ function runAgentSession(session: ReturnType<typeof createSession>, params: RunP
       // Nếu phiên dừng vì hết hạn mức (ta chủ động abort để lên lịch), KHÔNG đẩy 'fatal'
       // (đỏ, gây hiểu lầm) — nhánh finally sẽ phát 'auto-resume-scheduled' thay thế.
       if (hitSessionLimit) return;
-      logAudit(`IP: ${params.cleanIp || 'unknown'} - Session ${session.id} THẤT BẠI: ${(err as Error).message}`, params.cleanIp, params.clientName);
-      session.push({ type: 'fatal', message: (err as Error).message });
+      const msg = (err as Error).message;
+      const overflow = contextOverflowHint(msg);
+      logAudit(`IP: ${params.cleanIp || 'unknown'} - Session ${session.id} THẤT BẠI: ${msg}`, params.cleanIp, params.clientName);
+      session.push({ type: 'fatal', message: overflow ?? msg, contextOverflow: Boolean(overflow) });
     })
     .finally(() => {
       // Quyết định auto-resume TRƯỚC khi đóng session (client vẫn đang nghe SSE của session
@@ -2533,7 +2535,7 @@ app.post('/api/generate-profile', requireAdmin, async (req, res) => {
       session.push({ type: 'text', text: `Đã sinh profile "${r.name}" → ${r.file}` });
       session.push({ type: 'done', result: r.name });
     })
-    .catch((err: unknown) => session.push({ type: 'fatal', message: (err as Error).message }))
+    .catch((err: unknown) => session.push({ type: 'fatal', message: contextOverflowHint((err as Error).message) ?? (err as Error).message, contextOverflow: Boolean(contextOverflowHint((err as Error).message)) }))
     .finally(() => session.close());
 });
 
@@ -2555,7 +2557,7 @@ app.post('/api/analyze-structure', requireAdmin, (req, res) => {
 
   analyzeStructure(cwd, (msg) => session.push({ type: 'text', text: msg }))
     .then((structure) => session.push({ type: 'done', result: structure }))
-    .catch((err: unknown) => session.push({ type: 'fatal', message: (err as Error).message }))
+    .catch((err: unknown) => session.push({ type: 'fatal', message: contextOverflowHint((err as Error).message) ?? (err as Error).message, contextOverflow: Boolean(contextOverflowHint((err as Error).message)) }))
     .finally(() => session.close());
 });
 

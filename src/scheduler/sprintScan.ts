@@ -306,7 +306,7 @@ export async function runSprintScan(opts: SprintScanOptions): Promise<string | n
     if (ev.type === 'result') { costUsd = ev.costUsd; appendLive('ok', `Xong · ${ev.turns} lượt · $${ev.costUsd.toFixed(4)}`); }
     else if (ev.type === 'text') appendLive('t', ev.text);
     else if (ev.type === 'tool') appendLive('tool', ev.describe);
-    else if (ev.type === 'error') appendLive('err', ev.subtype);
+    else if (ev.type === 'error') appendLive('err', ev.hint ?? ev.subtype);
     opts.onEvent(ev);
   };
 
