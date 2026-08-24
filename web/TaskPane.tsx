@@ -543,6 +543,11 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
     return id;
   };
 
+  const recoverFromContextOverflow = () => {
+    setConversationId(null);
+    setNeedResumeContext(true);
+  };
+
   /**
    * Mở một cuộc cũ VÀO TAB NÀY: nạp items + conversationId + cwd. Bật cờ needResumeContext
    * để lượt chạy kế gửi kèm tóm tắt (phòng phiên SDK đã bị dọn). Dừng phiên đang chạy (nếu có).
@@ -1073,6 +1078,9 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
           if (ev.isSessionLimit) {
             const when = ev.resetsAt ? formatResetIn(ev.resetsAt) : '';
             addItem('system', `⏸️ Hết hạn mức phiên (5h)${when ? ` · reset ${when.toLowerCase()}` : ''}. Đang chờ lịch tự chạy tiếp…`);
+          } else if (ev.hint) {
+            if (ev.isContextOverflow) recoverFromContextOverflow();
+            addItem('error', ev.hint);
           } else {
             addItem('error', `Kết thúc bất thường: ${ev.subtype}`);
           }
@@ -1150,6 +1158,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
           closeSrc();
           break;
         case 'fatal':
+          if (ev.contextOverflow) recoverFromContextOverflow();
           addItem('error', ev.message);
           setRunning(false);
           localStorage.removeItem(K.session);

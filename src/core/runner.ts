@@ -75,7 +75,9 @@ export type AgentEvent =
   // Phiên kết thúc bất thường. `isSessionLimit` = do hết hạn mức phiên (5h) — kèm `resetsAt`
   // (ISO) là thời điểm hạn mức reset, để caller LÊN LỊCH tự chạy tiếp. Lỗi thường thì hai
   // field này vắng.
-  | { type: 'error'; subtype: string; isSessionLimit?: boolean; resetsAt?: string | null };
+  // `hint` = câu giải thích tiếng Việt cho lỗi mà subtype thô không nói rõ (vd tràn
+  // context window) — CLI/web chỉ việc hiển thị, không tự đoán lại.
+  | { type: 'error'; subtype: string; isSessionLimit?: boolean; resetsAt?: string | null; hint?: string; isContextOverflow?: boolean };
 
 /** Một cửa sổ hạn mức (5 giờ / 7 ngày / theo model) — % đã dùng + thời điểm reset. */
 export interface UsageWindow {
@@ -1365,12 +1367,34 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   let lastRateLimits: UsageWindow[] = [];
   let lastSubscriptionType: string | null = null;
   const CONTEXT_THROTTLE_MS = 800;
+  // Tự nén lịch sử (compact) khi context chạm ngưỡng — để LƯỢT SAU còn chỗ mà chạy, thay vì
+  // nổ 400 "maximum prompt length" rồi phải bỏ cả tab. 0 (hoặc >=100) = tắt, tự lo bằng tay.
+  const COMPACT_AT = Number(process.env.BOW_COMPACT_AT ?? 80);
+  let lastContextPct: number | null = null;
+  // Đã vượt TRẦN CỨNG của model chưa. Quan trọng: quá trần thì /compact cũng nổ theo — bản
+  // thân việc nén phải gửi cả hội thoại lên cho model tóm tắt. Lúc đó chỉ còn cách dọn
+  // ngữ cảnh phía bow (tab giữ nguyên, lượt sau gửi kèm tóm tắt).
+  let contextOverTheLimit = false;
+  let compactRequested = false;
+  // Phát "hết chỗ, đã dọn ngữ cảnh" đúng MỘT lần cho mỗi lượt chạy.
+  let overflowAnnounced = false;
+  const announceOverflow = (raw: string) => {
+    if (overflowAnnounced) return;
+    overflowAnnounced = true;
+    const hint = contextOverflowHint(raw) ?? contextOverflowHint('maximum prompt length')!;
+    opts.onEvent({ type: 'error', subtype: 'context_overflow', hint, isContextOverflow: true });
+  };
   const emitContextUsage = async () => {
     const nowMs = Date.now();
     if (nowMs - lastEmittedContextAt < CONTEXT_THROTTLE_MS) return;
     lastEmittedContextAt = nowMs;
     const ctx = await q.getContextUsage().catch(() => null);
     if (!ctx) return;
+    lastContextPct = ctx.percentage ?? null;
+    // rawMaxTokens = trần thật của model; maxTokens đã trừ phần dành cho output nên
+    // percentage vượt 100% là bình thường, KHÔNG suy ra tràn từ nó.
+    const hardMax = ctx.rawMaxTokens || ctx.maxTokens || 0;
+    if (hardMax > 0 && ctx.totalTokens >= hardMax) contextOverTheLimit = true;
     opts.onEvent({
       type: 'usage',
       usage: {
@@ -1392,6 +1416,31 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
         // lịch sử. Báo ra ngoài để caller lưu → lượt sau resume đúng phiên (agent nhớ).
         if (message.subtype === 'init') {
           opts.onSessionId?.(message.session_id);
+          // Fail-open: CLI cũ không có control request này thì bỏ qua, ta vẫn còn tầng
+          // tự gửi /compact ở cuối lượt bên dưới.
+          void q.applyFlagSettings({ autoCompactEnabled: true }).catch(() => {});
+        }
+        // Nén xong: báo cho người dùng biết lịch sử vừa bị co lại (và co bao nhiêu) — nếu
+        // im lặng, họ sẽ tưởng agent tự quên việc.
+        if (message.subtype === 'status') {
+          const st = message as { compact_result?: string; compact_error?: string };
+          if (st.compact_result === 'failed' && contextOverflowHint(st.compact_error)) {
+            contextOverTheLimit = true;
+            announceOverflow(st.compact_error ?? '');
+          }
+        }
+        if (message.subtype === 'compact_boundary') {
+          const m = (message as { compact_metadata?: { pre_tokens?: number; post_tokens?: number } }).compact_metadata;
+          const pre = m?.pre_tokens ? Math.round(m.pre_tokens / 1000) : null;
+          const post = m?.post_tokens ? Math.round(m.post_tokens / 1000) : null;
+          opts.onEvent({
+            type: 'tool',
+            name: 'compact',
+            describe:
+              pre && post
+                ? `🗜️ Đã nén lịch sử hội thoại: ${pre}k → ${post}k token. Phiên chạy tiếp bình thường.`
+                : '🗜️ Đã nén lịch sử hội thoại. Phiên chạy tiếp bình thường.',
+          });
         }
         break;
       }
@@ -1410,6 +1459,10 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
         for (const block of message.message.content) {
           if (block.type === 'text' && block.text.trim()) {
             opts.onEvent({ type: 'text', text: block.text.trim() });
+            if (contextOverflowHint(block.text)) {
+              contextOverTheLimit = true;
+              announceOverflow(block.text);
+            }
           } else if (block.type === 'tool_use') {
             let describe = describeTool(block.name);
             if (block.name === 'Agent' && block.input && typeof block.input === 'object' && 'agent' in block.input) {
@@ -1512,13 +1565,27 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
             lastFiveHourResetsAt ??
             usage?.rateLimits.find((w) => /5\s*hr|5hr|five/i.test(w.label))?.resetsAt ??
             null;
-          opts.onEvent({ type: 'error', subtype: message.subtype, isSessionLimit, resetsAt });
+          const hint = contextOverflowHint([message.subtype, ...(errors ?? [])].join(' ')) ?? undefined;
+          opts.onEvent({ type: 'error', subtype: message.subtype, isSessionLimit, resetsAt, hint, isContextOverflow: Boolean(hint) });
         }
         // Giải phóng streaming input → SDK kết thúc query, vòng for..of thoát. NHƯNG nếu
         // người dùng đã nói chen (input.count > số result đã nhận) thì GIỮ MỞ: lời kế còn
         // chờ agent xử lý, đóng bây giờ là nuốt mất. Phanh chống treo: SDK im quá lâu →
         // idle guard đóng hộ.
         doneTurns++;
+        // Chạm ngưỡng → xếp /compact vào hàng đợi NGAY SAU lượt vừa xong (không cắt ngang
+        // công việc). input.count() tăng theo nên vòng lặp giữ kênh mở tới khi nén xong.
+        if (contextOverTheLimit) {
+          announceOverflow('maximum prompt length');
+        } else if (!compactRequested && COMPACT_AT > 0 && COMPACT_AT < 100 && (lastContextPct ?? 0) >= COMPACT_AT) {
+          compactRequested = true;
+          opts.onEvent({
+            type: 'tool',
+            name: 'compact',
+            describe: `🗜️ Context đã dùng ${Math.round(lastContextPct ?? 0)}% — đang nén lịch sử để phiên chạy tiếp được…`,
+          });
+          input.send('/compact');
+        }
         if (doneTurns >= input.count()) releaseInput();
         else armIdleGuard();
         break;
@@ -1663,6 +1730,41 @@ function looksLikeSessionLimit(errors: string[] | undefined, subtype: string): b
     hay.includes('usage limit') ||
     (hay.includes('rate limit') && hay.includes('reset')) ||
     hay.includes("you've hit your")
+  );
+}
+
+/**
+ * Nhận diện lỗi TRÀN CONTEXT WINDOW (lịch sử hội thoại vượt trần prompt của model) và trả
+ * câu hướng dẫn tiếng Việt; null nếu không phải lỗi đó.
+ *
+ * Vì sao tách khỏi looksLikeSessionLimit: hết hạn mức thì CHỜ là xong (auto-resume), còn
+ * tràn context thì chờ bao lâu cũng vẫn tràn — phải mở phiên mới. Bắt cả hai giọng vì bow
+ * chạy được nhiều hãng: Anthropic ("maximum prompt length is N but the request contains M
+ * tokens", "prompt is too long") và OpenAI/xAI đi qua gateway LiteLLM
+ * ("maximum context length", "context_length_exceeded").
+ */
+export function contextOverflowHint(raw: string | undefined): string | null {
+  const hay = (raw ?? '').toLowerCase();
+  const hit =
+    hay.includes('maximum prompt length') ||
+    hay.includes('prompt is too long') ||
+    hay.includes('maximum context length') ||
+    hay.includes('context_length_exceeded') ||
+    hay.includes('context length exceeded') ||
+    hay.includes('exceed context limit');
+  if (!hit) return null;
+  // Thông báo của cả hai hãng đều có dạng "<trần> ... <thực tế>" — lấy được thì hiện kèm
+  // cho người dùng thấy vượt bao nhiêu, không lấy được cũng không sao.
+  const nums = (raw ?? '').match(/\b\d{5,}\b/g);
+  const size =
+    nums && nums.length >= 2
+      ? ` (${Number(nums[1]).toLocaleString('vi-VN')} / ${Number(nums[0]).toLocaleString('vi-VN')} token)`
+      : '';
+  return (
+    `Phiên đã đầy context${size} — lịch sử hội thoại vượt trần prompt của model. ` +
+    'Ngữ cảnh đã được dọn: cứ gõ tiếp yêu cầu ngay tại đây, lượt sau chạy trên ngữ cảnh mới ' +
+    'kèm tóm tắt việc đang làm (không cần mở tab khác). Đỡ tái diễn: bớt MCP (--no-mcp), khai ' +
+    '.claude/skills/.bow-skip cho skill không dùng, đọc file theo đoạn thay vì cat cả file.'
   );
 }
 

@@ -2,7 +2,7 @@
 import { buildTaskBrief, type TaskInput } from '../input/task.js';
 import { parseJiraRef } from '../input/jira-ref.js';
 import { fetchJiraTicketImages, fetchJiraTicketVideos } from '../input/jira-attachments.js';
-import { runAgent, type AgentEvent } from '../core/runner.js';
+import { runAgent, contextOverflowHint, type AgentEvent } from '../core/runner.js';
 import { createTicketWorktree, listWorktrees, removeTicketWorktree } from '../core/gitWorktree.js';
 import { config } from '../config/env.js';
 import { getProfile, profileNames } from '../profiles/index.js';
@@ -288,7 +288,7 @@ async function runTick(): Promise<void> {
       if (ev.type === 'text') process.stdout.write(`🤖 ${ev.text}\n`);
       else if (ev.type === 'tool') process.stdout.write(`🔧 ${ev.describe}\n`);
       else if (ev.type === 'result') process.stdout.write(`✅ Xong · $${ev.costUsd.toFixed(4)}\n`);
-      else if (ev.type === 'error') process.stdout.write(`⚠️  ${ev.subtype}\n`);
+      else if (ev.type === 'error') process.stdout.write(`⚠️  ${ev.hint ?? ev.subtype}\n`);
     },
   });
 }
@@ -332,7 +332,7 @@ async function runSprintScanCommand(args: ParsedArgs): Promise<void> {
         process.stdout.write(fmtTokenBreakdown(ev));
         break;
       case 'error':
-        process.stdout.write(`⚠️  Kết thúc bất thường: ${ev.subtype}\n`);
+        process.stdout.write(`⚠️  ${ev.hint ?? `Kết thúc bất thường: ${ev.subtype}`}\n`);
         break;
     }
   };
@@ -649,7 +649,7 @@ async function main(): Promise<void> {
           process.stdout.write(fmtTokenBreakdown(ev));
           break;
         case 'error':
-          process.stdout.write(`⚠️  Kết thúc bất thường: ${ev.subtype}\n`);
+          process.stdout.write(`⚠️  ${ev.hint ?? `Kết thúc bất thường: ${ev.subtype}`}\n`);
           break;
       }
     },
@@ -688,6 +688,7 @@ async function promptApproval(
 }
 
 main().catch((err: unknown) => {
-  process.stderr.write(`\n❌ ${(err as Error).message}\n`);
+  const msg = (err as Error).message;
+  process.stderr.write(`\n❌ ${contextOverflowHint(msg) ?? msg}\n`);
   process.exit(1);
 });

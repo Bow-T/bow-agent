@@ -57,7 +57,10 @@ export type WebEvent =
       text: string;
     }
   | { type: 'done'; result: string | null }
-  | { type: 'fatal'; message: string };
+  // `contextOverflow` = phiên chết vì tràn context window. Tab nhận cờ này thì tự dọn
+  // conversationId + gửi kèm tóm tắt ở lượt sau (xem web/TaskPane.tsx), người dùng không
+  // phải mở tab mới.
+  | { type: 'fatal'; message: string; contextOverflow?: boolean };
 
 interface PendingApproval {
   resolve: (approved: boolean) => void;
