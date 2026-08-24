@@ -114,7 +114,7 @@ export interface TaskPaneProps {
    * Báo lên App phần state per-tab mà UI GLOBAL cần đọc (header đồng hồ lượt chạy + panel
    * Lịch sử tô cuộc đang mở). Bước 1: 1 tab nên App chỉ mirror của tab hiển thị.
    */
-  onStateChange: (s: { running: boolean; runStartedAt: number | null; lastRunMs: number | null; activeConvId: string | null; title: string; model: string; claudeProfile: string; usage: UsageSnapshot | null; usageLoading: boolean; pendingCount: number; hasContent: boolean; agents: AgentSummary[] }) => void;
+  onStateChange: (s: { running: boolean; runStartedAt: number | null; lastRunMs: number | null; activeConvId: string | null; title: string; model: string; claudeProfile: string; provider: string; usage: UsageSnapshot | null; usageLoading: boolean; pendingCount: number; hasContent: boolean; agents: AgentSummary[] }) => void;
 }
 
 /**
@@ -163,6 +163,8 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
     effort: tabKey('bow-effort', tabId),
     profile: tabKey('bow-profile', tabId),
     claudeProfile: tabKey('bow-claudeProfile', tabId),
+    provider: tabKey('bow-provider', tabId),
+    providerProfile: tabKey('bow-provider-profile', tabId),
     autoApprove: tabKey('bow-auto-approve', tabId),
     autopilot: tabKey('bow-autopilot', tabId),
   };
@@ -174,8 +176,100 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
   const [selectedModel, setSelectedModel] = useState(
     () => localStorage.getItem(K.model) || (cfg?.isQcMode ? 'claude-sonnet-5' : 'claude-opus-4-8')
   );
+  // AI của tab (Claude / Grok…). Server quyết mặc định (BOW_PROVIDER); admin đổi per-tab.
+  const [selectedProvider, setSelectedProvider] = useState(
+    () => localStorage.getItem(K.provider) || cfg?.provider || 'anthropic'
+  );
+  // Tài khoản gateway của tab (nhiều acc Grok, như nhiều profile Claude).
+  const [selectedProviderProfile, setSelectedProviderProfile] = useState(
+    () => localStorage.getItem(K.providerProfile) || 'default'
+  );
   const [effort, setEffort] = useState(() => localStorage.getItem(K.effort) || 'high');
   const [profile, setProfile] = useState(() => localStorage.getItem(K.profile) || 'auto');
+  /**
+   * Model của AI đang chọn ở tab này. null = Claude (danh sách model Claude như cũ).
+   * cfg.providers chỉ trả cho admin; khách LAN rơi về cfg.providerModels của server.
+   */
+  const tabProviderModels =
+    cfg?.providers?.find((p) => p.id === selectedProvider)?.models ??
+    (selectedProvider !== 'anthropic' ? cfg?.providerModels ?? null : null);
+  /**
+   * Danh sách AI hiện trong dropdown. LUÔN hiện đủ (kể cả cái chưa cấu hình) để người dùng
+   * biết bow chạy được AI nào — ẩn đi thì không ai biết Grok tồn tại. Cái chưa cấu hình gắn
+   * nhãn rõ và khi bấm sẽ chỉ dẫn thiếu gì, KHÔNG đổi im lặng rồi để server bỏ qua.
+   */
+  const providerList = cfg?.providers ?? [];
+  /** AI ngoài (chạy qua gateway) — hiện chỉ có một; dùng cho ô "Tài khoản" và chip tóm tắt. */
+  const gatewayProvider = providerList.find((p) => p.id !== 'anthropic');
+  const providerProfiles = cfg?.providerProfiles ?? [];
+  /** Tài khoản gateway tab này đang chọn đã có token chưa (⚠️/✓ như tài khoản Claude). */
+  const tabGatewayAuthed = providerProfiles.find((p) => p.name === selectedProviderProfile)?.hasToken ?? false;
+  /** Tab vừa yêu cầu đổi sang AI ngoài nhưng nó chưa đăng nhập — đổi sau khi kết nối xong. */
+  const pendingProviderRef = useRef<string | null>(null);
+  /** Tài khoản gateway vừa tạo — tab chuyển sang dùng nó sau khi đăng nhập xong. */
+  const pendingProviderProfileRef = useRef<string | null>(null);
+  /**
+   * Mở PANEL ĐĂNG NHẬP của AI ngoài — cùng modal với đăng nhập Claude, chỉ khác phương thức
+   * (token gateway thay vì OAuth/API key). Token đến từ .env thì báo rõ, vì lưu qua web sẽ
+   * không có tác dụng (env luôn thắng file).
+   */
+  const openGatewayLogin = async (profileName = selectedProviderProfile) => {
+    let info: {
+      profiles: { name: string; baseUrl: string; hasToken: boolean }[];
+      fromEnv: boolean;
+      defaultBaseUrl: string;
+    } | null = null;
+    try {
+      const r = await apiFetch('/api/provider');
+      if (r.ok) info = await r.json();
+    } catch {
+      /* không đọc được thì vẫn mở form, POST sẽ báo lỗi cụ thể */
+    }
+    if (info?.fromEnv) {
+      await showClaudeAlert(
+        'Token đang lấy từ .env',
+        'BOW_PROVIDER_TOKEN (hoặc XAI_API_KEY) đang set trong môi trường nên nó thắng. Muốn đổi thì sửa .env rồi khởi động lại bow.',
+      );
+      return;
+    }
+    const existing = (info?.profiles ?? []).find((p) => p.name === profileName);
+    setAuthModal({
+      profile: profileName,
+      provider: gatewayProvider?.id ?? 'grok',
+      providerLabel: gatewayProvider?.label ?? 'Grok',
+      mode: 'gateway',
+      gatewayUrl: existing?.baseUrl ?? info?.defaultBaseUrl ?? '',
+      gatewayHasToken: Boolean(existing?.hasToken),
+      tokenValue: '',
+      tokenLoading: false,
+      tokenError: '',
+    });
+  };
+  // Kết nối xong (cfg nạp lại → ready) thì mới thật sự đổi tab sang AI đó. Huỷ giữa chừng =
+  // tab giữ nguyên AI cũ, không kẹt ở một AI chưa đăng nhập.
+  useEffect(() => {
+    if (pendingProviderRef.current && gatewayProvider?.ready) {
+      setSelectedProvider(pendingProviderRef.current);
+      pendingProviderRef.current = null;
+    }
+  }, [gatewayProvider?.ready]);
+  // Tài khoản gateway vừa tạo xong (đã có token) → tab chuyển sang dùng nó. Bỏ dở giữa chừng
+  // thì tab giữ tài khoản cũ, không trỏ vào một tài khoản rỗng.
+  useEffect(() => {
+    const list = cfg?.providerProfiles ?? [];
+    if (list.length === 0) return;
+    const pending = pendingProviderProfileRef.current;
+    if (pending && list.some((p) => p.name === pending && p.hasToken)) {
+      setSelectedProviderProfile(pending);
+      pendingProviderProfileRef.current = null;
+      return;
+    }
+    // Tài khoản tab đang trỏ không tồn tại (vừa đặt tên khác, hoặc vừa bị xoá) → về acc còn dùng được.
+    if (!list.some((p) => p.name === selectedProviderProfile)) {
+      const usable = list.find((p) => p.hasToken) ?? list[0];
+      if (usable) setSelectedProviderProfile(usable.name);
+    }
+  }, [cfg?.providerProfiles, selectedProviderProfile]);
   // Autopilot A–Z (CHỈ admin, server cưỡng chế lại): nới cổng cho thao tác git-recoverable +
   // checkpoint/journal để hoàn tác. Per-tab, lưu localStorage.
   const [autopilot, setAutopilot] = useState(() => localStorage.getItem(K.autopilot) === '1');
@@ -299,6 +393,8 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
   // ── Đồng bộ localStorage per-tab ──
   useEffect(() => { localStorage.setItem(K.task, task); }, [K.task, task]);
   useEffect(() => { localStorage.setItem(K.model, selectedModel); }, [K.model, selectedModel]);
+  useEffect(() => { localStorage.setItem(K.provider, selectedProvider); }, [K.provider, selectedProvider]);
+  useEffect(() => { localStorage.setItem(K.providerProfile, selectedProviderProfile); }, [K.providerProfile, selectedProviderProfile]);
   useEffect(() => { localStorage.setItem(K.effort, effort); }, [K.effort, effort]);
   useEffect(() => { localStorage.setItem(K.profile, profile); }, [K.profile, profile]);
   useEffect(() => { localStorage.setItem(K.claudeProfile, selectedClaudeProfile); }, [K.claudeProfile, selectedClaudeProfile]);
@@ -314,6 +410,18 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
   useEffect(() => {
     if (cfg?.isQcMode && !localStorage.getItem(K.model)) setSelectedModel('claude-sonnet-5');
   }, [cfg?.isQcMode, K.model]);
+  // Tab chưa từng chọn AI → theo mặc định server (BOW_PROVIDER) khi cfg về.
+  useEffect(() => {
+    if (cfg?.provider && !localStorage.getItem(K.provider)) setSelectedProvider(cfg.provider);
+  }, [cfg?.provider, K.provider]);
+  // Model đang chọn phải thuộc AI đang chọn: đổi AI (hoặc mở lại tab cũ với localStorage lệch)
+  // thì kéo model về mặc định của AI đó — gateway không biết 'claude-*' và ngược lại.
+  useEffect(() => {
+    setSelectedModel((m) => {
+      if (tabProviderModels) return m.startsWith('claude') ? tabProviderModels.main : m;
+      return m.startsWith('claude') ? m : cfg?.isQcMode ? 'claude-sonnet-5' : 'claude-opus-4-8';
+    });
+  }, [tabProviderModels?.main, cfg?.isQcMode]);
 
   /**
    * Làm mới hạn mức gói của ĐÚNG tài khoản tab này qua /api/usage (độc lập lượt chạy). Chỉ
@@ -827,6 +935,8 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
       language,
       cwd: cwd.trim() || undefined,
       model: selectedModel,
+      provider: selectedProvider,
+      providerProfile: selectedProviderProfile,
       claudeProfile: selectedClaudeProfile,
       useSubagents,
       autopilot,
@@ -851,6 +961,8 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
           language,
           cwd: cwd.trim() || undefined,
           model: selectedModel,
+          provider: selectedProvider,
+          providerProfile: selectedProviderProfile,
           claudeProfile: selectedClaudeProfile,
           useSubagents,
           autopilot,
@@ -1423,13 +1535,13 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
   useEffect(() => {
     onStateChange({
       running, runStartedAt, lastRunMs, activeConvId, title: deriveTitle(items),
-      model: selectedModel, claudeProfile: selectedClaudeProfile, usage, usageLoading,
+      model: selectedModel, claudeProfile: selectedClaudeProfile, provider: selectedProvider, usage, usageLoading,
       pendingCount: pending.length + questions.length, hasContent: items.length > 0,
       // Đội agent (SOL/VEGA/…) — nav trái vẽ Cosmos map mini, màn AGENTS đọc trạng thái thật.
       agents: agentNodes.map((a) => ({ id: a.id, label: a.label, role: a.role, type: a.type, active: a.active })),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onStateChange, running, runStartedAt, lastRunMs, activeConvId, items, selectedModel, selectedClaudeProfile, usage, usageLoading, pending.length, questions.length]);
+  }, [onStateChange, running, runStartedAt, lastRunMs, activeConvId, items, selectedModel, selectedClaudeProfile, selectedProvider, usage, usageLoading, pending.length, questions.length]);
 
   return (
     <div className="task-pane" hidden={!visible}>
@@ -1874,7 +1986,20 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
                 ⚙ <b>{modelName}</b> · {modeLabel} · {effortLabel}
               </button>
 
-              {cfg?.isAdmin && cfg?.claudeProfiles && cfg.claudeProfiles.length > 0 && (
+              {cfg?.isAdmin && selectedProvider !== 'anthropic' && (
+                <button
+                  type="button"
+                  className="cfg-chip"
+                  onClick={() => void openGatewayLogin()}
+                  title={gatewayProvider?.ready ? 'Đổi token / URL gateway' : 'Chưa kết nối gateway — bấm để nhập token'}
+                >
+                  <span className={`cfg-auth ${gatewayProvider?.ready ? 'ok' : 'bad'}`}>
+                    🔌 {gatewayProvider?.label ?? 'Gateway'}
+                  </span>
+                  {gatewayProvider?.ready ? ' ✓' : ' ⚠️'}
+                </button>
+              )}
+              {cfg?.isAdmin && selectedProvider === 'anthropic' && cfg?.claudeProfiles && cfg.claudeProfiles.length > 0 && (
                 <button
                   type="button"
                   className="cfg-chip"
@@ -1953,27 +2078,87 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
             <label>
               {language === 'vi' ? 'Mô hình:' : 'Model:'}
               <PixelSelect
-                value="claude-sonnet-5"
+                value={tabProviderModels?.main ?? 'claude-sonnet-5'}
                 onChange={() => {}}
                 disabled
-                options={[{ value: 'claude-sonnet-5', label: 'Sonnet 5' }]}
+                options={[
+                  tabProviderModels
+                    ? { value: tabProviderModels.main, label: tabProviderModels.main }
+                    : { value: 'claude-sonnet-5', label: 'Sonnet 5' },
+                ]}
               />
             </label>
           ) : (
+          <>
+          {cfg?.isAdmin && providerList.length > 1 && (
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+              AI:
+              <PixelSelect
+                value={selectedProvider}
+                disabled={running}
+                onChange={(id) => {
+                  const picked = providerList.find((p) => p.id === id);
+                  // Chưa cấu hình → server sẽ bỏ qua và chạy AI mặc định. Nói thiếu gì rồi GIỮ
+                  // NGUYÊN lựa chọn cũ, thay vì đổi im lặng để người dùng tưởng đã đổi.
+                  if (picked && !picked.ready) {
+                    if (picked.id === 'anthropic') {
+                      void showClaudeAlert(
+                        'Claude chưa đăng nhập',
+                        'Tài khoản Claude của tab này chưa đăng nhập. Bấm icon khoá ở ô "Tài khoản" để đăng nhập.',
+                      );
+                      return;
+                    }
+                    // Chưa đăng nhập gateway → mở panel đăng nhập; xong mới đổi sang AI đó.
+                    pendingProviderRef.current = id;
+                    void openGatewayLogin();
+                    return;
+                  }
+                  setSelectedProvider(id);
+                }}
+                options={providerList.map((p) => ({
+                  value: p.id,
+                  label: p.ready ? p.label : `${p.label} (chưa cấu hình)`,
+                }))}
+              />
+              {providerList.find((p) => p.id === selectedProvider)?.ready === false && (
+                <span
+                  title={
+                    selectedProvider === 'anthropic'
+                      ? 'Chưa đăng nhập Claude CLI'
+                      : 'Chưa có token gateway (BOW_PROVIDER_TOKEN) — server sẽ chạy AI mặc định'
+                  }
+                  style={{ color: '#ff1744', fontWeight: 'bold', fontSize: '13px', cursor: 'help' }}
+                >
+                  ⚠️
+                </span>
+              )}
+            </label>
+          )}
           <label>
             {language === 'vi' ? 'Mô hình:' : 'Model:'}
             <PixelSelect
               value={selectedModel}
               onChange={setSelectedModel}
               disabled={running}
-              options={[
-                { value: 'claude-fable-5', label: 'Fable 5' },
-                { value: 'claude-opus-4-8', label: 'Opus 4.8' },
-                { value: 'claude-sonnet-5', label: 'Sonnet 5' },
-                { value: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
-              ]}
+              options={
+                tabProviderModels
+                  ? [
+                      { value: tabProviderModels.main, label: tabProviderModels.main },
+                      {
+                        value: tabProviderModels.fast,
+                        label: `${tabProviderModels.fast} ${language === 'vi' ? '(rẻ)' : '(cheap)'}`,
+                      },
+                    ]
+                  : [
+                      { value: 'claude-fable-5', label: 'Fable 5' },
+                      { value: 'claude-opus-4-8', label: 'Opus 4.8' },
+                      { value: 'claude-sonnet-5', label: 'Sonnet 5' },
+                      { value: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
+                    ]
+              }
             />
           </label>
+          </>
           )}
           <label>
             {language === 'vi' ? 'Hồ sơ:' : 'Profile:'}
@@ -2049,7 +2234,92 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
           </div>
           {/* Hàng 2 — TÀI KHOẢN & AGENT: profile Claude, effort, đội agent, và repo (đẩy phải). */}
           <div className="control-row" data-group={language === 'vi' ? 'Tác nhân' : 'Agent'}>
-          {cfg?.isAdmin && cfg?.claudeProfiles && cfg.claudeProfiles.length > 0 && (
+          {/* AI ngoài không có "tài khoản Claude" — cùng ô này chuyển thành kết nối gateway,
+              để chỗ đăng nhập của mọi AI nằm chung một nơi. */}
+          {cfg?.isAdmin && selectedProvider !== 'anthropic' && (
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+              {language === 'vi' ? 'Tài khoản:' : 'Account:'}
+              <PixelSelect
+                value={selectedProviderProfile}
+                disabled={running}
+                onDelete={async (nameToDelete) => {
+                  setTimeout(async () => {
+                    const confirmDel = await showClaudePrompt(
+                      'Xác nhận Xóa',
+                      `Xoá tài khoản '${gatewayProvider?.label ?? 'Grok'}-${nameToDelete}' (gỡ token đã lưu)? Nhập chữ "xoa" để xác nhận:`,
+                    );
+                    if (confirmDel !== 'xoa') {
+                      if (confirmDel !== null) await showClaudeAlert('Lỗi', 'Xác nhận xóa không chính xác.');
+                      return;
+                    }
+                    try {
+                      const res = await apiFetch(`/api/provider/${encodeURIComponent(nameToDelete)}`, { method: 'DELETE' });
+                      if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        await showClaudeAlert('Lỗi', err.error || 'Không xoá được tài khoản.');
+                        return;
+                      }
+                      const configRes = await apiFetch('/api/config');
+                      if (configRes.ok) setCfg(await configRes.json());
+                      if (selectedProviderProfile === nameToDelete) setSelectedProviderProfile('default');
+                    } catch (e) {
+                      console.error('Lỗi khi xoá tài khoản gateway:', e);
+                    }
+                  }, 100);
+                }}
+                onChange={(newName) => {
+                  if (newName === '__new__') {
+                    // Giống luồng "+ Thêm tài khoản" của Claude: hỏi tên rồi mở panel đăng nhập.
+                    setTimeout(async () => {
+                      const name = await showClaudePrompt(
+                        'Tài khoản mới',
+                        `Nhập tên tài khoản ${gatewayProvider?.label ?? 'Grok'} mới (chữ thường không dấu, số, gạch ngang — ví dụ: personal, work):`,
+                      );
+                      if (!name) return;
+                      const cleaned = name.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
+                      if (!cleaned) {
+                        await showClaudeAlert('Lỗi', 'Tên tài khoản không hợp lệ.');
+                        return;
+                      }
+                      pendingProviderProfileRef.current = cleaned;
+                      void openGatewayLogin(cleaned);
+                    }, 100);
+                    return;
+                  }
+                  setSelectedProviderProfile(newName);
+                }}
+                options={[
+                  ...(providerProfiles.length > 0
+                    ? providerProfiles
+                    : [{ name: 'default', baseUrl: '', hasToken: false }]
+                  ).map((p) => ({
+                    value: p.name,
+                    label:
+                      (p.name === 'default'
+                        ? `${(gatewayProvider?.label ?? 'grok').toLowerCase()} (Default)`
+                        : `${(gatewayProvider?.label ?? 'grok').toLowerCase()}-${p.name}`) +
+                      (p.hasToken ? '' : ' (chưa login)'),
+                  })),
+                  { value: '__new__', label: '+ Thêm tài khoản...' },
+                ]}
+              />
+              {tabGatewayAuthed ? (
+                <span title={`Tài khoản '${selectedProviderProfile}' đã có token gateway`} style={{ color: '#00e676', fontWeight: 'bold', fontSize: '13px', cursor: 'help' }}>✓</span>
+              ) : (
+                <span title={`Tài khoản '${selectedProviderProfile}' CHƯA đăng nhập! Bấm khoá để nhập token gateway.`} style={{ color: '#ff1744', fontWeight: 'bold', fontSize: '13px', cursor: 'help' }}>⚠️</span>
+              )}
+              <button
+                type="button"
+                className={`btn icon-only${tabGatewayAuthed ? '' : ' allow'}`}
+                disabled={running}
+                title={tabGatewayAuthed ? `Đổi token / URL gateway của '${selectedProviderProfile}'` : `Tài khoản '${selectedProviderProfile}' chưa đăng nhập — bấm để nhập token gateway`}
+                onClick={() => void openGatewayLogin()}
+              >
+                <Icon name="lock" size={15} />
+              </button>
+            </label>
+          )}
+          {cfg?.isAdmin && selectedProvider === 'anthropic' && cfg?.claudeProfiles && cfg.claudeProfiles.length > 0 && (
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
               {language === 'vi' ? 'Tài khoản:' : 'Account:'}
               <PixelSelect
