@@ -18,6 +18,7 @@ import type {
   Mode,
   PendingApproval,
   PendingQuestion,
+  TokenUsageReport,
   UsageSnapshot,
   WebEvent,
 } from './types.js';
@@ -114,7 +115,7 @@ export interface TaskPaneProps {
    * Báo lên App phần state per-tab mà UI GLOBAL cần đọc (header đồng hồ lượt chạy + panel
    * Lịch sử tô cuộc đang mở). Bước 1: 1 tab nên App chỉ mirror của tab hiển thị.
    */
-  onStateChange: (s: { running: boolean; runStartedAt: number | null; lastRunMs: number | null; activeConvId: string | null; title: string; model: string; claudeProfile: string; provider: string; usage: UsageSnapshot | null; usageLoading: boolean; pendingCount: number; hasContent: boolean; agents: AgentSummary[] }) => void;
+  onStateChange: (s: { running: boolean; runStartedAt: number | null; lastRunMs: number | null; activeConvId: string | null; title: string; model: string; claudeProfile: string; provider: string; usage: UsageSnapshot | null; usageLoading: boolean; tokenUsage: TokenUsageReport | null; pendingCount: number; hasContent: boolean; agents: AgentSummary[] }) => void;
 }
 
 /**
@@ -286,6 +287,11 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
   // account + context của chính cuộc này). App hiển thị usage của tab đang mở (báo qua onStateChange).
   const [usage, setUsage] = useState<UsageSnapshot | null>(null);
   const [usageLoading, setUsageLoading] = useState(false);
+  /**
+   * Token đã tiêu của AI ngoài (Grok…). Provider ngoài KHÔNG có hạn mức gói để đọc — nó tính
+   * tiền theo token — nên tab dùng gateway hiển thị số này thay cho các thanh hạn mức.
+   */
+  const [tokenUsage, setTokenUsage] = useState<TokenUsageReport | null>(null);
   // Cosmos: vũ trụ tri thức toàn màn hình. Chỉ fetch filetree khi mở (lazy) + load component qua React.lazy.
   const [cosmosOpen, setCosmosOpen] = useState(false);
   const [fileTree, setFileTree] = useState<{ path: string; lines: number }[]>([]);
@@ -431,6 +437,16 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
    */
   const refreshUsage = () => {
     setUsageLoading(true);
+    // Tab chạy AI ngoài: /api/usage vô nghĩa (không có hạn mức gói) → đọc token đã tiêu.
+    if (selectedProvider !== 'anthropic') {
+      apiFetch(`/api/usage/tokens?provider=${encodeURIComponent(selectedProvider)}`)
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+        .then((d: { usage: TokenUsageReport }) => setTokenUsage(d.usage))
+        .catch(() => {})
+        .finally(() => setUsageLoading(false));
+      return;
+    }
+    setTokenUsage(null);
     apiFetch(`/api/usage?model=${encodeURIComponent(selectedModel)}&claudeProfile=${encodeURIComponent(selectedClaudeProfile)}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then((d: { usage: UsageSnapshot }) => {
@@ -448,7 +464,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
   useEffect(() => {
     refreshUsage();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedClaudeProfile, selectedModel]);
+  }, [selectedClaudeProfile, selectedModel, selectedProvider]);
 
   // Expose refreshUsage cho App (nút "Làm mới" trong panel usage global gọi tab đang mở).
   const refreshUsageRef = useRef(refreshUsage);
@@ -1544,13 +1560,13 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
   useEffect(() => {
     onStateChange({
       running, runStartedAt, lastRunMs, activeConvId, title: deriveTitle(items),
-      model: selectedModel, claudeProfile: selectedClaudeProfile, provider: selectedProvider, usage, usageLoading,
+      model: selectedModel, claudeProfile: selectedClaudeProfile, provider: selectedProvider, usage, usageLoading, tokenUsage,
       pendingCount: pending.length + questions.length, hasContent: items.length > 0,
       // Đội agent (SOL/VEGA/…) — nav trái vẽ Cosmos map mini, màn AGENTS đọc trạng thái thật.
       agents: agentNodes.map((a) => ({ id: a.id, label: a.label, role: a.role, type: a.type, active: a.active })),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onStateChange, running, runStartedAt, lastRunMs, activeConvId, items, selectedModel, selectedClaudeProfile, selectedProvider, usage, usageLoading, pending.length, questions.length]);
+  }, [onStateChange, running, runStartedAt, lastRunMs, activeConvId, items, selectedModel, selectedClaudeProfile, selectedProvider, usage, usageLoading, tokenUsage, pending.length, questions.length]);
 
   return (
     <div className="task-pane" hidden={!visible}>

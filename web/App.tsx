@@ -15,11 +15,13 @@ import type {
   Mode,
   NavSection,
   PendingApproval,
+  TokenUsageReport,
   ToolDetail,
   UsageSnapshot,
 } from './types.js';
 import { AppNav } from './AppNav.js';
 import { NavSectionView } from './panels/NavSectionView.js';
+import { TokenUsageView } from './panels/TokenUsageView.js';
 
 /** 2 phong cách UI: 'brutal' (Neo Brutalism, kem) + 'figma' (tool UI dark kiểu app Figma). */
 export type Theme = 'brutal' | 'figma';
@@ -478,6 +480,8 @@ interface PaneState {
   /** Hạn mức gói + context của TÀI KHOẢN tab này (per-tab). App hiển thị của tab đang mở. */
   usage: UsageSnapshot | null;
   usageLoading: boolean;
+  /** Token đã tiêu của AI ngoài (Grok…) — tab dùng gateway hiển thị cái này thay hạn mức gói. */
+  tokenUsage: TokenUsageReport | null;
   /** Số thẻ đang chờ người dùng (duyệt tool + câu hỏi) — tab-bar tô sáng tab cần bấm. */
   pendingCount: number;
   /** Tab đã có hội thoại chưa — tab RỖNG thì đóng thẳng, không hỏi xác nhận. */
@@ -485,7 +489,7 @@ interface PaneState {
   /** Đội agent của tab (SOL/VEGA/ORION/LYRA + subagent lạ) — nav trái & màn AGENTS đọc. */
   agents: AgentSummary[];
 }
-const EMPTY_PANE_STATE: PaneState = { running: false, runStartedAt: null, lastRunMs: null, activeConvId: null, title: '', model: 'claude-opus-4-8', claudeProfile: 'default', provider: 'anthropic', usage: null, usageLoading: false, pendingCount: 0, hasContent: false, agents: [] };
+const EMPTY_PANE_STATE: PaneState = { running: false, runStartedAt: null, lastRunMs: null, activeConvId: null, title: '', model: 'claude-opus-4-8', claudeProfile: 'default', provider: 'anthropic', usage: null, usageLoading: false, tokenUsage: null, pendingCount: 0, hasContent: false, agents: [] };
 
 /** So 2 danh sách agent theo id + trạng thái sáng — chỉ re-render khi có sao thật sự đổi. */
 function sameAgents(a: AgentSummary[], b: AgentSummary[]): boolean {
@@ -535,7 +539,7 @@ export function App() {
       const cur = prev[tabId];
       if (cur && cur.running === s.running && cur.runStartedAt === s.runStartedAt &&
           cur.lastRunMs === s.lastRunMs && cur.activeConvId === s.activeConvId && cur.title === s.title &&
-          cur.usage === s.usage && cur.usageLoading === s.usageLoading && cur.pendingCount === s.pendingCount &&
+          cur.usage === s.usage && cur.usageLoading === s.usageLoading && cur.tokenUsage === s.tokenUsage && cur.pendingCount === s.pendingCount &&
           cur.provider === s.provider &&
           cur.hasContent === s.hasContent && sameAgents(cur.agents, s.agents)) {
         return prev; // không đổi → tránh render thừa
@@ -636,6 +640,7 @@ export function App() {
   // tab đang mở → không lẫn số giữa các account. Nút "Làm mới" gọi refreshUsage của tab active.
   const usage = activePane.usage;
   const usageLoading = activePane.usageLoading;
+  const tokenUsage = activePane.tokenUsage;
   // AI của tab đang mở. Provider ngoài (Grok…) trả theo token, KHÔNG có hạn mức phiên kiểu gói
   // Claude → panel/pill đổi thông điệp cho trung thực thay vì hiện "0%/chưa đăng nhập Claude".
   const paneExternalProvider = (activePane.provider ?? 'anthropic') !== 'anthropic';
@@ -3243,7 +3248,7 @@ export function App() {
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
                 <span style={{ fontSize: '12px', color: 'var(--muted)' }}>
                   {paneExternalProvider
-                    ? 'Provider ngoài: tính theo token (pay-as-you-go), không có hạn mức phiên.'
+                    ? 'Tính theo token (pay-as-you-go) — không có hạn mức phiên như gói Claude.'
                     : usage?.subscriptionType
                       ? `Gói: ${usage.subscriptionType.toUpperCase()}`
                       : 'Hạn mức gói claude.ai (dùng chung với Claude Code).'}
@@ -3259,16 +3264,21 @@ export function App() {
                 </button>
               </div>
 
-              {(() => {
+              {/* AI ngoài (Grok…): không có hạn mức gói để vẽ % — hiện TOKEN ĐÃ TIÊU thay thế. */}
+              {paneExternalProvider ? (
+                <TokenUsageView
+                  report={tokenUsage}
+                  loading={usageLoading}
+                  providerLabel={activePane.provider === 'grok' ? 'Grok' : activePane.provider}
+                />
+              ) : (() => {
                 const windows = usage?.rateLimits ?? [];
                 if (windows.length === 0) {
                   return (
                     <div style={{ padding: '18px', textAlign: 'center', color: 'var(--muted)', fontSize: '12px' }}>
                       {usageLoading
                         ? 'Đang đọc hạn mức…'
-                        : paneExternalProvider
-                          ? 'Provider ngoài (Grok…) tính theo token — không có hạn mức phiên như gói Claude. Ngữ cảnh vẫn đo bên dưới.'
-                          : 'Chưa có dữ liệu hạn mức. Thường do dùng API key/Bedrock/Vertex (không áp hạn mức gói) hoặc chưa đăng nhập Claude.'}
+                        : 'Chưa có dữ liệu hạn mức. Thường do dùng API key/Bedrock/Vertex (không áp hạn mức gói) hoặc chưa đăng nhập Claude.'}
                     </div>
                   );
                 }
