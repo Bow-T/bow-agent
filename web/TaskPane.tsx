@@ -518,7 +518,10 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
       else if (it.kind === 'agent') lines.push(`AGENT: ${it.text.trim()}`);
     }
     let out = lines.join('\n');
-    const MAX = 6000; // ~ vài nghìn token; đủ ngữ cảnh mà không quá tốn
+    // AI ngoài (Grok…) bị dọn ngữ cảnh thường xuyên hơn Claude, nên tóm tắt này chính là
+    // TOÀN BỘ trí nhớ còn lại của cuộc — 6.000 ký tự (~1,5k token) quá ít, agent quên việc
+    // rồi đi đoán. Nới lên 20.000 ký tự (~5k token) cho AI ngoài; Claude giữ như cũ.
+    const MAX = selectedProvider !== 'anthropic' ? 20000 : 6000; // ~ vài nghìn token; đủ ngữ cảnh mà không quá tốn
     if (out.length > MAX) out = '…(lược phần đầu)…\n' + out.slice(-MAX);
     return out;
   };
