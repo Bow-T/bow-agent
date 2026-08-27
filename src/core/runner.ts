@@ -16,6 +16,7 @@ import {
   hasProfileAuth,
   resolveModelFor,
   providerEnvPatchFor,
+  providerContextTokens,
   providerReady,
   providerAccessToken,
   providerBaseUrl,
@@ -824,7 +825,7 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   // (guard Bash, chỉ khi là monorepo). Matcher khác nhau nên nối chung vào một
   // mảng PreToolUse không đụng nhau. Đặt read-approve TRƯỚC guard: read tools
   // vô hại, còn guard chỉ nhắm Bash nên thứ tự không ảnh hưởng lẫn nhau.
-  const readApproveHooks = buildReadAutoApproveHook(readAutoTools);
+  const readApproveHooks = buildReadAutoApproveHook(readAutoTools, isForeignSessionStore);
   const hooks = {
     ...monorepoHooks,
     ...(readApproveHooks.length > 0
@@ -873,6 +874,23 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     ...(opts.onQuestion || (isExecuting && opts.onApproval) || isQcMode || isReviewerMode || isBaMode || isDevOpsMode
       ? {
           canUseTool: async (toolName, input, sdkOpts) => {
+            // ── Chặn "ngó sang phiên khác" (MỌI mode, đọc lẫn ghi) ────────────────
+            // Transcript .jsonl của tab khác + kho cấu hình bow (có token) không phải nguồn
+            // tri thức của lượt này. Xem isForeignSessionStore để biết vì sao.
+            {
+              const raw = input as Record<string, unknown>;
+              const touched = [raw.file_path, raw.path, raw.notebook_path, raw.pattern, raw.command, raw.glob];
+              if (touched.some(isForeignSessionStore)) {
+                return {
+                  behavior: 'deny' as const,
+                  message:
+                    'Không được đọc/ghi transcript phiên khác (~/.claude*/projects), kho cấu hình ' +
+                    '~/.bow-agent hay conversations.json — đó là việc của cửa sổ chat khác. Nếu bạn ' +
+                    'thiếu ngữ cảnh của chính cuộc này, hãy HỎI người dùng thay vì đoán từ phiên khác.',
+                };
+              }
+            }
+
             // ── QC Mode: read-only + Skill + Jira (WHITELIST) ─────────────────────
             // R1: dùng WHITELIST thay vì blacklist. Trong QC Mode chỉ cho phép tool ĐỌC
             // (Read/Glob/NotebookRead + MCP read patterns đã whitelist), tool Skill (kích hoạt
@@ -1370,6 +1388,8 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   // Tự nén lịch sử (compact) khi context chạm ngưỡng — để LƯỢT SAU còn chỗ mà chạy, thay vì
   // nổ 400 "maximum prompt length" rồi phải bỏ cả tab. 0 (hoặc >=100) = tắt, tự lo bằng tay.
   const COMPACT_AT = Number(process.env.BOW_COMPACT_AT ?? 80);
+  // Trần context THẬT của AI ngoài (0 = Anthropic → tin số CLI báo). Xem providerContextTokens.
+  const trueContextMax = providerContextTokens(providerId) ?? 0;
   let lastContextPct: number | null = null;
   // Đã vượt TRẦN CỨNG của model chưa. Quan trọng: quá trần thì /compact cũng nổ theo — bản
   // thân việc nén phải gửi cả hội thoại lên cho model tóm tắt. Lúc đó chỉ còn cách dọn
@@ -1390,10 +1410,16 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
     lastEmittedContextAt = nowMs;
     const ctx = await q.getContextUsage().catch(() => null);
     if (!ctx) return;
-    lastContextPct = ctx.percentage ?? null;
     // rawMaxTokens = trần thật của model; maxTokens đã trừ phần dành cho output nên
     // percentage vượt 100% là bình thường, KHÔNG suy ra tràn từ nó.
-    const hardMax = ctx.rawMaxTokens || ctx.maxTokens || 0;
+    // AI NGOÀI: CLI không biết model lạ nên đoán trần 200k (đo thực tế với grok-4.6) trong khi
+    // xAI cho 500k → tin nó thì bow dọn ngữ cảnh khi phiên còn thừa hơn nửa cửa sổ. Lấy trần
+    // khai trong env.ts và tự tính lại % để cả ngưỡng nén lẫn mốc tràn bám trần THẬT.
+    const hardMax = trueContextMax || ctx.rawMaxTokens || ctx.maxTokens || 0;
+    const pct = trueContextMax
+      ? (ctx.totalTokens / trueContextMax) * 100
+      : ctx.percentage ?? null;
+    lastContextPct = pct;
     if (hardMax > 0 && ctx.totalTokens >= hardMax) contextOverTheLimit = true;
     opts.onEvent({
       type: 'usage',
@@ -1401,8 +1427,8 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
         rateLimits: lastRateLimits,
         subscriptionType: lastSubscriptionType,
         contextTokens: ctx.totalTokens ?? null,
-        contextMaxTokens: ctx.maxTokens ?? null,
-        contextPercentage: ctx.percentage ?? null,
+        contextMaxTokens: trueContextMax || ctx.maxTokens || null,
+        contextPercentage: pct,
       },
     });
   };
@@ -1418,7 +1444,10 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
           opts.onSessionId?.(message.session_id);
           // Fail-open: CLI cũ không có control request này thì bỏ qua, ta vẫn còn tầng
           // tự gửi /compact ở cuối lượt bên dưới.
-          void q.applyFlagSettings({ autoCompactEnabled: true }).catch(() => {});
+          // AI ngoài: TẮT auto-compact của CLI — nó nén theo trần nó tự đoán (200k cho grok)
+          // nên co lịch sử sớm gấp 2,5 lần. Việc nén giao cho tầng /compact của bow, canh
+          // theo trần THẬT (trueContextMax). Anthropic giữ nguyên hành vi cũ.
+          void q.applyFlagSettings({ autoCompactEnabled: !usesGateway }).catch(() => {});
         }
         // Nén xong: báo cho người dùng biết lịch sử vừa bị co lại (và co bao nhiêu) — nếu
         // im lặng, họ sẽ tưởng agent tự quên việc.
@@ -1741,6 +1770,28 @@ function looksLikeSessionLimit(errors: string[] | undefined, subtype: string): b
     hay.includes("you've hit your")
   );
 }
+
+/**
+ * True nếu chuỗi (đường dẫn HOẶC lệnh Bash) chạm vào KHO HỘI THOẠI CỦA PHIÊN KHÁC:
+ *   - thư mục `projects/` của mọi config dir Claude (`~/.claude`, `~/.claude-<tên>`) —
+ *     transcript .jsonl của MỌI phiên/tab, nơi SDK lưu lịch sử;
+ *   - `~/.bow-agent/` — kho cấu hình bow (provider.json chứa token gateway, mcp.json…);
+ *   - `conversations/conversations.json` — kho hội thoại bền của web bow.
+ *
+ * Vì sao chặn: khi agent mất ngữ cảnh (phiên bị dọn vì tràn context), nó có xu hướng đi đọc
+ * transcript các phiên gần nhất để "đoán đang làm gì" — và vớ đúng việc của TAB KHÁC rồi làm
+ * tiếp việc đó (đã bắt tận tay trong phiên 43639515 ngày 27/08). Mất ngữ cảnh thì phải HỎI
+ * người dùng, không được bới việc của cửa sổ khác. Chặn kèm cả token trong ~/.bow-agent.
+ */
+export function isForeignSessionStore(s: unknown): boolean {
+  if (typeof s !== 'string' || !s) return false;
+  return (
+    /\.claude[a-z0-9._-]*[\/\\]projects[\/\\]/i.test(s) ||
+    /\.bow-agent[\/\\]/i.test(s) ||
+    /conversations[\/\\]conversations\.json/i.test(s)
+  );
+}
+
 
 /**
  * Nhận diện lỗi TRÀN CONTEXT WINDOW (lịch sử hội thoại vượt trần prompt của model) và trả

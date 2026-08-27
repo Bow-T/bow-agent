@@ -69,15 +69,45 @@ function runHookScript(
  * Hook trả permissionDecision:'allow' cho tool nằm trong allowlist; tool khác trả
  * output rỗng (pass-through) để không can thiệp cổng duyệt của canUseTool.
  * Matcher để trống (match mọi tool) — allowlist được kiểm bên trong theo tool_name.
+ *
+ * `isBlocked` (tuỳ chọn) là chốt chặn chạy TRƯỚC allowlist: tool nào chạm đường dẫn bị cấm
+ * (transcript phiên khác, kho cấu hình bow) đều DENY ngay tại hook. Phải nằm ở đây chứ không
+ * chỉ trong canUseTool, vì hook 'allow' được xử TRƯỚC canUseTool — Read/Grep/Glob auto-duyệt
+ * sẽ không bao giờ chạm tới cổng đó.
  */
-export function buildReadAutoApproveHook(readTools: string[]): HookCallbackMatcher[] {
+export function buildReadAutoApproveHook(
+  readTools: string[],
+  isBlocked?: (value: unknown) => boolean,
+): HookCallbackMatcher[] {
   const allow = new Set(readTools);
-  if (allow.size === 0) return [];
+  if (allow.size === 0 && !isBlocked) return [];
   return [
     {
       hooks: [
         async (input) => {
           const name = (input as { tool_name?: string }).tool_name;
+          const toolInput = (input as { tool_input?: Record<string, unknown> }).tool_input ?? {};
+          if (isBlocked) {
+            const touched = [
+              toolInput.file_path,
+              toolInput.path,
+              toolInput.notebook_path,
+              toolInput.pattern,
+              toolInput.glob,
+              toolInput.command,
+            ];
+            if (touched.some(isBlocked)) {
+              return {
+                hookSpecificOutput: {
+                  hookEventName: 'PreToolUse' as const,
+                  permissionDecision: 'deny' as const,
+                  permissionDecisionReason:
+                    'Đường dẫn này là kho hội thoại/cấu hình của phiên khác — không đọc/ghi. ' +
+                    'Thiếu ngữ cảnh thì hỏi người dùng, đừng lấy việc của cửa sổ chat khác.',
+                },
+              };
+            }
+          }
           if (name && allow.has(name)) {
             return {
               hookSpecificOutput: {

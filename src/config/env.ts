@@ -81,6 +81,17 @@ const PROVIDER_MODELS: Record<Exclude<ProviderId, 'anthropic'>, { main: string; 
   grok: { main: 'grok-4.6', fast: 'grok-build-0.1' },
 };
 
+/**
+ * Trần prompt THẬT (token) của provider ngoài. PHẢI khai ở đây vì CLI không biết model lạ:
+ * đo thực tế `getContextUsage()` với grok-4.6 thì CLI đoán maxTokens = 200.000, trong khi xAI
+ * báo lỗi "This model's maximum prompt length is 500000" — tức trần thật gấp 2,5 lần. Tin con
+ * số CLI đoán thì bow tuyên bố "tràn context" lúc phiên còn thừa hơn nửa cửa sổ → tab bị dọn
+ * ngữ cảnh (mất trí nhớ) sớm gấp mấy lần cần thiết. Ghi đè bằng BOW_PROVIDER_CONTEXT_TOKENS.
+ */
+const PROVIDER_CONTEXT_TOKENS: Record<Exclude<ProviderId, 'anthropic'>, number> = {
+  grok: 500_000,
+};
+
 /** Provider đang chạy. Không set (hoặc set sai) → 'anthropic' như cũ. */
 export function activeProviderId(): ProviderId {
   const raw = (optional('BOW_PROVIDER') ?? 'anthropic').toLowerCase();
@@ -382,6 +393,17 @@ export function providerModelTiers(id: ProviderId): { main: string; fast: string
     main: optional('BOW_PROVIDER_MODEL') ?? base.main,
     fast: optional('BOW_PROVIDER_FAST_MODEL') ?? base.fast,
   };
+}
+
+/**
+ * Trần prompt THẬT của provider (token) — dùng THAY cho con số CLI tự đoán khi chạy AI ngoài.
+ * Anthropic → null (CLI biết đúng trần model của chính hãng, đừng đụng vào).
+ */
+export function providerContextTokens(id: ProviderId): number | null {
+  if (id === 'anthropic') return null;
+  const override = Number(optional('BOW_PROVIDER_CONTEXT_TOKENS') ?? '');
+  if (Number.isFinite(override) && override > 0) return override;
+  return PROVIDER_CONTEXT_TOKENS[id] ?? null;
 }
 
 /**
