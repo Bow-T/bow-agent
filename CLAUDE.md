@@ -40,6 +40,28 @@ trỏ vào `MEMORY.md`. Thư mục này được commit theo git để đồng b
 - **MCP tách khỏi profile.** MCP chung lưu `~/.bow-agent/mcp.json` (không phải `~/.claude.json`).
 - **Cổng an toàn duy nhất** = `canUseTool` trong `runner.ts`: tool đọc + Bash an toàn tự chạy;
   mọi thao tác GHI qua cổng duyệt. Đừng mở đường ghi vòng qua cổng này.
+- **Ngữ cảnh KHÔNG vô hạn — bow tự nén.** `emitContextUsage` (`runner.ts`) đo % context mỗi lượt:
+  chạm `BOW_COMPACT_AT` (mặc định 80%) thì xếp `/compact` ngay SAU lượt vừa xong (không cắt ngang);
+  vượt trần cứng thì phát `context_overflow` → tab dọn ngữ cảnh, lượt sau chạy tiếp bằng tóm tắt
+  (`resumeContext`). Trần context của AI ngoài khai THẬT ở `providerContextTokens` (`env.ts`,
+  grok = 500k, ghi đè bằng `BOW_PROVIDER_CONTEXT_TOKENS`) — **đừng tin số CLI tự đoán**, và tắt
+  autoCompact của CLI cho provider ngoài (nó nén theo trần đoán, sớm gấp ~2,5 lần).
+- **Mỗi tab một phiên — CẤM đọc chéo hội thoại.** Hook `PreToolUse` (`src/skills/hooks.ts`) *và*
+  `canUseTool` cùng chặn Read/Grep/Glob/Bash chạm `.claude*/projects`, `~/.bow-agent`,
+  `conversations.json`. Phải chặn ở CẢ hai tầng vì hook chạy TRƯỚC cổng duyệt (tool đọc auto-duyệt
+  không bao giờ tới `canUseTool`). Bỏ một tầng = agent đi đọc transcript tab khác rồi làm nhầm việc.
+- **Token đã tiêu đếm từ transcript, không phải `/usage`.** `src/core/tokenUsage.ts` quét MỌI thư mục
+  config Claude (mỗi `CLAUDE_CONFIG_DIR` một kho riêng), khử trùng theo `message.id`, cache theo
+  (size, mtime) ở `~/.bow-agent/usage-cache.json`; đọc qua `GET /api/usage/tokens` (**admin**).
+  Panel "Hạn mức sử dụng": Anthropic → hạn mức gói 5h/tuần (`/usage`); AI ngoài → token đã đốt.
+- **Web không còn một file.** `web/App.tsx` là vỏ (nav trái `AppNav` + cột phải `RightRail` + thanh
+  tab), các màn con ở `web/panels/*`, `TaskPane.tsx` giữ luồng chat/SSE. Cosmos là **overlay**
+  (`CosmosOverlay.tsx`) của tab đang mở, không phải một màn. Luật mobile gom ở §MOBILE cuối
+  `web/styles.css` (đặt cuối để thắng override theme, khỏi cần `!important`).
+- **Nói chen giữa lượt + worktree.** `POST /api/say/:id` đẩy lời vào kênh streaming input đang chạy
+  (`createInputChannel`) — không nới quyền, vẫn qua cổng đã chốt lúc `/api/run`. Chạy nhiều ticket
+  song song bằng `core/gitWorktree.ts` (`bow worktree add|list|remove`, `POST /api/worktree/create`,
+  `DELETE /api/worktree/remove`) — thư mục `wt-<ticket>` cạnh repo, nhánh `feat/<ticket>`.
 
 ## Mode web (6 mode, cổng riêng, chạy song song)
 

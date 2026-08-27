@@ -14,6 +14,7 @@
 <p align="center">
   <a href="#quick-start">Quick start</a> ·
   <a href="#why-not-just-use-claude-code">Why not just use Claude Code?</a> ·
+  <a href="#the-web-ui">The web UI</a> ·
   <a href="#six-modes-one-agent">Six modes</a> ·
   <a href="#contributing">Contributing</a> ·
   <a href="README.vi.md">Tiếng Việt</a>
@@ -53,6 +54,7 @@ The moment an agent can edit files, run shell commands, and push migrations, "le
 - **Every write stops at a gate.** Read tools (grep, read, list) and safe shell commands run freely. Every *write* — `Edit`, `Write`, a `Bash` command with side effects, a Jira comment, a `execute_sql` — pops an approve/deny card. There is exactly one gate (`canUseTool`), and no path around it.
 - **Share one agent with your whole team, by role.** Run it on your machine, share the LAN URL. A QC engineer gets a read-only agent that can triage Jira tickets. A BA can write docs but is hard-denied from touching source. A contractor can write code — but every single write, *including git*, is approved by you in real time from your machine.
 - **It reads your project, not a generic one.** Point it at any repo with `--cwd`. It picks up that repo's `CLAUDE.md`, auto-detects the stack, and can generate a persistent knowledge profile for repos it's never seen.
+- **Long sessions don't die.** When a conversation approaches the model's context window, the agent compacts its own history mid-run and keeps going; if it blows past the ceiling anyway, the tab clears context and resumes from a summary instead of losing the task. Hit your 5-hour usage cap and it schedules a resume for when the cap resets.
 - **Real integrations, gated the same way.** Jira (read tickets, attachments, even watch video attachments), Supabase (inspect the real DB, run advisors), GitHub PRs, Codemagic — all through MCP, all with reads free and writes gated.
 
 ## Why not just use Claude Code?
@@ -62,12 +64,38 @@ bow-agent is *built on* the Claude Agent SDK — the same engine as Claude Code.
 | | Claude Code | bow-agent |
 | --- | --- | --- |
 | **Who uses it** | You, in your terminal | You + your QC, BA, tech lead, contractors — over LAN |
-| **Permissions** | One user, one trust level | **Five role-based modes**, each with its own port and policy |
+| **Permissions** | One user, one trust level | **Six role-based modes**, each with its own port and policy |
 | **Remote approval** | — | Contractor's agent wants to write? **The card pops up on *your* screen.** |
-| **Interface** | Terminal | Terminal **and** a web UI with approval cards, cost/context readouts, and chat history |
+| **Interface** | Terminal | Terminal **and** a web UI: tabbed sessions, approval cards, cost/context readouts, chat history |
 | **Ticket → code** | Manual | Paste a Jira URL — it pulls the ticket, ACs, images, and video attachments |
+| **Model** | Claude | Claude — or a non-Claude model through a gateway, **picked per tab** |
 
 If you're a solo dev in a terminal, use Claude Code. If you want to hand an AI agent to people you don't want writing to `main`, that's this.
+
+## The web UI
+
+<p align="center">
+  <img src="docs/media/ui-workspace.png" alt="The bow-agent workspace: left nav, a tab bar of parallel agent sessions, the composer, and a right rail with agent activity, the approval queue and recent tasks." width="900">
+</p>
+
+<p align="center">
+  <sub>Left nav for the app-level screens · a tab bar where <b>every tab is its own agent session</b> — its own model, account, repo and mode · a right rail with live agent activity, the approval queue and recent tasks.</sub>
+</p>
+
+Two tabs can run **different models against different repos at the same time** — one on Claude, one on Grok through a gateway. A 🌳 button turns any ticket into a git worktree so parallel sessions never fight over the same working directory. And you can **talk over a running turn**: type while the agent works and it picks your words up at the next tool boundary, instead of making you wait for the turn to end.
+
+<table>
+<tr>
+<td width="62%" valign="top">
+  <img src="docs/media/ui-cosmos.png" alt="Cosmos: a 3D universe of the codebase you fly through, where each system is a module and the agent's live activity lights it up." width="100%">
+  <p><sub><b>Cosmos</b> — the codebase as a universe you fly through (scroll to thrust, WASD to steer). Systems are modules; detail resolves from module → file → symbol → source as you get closer, and what the agent is touching right now lights up.</sub></p>
+</td>
+<td width="38%" valign="top">
+  <img src="docs/media/ui-mobile.png" alt="The same UI on a phone: the left nav collapses into a drawer, the header wraps, and the composer takes the full width." width="100%">
+  <p><sub><b>On a phone</b> — the nav collapses into a drawer, the header wraps to two rows, and the composer goes full width. Approve a contractor's write from the couch.</sub></p>
+</td>
+</tr>
+</table>
 
 ## Six modes, one agent
 
@@ -205,6 +233,8 @@ The whole safety model is one function. If you're auditing this project, read [`
 
 - **Skills load at runtime, not from this repo.** bow-agent is an empty frame: skills are fetched from allow-listed GitHub repos, pinned to a specific ref, and cached locally. Adding a skill doesn't mean forking this repo.
 - **Multi-agent, opt-in.** `--subagents` lets the main agent delegate to specialists — a *reviewer* that argues against the plan, a *verifier* that traces runtime behavior end-to-end, an *impact-scout* that finds every call site before you change a contract. All of them are read-only; the main agent still does every write, still through the gate.
+- **One tab, one session — and no peeking.** Each tab is an isolated agent session. The agent is blocked, at both the hook layer and the approval gate, from reading any other session's transcript store — so a compacted tab can never "remember" by reading what a different tab was doing.
+- **Token accounting that works off-Claude.** The plan-limit panel reads Anthropic's usage windows; on a gateway there are none, so bow counts the real `message.usage` of every turn (subagents included) straight from the Claude Code transcripts, de-duplicated by message id and cached.
 - **Auto-resume on rate limit.** Hit your 5-hour session cap mid-execution? It schedules a resume for when the limit resets and picks the work back up.
 - **Scheduled sprint triage.** The `src/scheduler/` module drives Sprint-scan: `schedule.ts` holds the schedule the agent owns (and de-dupes runs so a 5-minute launchd tick never double-fires), `launchd.ts` keeps it alive on macOS, `sprintScan.ts` builds the orchestration brief and calls the same `runAgent` core, and `webServer.ts` serves the dashboard. No agent logic is duplicated — it's the one core, on a timer.
 

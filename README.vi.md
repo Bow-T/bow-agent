@@ -23,6 +23,18 @@
 
 ---
 
+<p align="center">
+  <img src="docs/media/ui-approval.vi.png" alt="Agent đã soạn xong thao tác Edit và DỪNG lại — thẻ 'CẦN DUYỆT: EDIT' hiện đúng file và nội dung sẽ ghi, kèm nút Cho phép / Luôn cho phép / Từ chối" width="880">
+</p>
+
+<p align="center">
+  <b>Agent soạn xong thay đổi — rồi DỪNG.</b><br/>
+  <sub>Nó không chạm được vào file cho tới khi có người bấm. Mọi thao tác ghi đều đi đường này, không có lối vòng.
+  Trong lúc chờ, ô nhập vẫn gõ được: bấm <b>CHEN</b> để nói chen vào lượt đang chạy.</sub>
+</p>
+
+---
+
 ## Chuẩn hóa base source của team 🧩
 
 bow-agent **là công cụ** (TS/Node + Claude Agent SDK) — *không* phải app Flutter. Nhưng
@@ -86,19 +98,63 @@ Giao diện chat trên trình duyệt — gõ task, xem tiến độ, bấm nút
 npm run ui
 ```
 
-→ Mở **http://localhost:5173**. Trong đó:
-- Ô nhập **task / đề tài** (Ctrl+Enter để chạy) + ô **Jira** + ô **cwd** (thư mục repo).
-- **Tự nhận diện source**: gõ `cwd` → agent tự đoán loại dự án (Flutter/Supabase/Node…) và gợi ý. Dòng 🔎 hiện kết quả nhận diện.
+→ Mở **http://localhost:5173**.
+
+<p align="center">
+  <img src="docs/media/ui-workspace.vi.png" alt="Giao diện bow-agent: nav trái, thanh tab các phiên agent chạy song song, ô nhập, cột phải hiện hoạt động agent / hàng chờ duyệt / tác vụ gần đây" width="900">
+</p>
+
+<p align="center">
+  <sub><b>Nav trái</b> = các màn cấp app (Không gian · Đội agent · Chờ duyệt · Jira · Nguồn mã · Hoạt động · Cài đặt) ·
+  <b>thanh tab</b> = mỗi tab MỘT phiên agent riêng (model, tài khoản, repo, mode riêng) ·
+  <b>cột phải</b> = hoạt động agent, hàng chờ duyệt, tác vụ gần đây.</sub>
+</p>
+
+Trong đó:
+- Ô nhập **task / đề tài** (Ctrl+Enter để chạy). Cấu hình phiên chạy (model · mode · effort · tài khoản ·
+  repo) gom vào **hàng chip ⚙ ngay trên ô nhập** — bấm để mở bảng đầy đủ.
+- **Nhiều tab chạy song song**: mỗi tab là một phiên độc lập — tab này Claude, tab kia Grok qua gateway,
+  hai repo khác nhau, cùng lúc. Kéo-thả để sắp xếp tab; lịch sử hội thoại lọc **theo tab** chứ không trộn.
+- **Nói chen giữa lượt**: đang chạy vẫn gõ tiếp được (nút **CHEN**) — agent nhận lời khi nhả tool hiện tại,
+  không phải chờ hết lượt rồi resume.
+- **🌳 Worktree**: bấm nút cạnh thanh tab để tạo `git worktree` cho ticket (`wt-<ticket>`, nhánh
+  `feat/<ticket>`) — chạy nhiều ticket song song mà không giẫm chân nhau trong cùng thư mục.
+- **Tự nhận diện source**: chọn `cwd` → agent tự đoán loại dự án (Flutter/Supabase/Node…) và gợi ý sinh profile.
 - **Jira URL hoặc key**: dán `PROJ-123` hoặc cả URL `/projects/PROJ/boards/123` — agent tự bóc ticket / board / project rồi đọc đúng. Ảnh/video đính kèm ticket cũng được tải để agent nhìn / xem (xem [ARCHITECTURE.vi.md](ARCHITECTURE.vi.md)).
 - **Kéo-thả tài liệu, PDF & ảnh**: thả file WBS/spec (text/markdown), **PDF** (tự trích text) và ảnh (wireframe/screenshot) vào ô nhập, hoặc bấm 📎, hoặc dán clipboard. Agent đọc tài liệu và nhìn ảnh (vision).
 - **7 nút gợi ý nhanh**: Sửa bug từ Jira · Làm theo đề xuất · Giải thích codebase · Viết test · Review & rà lỗi · Sinh commit/PR · Refactor/dọn code — bấm để chèn prompt mẫu.
 - **Chọn stack skill**: dropdown chọn stack (Flutter / React Native / Next.js) → tải bộ skill tương ứng từ GitHub. Badge trạng thái + nút 🔄 **Đồng bộ** kéo bản mới nhất (chỉ admin).
 - **Sinh profile cho repo lạ**: trỏ vào repo chưa biết → nút *Sinh profile* → agent quét repo (chỉ đọc) rồi lưu kiến thức vào `generated-profiles/`, lần sau dùng ngay.
-- Toggle **Chế độ** (Kế hoạch / Thực thi) + **🤖 Đội agent** (bật multi-agent — chỉ admin) + **Effort**.
-- **Model picker** + readout **Cost / Session / Context** (hạn mức tài khoản).
+- **Bốn chế độ chạy** (popover cạnh chip ⚙): **Kế hoạch** (chỉ đọc) · **Tự động** (tự làm việc an toàn, hỏi khi rủi ro) ·
+  **Sửa tự động** (tự ghi file trong repo, bash vẫn hỏi) · **Thủ công** (hỏi duyệt MỌI thao tác ghi).
+  Kèm **🤖 Đội agent** (multi-agent — chỉ admin) + **Effort**.
+- **Chọn AI theo từng tab** (chỉ admin) + readout **Chi phí / Hạn mức phiên / Ngữ cảnh** trên header —
+  bấm để mở panel chi tiết. Tab chạy Claude xem hạn mức gói 5h/tuần; tab chạy AI ngoài xem **token đã tiêu**
+  (đếm từ transcript, gộp cả subagent) vì gateway tính tiền theo token chứ không có hạn mức phiên.
 - Nút theme header xoay vòng **3 giao diện nền**: sáng (giấy da) → tối (mực đêm) → blueprint (bản vẽ), độc lập với **7 màu nhấn**.
 - Khi agent muốn sửa file / chạy lệnh / ghi Jira → **thẻ duyệt** với nút **Cho phép / Từ chối**. Nút **Dừng** hủy giữa chừng.
 - **Tự chạy tiếp khi hết hạn mức phiên (5h)**: phiên đang thực thi bị dừng → hệ thống tự lên lịch & resume khi hạn mức reset (tối đa 3 lần), UI hiện thẻ đếm ngược + nút huỷ.
+- **Hội thoại dài không chết**: chạm ~80% cửa sổ ngữ cảnh (`BOW_COMPACT_AT`) agent tự `/compact` ngay sau lượt
+  đang chạy; lỡ vượt trần cứng thì tab dọn ngữ cảnh và chạy tiếp bằng bản tóm tắt thay vì mất việc.
+
+### Cosmos — nhìn codebase như một vũ trụ 🌌
+
+<p align="center">
+  <img src="docs/media/ui-cosmos.vi.png" alt="Cosmos: vũ trụ 3D của codebase, lái phi thuyền bay xuyên qua, mỗi hệ là một module" width="880">
+</p>
+
+Bấm **Cosmos** ở nav trái để mở overlay vũ trụ của tab đang mở: cuộn = tăng tốc, WASD = lái, bấm một hệ để
+bay tới. Mỗi hệ là một module; càng lại gần thông tin càng lộ dần **module → file → symbol → source thật**.
+Chỗ agent đang đụng tới sáng lên theo thời gian thực — không phải trang trí, dữ liệu lấy từ chính phiên đang chạy.
+
+### Trên điện thoại 📱
+
+<p align="center">
+  <img src="docs/media/ui-mobile.vi.png" alt="Giao diện bow-agent trên điện thoại: nav trái thành drawer, header co lại, ô nhập chiếm cả hàng" width="330">
+</p>
+
+Màn ≤860px: nav trái thu thành **drawer** (nút ☰), header rớt hàng 2, ô nhập chiếm cả hàng — duyệt giúp
+cộng tác viên một thao tác ghi ngay trên điện thoại, không cần mở máy.
 
 `npm run ui` chạy cùng lúc backend (cổng 4000) + frontend Vite (cổng 5173).
 Muốn 1 cổng duy nhất (production): `npm run ui:preview` → mở http://localhost:4000.
@@ -438,7 +494,14 @@ src/
   core/
     systemPrompt.ts   # quy trình chung của agent (append vào preset Claude Code)
     runner.ts         # LÕI agent: query() + profile + skill + subagents + mode + cổng duyệt
+                      #  + đo/nén ngữ cảnh (/compact) + cứu tràn context + cách ly phiên
     subagents.ts      # bộ subagent chuẩn (reviewer/verifier/impact-scout) — opt-in
+    tokenUsage.ts     # đếm token đã tiêu từ transcript Claude Code (mọi CLAUDE_CONFIG_DIR)
+    gitWorktree.ts    # tạo/liệt kê/gỡ git worktree theo ticket (wt-<ticket>, feat/<ticket>)
+    screener.ts       # chấm dữ liệu ngoài (Jira/docs/ảnh) chống prompt-injection — fail-open
+    scannableCommand.ts # bung nguỵ trang lệnh shell trước khi match danh sách chặn
+    checkpoint.ts     # checkpoint git + journal cho Autopilot (autopilotBash.ts: luật bash)
+    xaiShim.ts        # shim in-process cho provider ngoài (xAI/Grok)
   skills/             # KHUNG RỖNG: chỉ CODE, không chứa data skill (tải từ GitHub lúc runtime)
     index.ts          # gộp skill prompt-only vào system prompt (từ bản clone bow-skill-core)
     agentSkills.ts    # trải skill-kèm-code vào <cwd>/.claude/skills/ (STAMP phân nguồn)
@@ -452,9 +515,19 @@ src/
     access.ts         # cổng truy cập LAN: xin duyệt theo tên → admin cấp token
     userMcp.ts        # MCP riêng theo user LAN (overlay lên MCP chung)
     conversations.ts  # lịch sử chat (tách theo IP), chat.ts # chat nhóm
+    fileApi.ts        # API chỉ-đọc cho Cosmos: /api/file-source, /api/file-symbols
+  scheduler/          # SPRINT-SCAN: agent tự quét sprint Jira theo lịch (server riêng, cổng 4006)
+    sprintScan.ts     # brief điều phối + gọi chính runAgent (không nhân đôi logic agent)
+    schedule.ts       # lịch do agent giữ (~/.bow-agent/sprint-schedule.json) + khử trùng lượt
+    launchd.ts        # LaunchAgent macOS giữ cho sống (tick 5 phút), qcRouting.ts # định tuyến QC
+    webServer.ts      # dashboard theo dõi + nút "Quét ngay" (SSE)
 web/                  # frontend React (Vite) — chat, thẻ duyệt, 3 theme + 7 accent, model/cost,
                       # quick prompts, panel MCP/workspace/skill, LAN dashboard
-  App.tsx, main.tsx, styles.css, types.ts, và các component (NeuralBrain, AccentPicker…)
+  App.tsx             # VỎ: nav trái + thanh tab (mỗi tab một phiên) + cột phải + modal
+  AppNav.tsx, RightRail.tsx, TaskPane.tsx   # nav, cột phải, luồng chat/SSE của một tab
+  panels/             # các màn con: Agents, Approvals, Jira, Repos, Activity, Settings, TokenUsage
+  CosmosOverlay.tsx   # vũ trụ 3D (three.js) của tab đang mở — 6 tầng LOD
+  styles.css          # theme + §MOBILE (khối cuối file, thắng override theme)
 examples/
   task.example.md     # WBS mẫu
 generated-profiles/   # profile tự sinh (gitignore, per-máy)
