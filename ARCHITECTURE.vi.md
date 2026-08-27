@@ -439,7 +439,88 @@ qua cổng duyệt §8. Trí nhớ là markdown phẳng, sửa/xóa tay được
 - **Suy luận quan hệ repo tự động** (đoán FE↔BE): làm thủ công qua `workspaces.json` trước;
   không đoán để tránh sai.
 
-## 10. Hướng mở rộng (chưa làm)
+## 10. Vỏ web — nav, tab, panel, Cosmos
+
+`web/App.tsx` chỉ còn là **vỏ**; màn con tách ra `web/panels/*`.
+
+- **Nav trái** (`AppNav.tsx`, 196px): 8 mục — Không gian · Đội agent · Chờ duyệt · Jira · Nguồn mã ·
+  Cosmos · Hoạt động · Cài đặt. Mục quản trị ẩn theo mode chia sẻ, nhưng **ẩn UI chỉ là lớp mỏng** —
+  quyền thật vẫn do `canUseTool` + `requireAdmin` cưỡng chế ở server. Cosmos KHÔNG phải một màn: nó mở
+  overlay vũ trụ của tab đang mở.
+- **Thanh tab = nhiều phiên độc lập.** Mỗi tab giữ state riêng trong `localStorage` theo hậu tố tab
+  (`bow-<khoá>_<tabId>`): model, effort, provider, tài khoản, hội thoại, session id. Nhờ vậy tab A chạy
+  Claude trên repo này, tab B chạy Grok trên repo khác, cùng lúc. Kéo-thả sắp xếp tab; `Conversation.tabId`
+  gắn MỘT LẦN lúc tạo nên tab Lịch sử lọc đúng theo tab (bản ghi cũ không có `tabId` → chỉ hiện khi xem tất cả).
+- **Cột phải** (`RightRail.tsx`): hoạt động agent · hàng chờ duyệt (gộp mọi tab) · tác vụ gần đây.
+- **Panel chỉ đọc**: `GET /api/agents` (metadata subagent) và `/api/jira/{config,sprints,issues}` dùng lại
+  `src/scheduler/jiraApi.ts`. **KHÔNG mở route ghi** — ghi Jira vẫn phải đi đường agent → MCP → cổng duyệt.
+- **Nói chen giữa lượt** — `POST /api/say/:id`: kênh streaming input có HÀNG ĐỢI (`createInputChannel`),
+  lời chen xếp vào phiên ĐANG chạy nên vẫn dùng đúng cổng `canUseTool` đã chốt lúc `/api/run` (không nới
+  quyền). Khách LAN chỉ nói được vào phiên của IP mình; admin localhost chen được mọi phiên; có ghi audit log.
+  Ở `result`, kênh chỉ đóng khi mọi lời đã có result (`doneTurns >= input.count()`), kèm phanh idle 120s.
+- **Worktree** (`core/gitWorktree.ts`): `bow worktree add|list|remove` và `POST /api/worktree/create` /
+  `DELETE /api/worktree/remove` (đều `requireAdmin`) tạo `wt-<ticket>` cạnh repo trên nhánh `feat/<ticket>` —
+  hai phiên agent chạy hai ticket không giẫm lên cùng một thư mục làm việc. Worktree `prunable` bị bỏ khi liệt kê.
+- **Cosmos** (`CosmosOverlay.tsx`, three.js thuần): vũ trụ điều-hướng-được — camera phi thuyền 6-DOF có quán
+  tính, 9 hệ = 9 hiện tượng (nebula/wormhole/pulsar/belt…), **6 tầng LOD** UNIVERSE → SYSTEM → MODULE → FILE →
+  FUNCTION → CODE, file/symbol/source thật fetch lazy qua API chỉ-đọc `/api/file-source` + `/api/file-symbols`
+  (`src/web/fileApi.ts`, có chặn path-traversal). Chỗ agent đang đụng sáng lên theo `activeSources` thật.
+- **Mobile**: mọi luật ≤860px gom ở khối **§MOBILE cuối `web/styles.css`** (đặt cuối để thắng override
+  `[data-theme='figma']` mà không cần `!important`) — nav thành drawer, header rớt hàng 2, ô nhập cả hàng
+  (chữ 16px để iOS Safari không tự zoom).
+
+## 11. Cửa sổ ngữ cảnh — tự nén, cứu tràn, cách ly phiên
+
+Hội thoại dài là chuyện thường (phiên marathon), nên `runner.ts` xử lý ngữ cảnh như một tầng riêng:
+
+- **Đo**: `emitContextUsage` (throttle 800ms) phát `contextTokens/contextMaxTokens` cho UI.
+- **Tự nén**: chạm `BOW_COMPACT_AT` (mặc định **80%**) → xếp `/compact` vào hàng đợi **NGAY SAU** lượt vừa
+  xong, không cắt ngang công việc. Lượt `/compact` do bow tự gửi KHÔNG chốt bằng `result`, nên
+  `compact_boundary` (và cả nén lỗi) tự gọi `releaseInput()` — thiếu chỗ này phiên đứng im tới khi idle
+  guard hết 120s.
+- **Trần context phải là số THẬT**: `providerContextTokens` (`config/env.ts`) khai trần theo provider
+  (grok = 500k, ghi đè bằng `BOW_PROVIDER_CONTEXT_TOKENS`). CLI tự đoán trần cho model lạ (đoán grok chỉ
+  200k) → tin số đó thì bow tuyên bố tràn khi phiên còn thừa hơn nửa cửa sổ. Vì lý do đó, với AI ngoài
+  bow **tắt autoCompact của CLI** và tự lo việc nén.
+- **Cứu tràn**: vượt trần cứng thì `/compact` cũng nổ theo (nén cũng phải gửi cả hội thoại lên). Lúc đó
+  runner phát `error/context_overflow`, tab dọn ngữ cảnh (bỏ `conversationId`) và lượt sau chạy tiếp bằng
+  **bản tóm tắt** `resumeContext` (20k ký tự cho AI ngoài — đó là toàn bộ trí nhớ còn lại).
+- **Cách ly phiên**: sau khi dọn ngữ cảnh, agent rất dễ đi "tự tìm trí nhớ" bằng cách đọc transcript
+  `.jsonl` của phiên khác rồi làm nhầm việc của tab khác (đã bắt được tại trận). Nên kho hội thoại
+  (`.claude*/projects`, `~/.bow-agent`, `conversations.json`) bị chặn ở **CẢ hai tầng**: hook `PreToolUse`
+  (`src/skills/hooks.ts`) *và* `canUseTool`. Phải có cả hai: hook chạy TRƯỚC cổng nên Read/Grep/Glob được
+  auto-duyệt sẽ không bao giờ chạm `canUseTool`; ngược lại hook không thấy hết đường Bash.
+
+## 12. Đếm token đã tiêu — `core/tokenUsage.ts`
+
+`/usage` (hạn mức gói 5h/tuần) là **control request riêng của Anthropic**: chạy qua gateway thì endpoint
+đó không tồn tại, mà bản chất cũng sai — provider ngoài tính tiền pay-as-you-go theo token, không có cửa
+sổ hạn mức. Cái cần thấy khi đổi sang Grok là **đã đốt bao nhiêu token**, nên bow đếm từ **transcript của
+Claude Code** — nơi SDK ghi `message.usage` thật của mọi lượt, kể cả lượt của subagent.
+
+- **Quét MỌI thư mục config Claude** trên máy (`~/.claude`, `~/.claude-<profile>`…): mỗi
+  `CLAUDE_CONFIG_DIR` có kho transcript riêng, chỉ đọc `~/.claude` là bỏ sót gần hết.
+- **Khử trùng toàn cục theo `message.id`**: resume/compact chép lại lịch sử sang transcript mới nên một
+  lượt nằm ở nhiều file — gộp theo file sẽ thổi phồng số.
+- **Cache theo (size, mtime)** ở `~/.bow-agent/usage-cache.json`: lần đầu quét ~4000 transcript mất ~2s,
+  các lần sau ~30ms.
+- `GET /api/usage/tokens` gắn **`requireAdmin`** — đây là số liệu gộp token của MỌI tài khoản Claude trên
+  máy, không phải thứ để lộ cho khách LAN của các mode chia sẻ.
+
+## 13. Chống prompt-injection & lệnh nguỵ trang
+
+Ba "gờ giảm tốc" (không phải hàng rào cứng — cổng duyệt vẫn là ranh giới thật):
+
+- **Guard prompt** (`core/systemPrompt.ts`): dạy agent coi dữ liệu ngoài (Jira/WBS/ảnh/web/tool-result)
+  là **DỮ LIỆU**, không phải **LỆNH**.
+- **Content-screener** (`core/screener.ts`): chấm dữ liệu ngoài bằng một lượt LLM nhẹ trước khi vào turn.
+  **Fail-open** — nghi injection thì bọc brief bằng nhãn cảnh báo rồi vẫn chạy, không chặn. Chỉ chấm khi
+  thật sự có dữ liệu ngoài (Jira ref / tài liệu / ảnh) để khỏi tốn token với text người dùng tự gõ.
+- **Bung nguỵ trang lệnh** (`core/scannableCommand.ts`): gỡ các lớp che (quote, `bash -c`, `eval`,
+  pipe-to-shell) rồi mới match. Dùng chung cho `isRiskyCommand` (runner tương tác) và `autoApprovalPolicy`
+  (sprint-scan full-auto) — match chuỗi thô sẽ lọt `r""m -rf`, `bash -c 'rm -rf ~'`, `echo rm|bash`.
+
+## 14. Hướng mở rộng (chưa làm)
 
 - **UI chọn skill / subagent**: hiện agent tự chọn skill; subagent bật cả-cụm qua cờ. Có
   thể thêm ô chọn trên web như panel MCP.

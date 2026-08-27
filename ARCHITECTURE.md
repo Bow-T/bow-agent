@@ -481,7 +481,98 @@ through the §8 approval gate. The memory is flat markdown you can edit or delet
 - **Inferring repo relationships automatically** (guessing FE↔BE): do it by hand in `workspaces.json`
   first; don't guess, to avoid getting it wrong.
 
-## 10. Possible extensions (not done)
+## 10. The web shell — nav, tabs, panels, Cosmos
+
+`web/App.tsx` is now only the **shell**; the individual screens live in `web/panels/*`.
+
+- **Left nav** (`AppNav.tsx`, 196px): 8 entries — Workspace · Agents · Approvals · Jira · Repos · Cosmos ·
+  Activity · Settings. Admin entries are hidden in the shared modes, but **hiding UI is a thin layer only** —
+  the real permissions are enforced server-side by `canUseTool` + `requireAdmin`. Cosmos is not a screen: it
+  opens the universe overlay of the tab you are in.
+- **The tab bar = independent sessions.** Each tab keeps its own state in `localStorage` under a per-tab
+  suffix (`bow-<key>_<tabId>`): model, effort, provider, account, conversation, session id. That is what lets
+  tab A run Claude on one repo while tab B runs Grok on another, at the same time. Tabs are drag-reorderable;
+  `Conversation.tabId` is stamped ONCE at creation, so the History tab filters by tab instead of mixing every
+  task (older records have no `tabId` → they only show under "all").
+- **Right rail** (`RightRail.tsx`): agent activity · the approval queue (across all tabs) · recent tasks.
+- **Read-only panels**: `GET /api/agents` (subagent metadata) and `/api/jira/{config,sprints,issues}`, reusing
+  `src/scheduler/jiraApi.ts`. **No write routes were opened** — writing to Jira still goes agent → MCP → gate.
+- **Talking over a running turn** — `POST /api/say/:id`: the streaming input channel is a QUEUE
+  (`createInputChannel`), so an interjection is appended to the session that is ALREADY running and therefore
+  still runs under the `canUseTool` gate fixed at `/api/run` time (no permission is widened). A LAN client can
+  only speak into the session belonging to its own IP; admin on localhost can speak into any; it is audit-logged.
+  At `result` the channel is closed only once every message has a result (`doneTurns >= input.count()`), with a
+  120s idle guard as the brake.
+- **Worktrees** (`core/gitWorktree.ts`): `bow worktree add|list|remove` plus `POST /api/worktree/create` /
+  `DELETE /api/worktree/remove` (both `requireAdmin`) create `wt-<ticket>` next to the repo on branch
+  `feat/<ticket>`, so two agent sessions on two tickets never share one working directory. `prunable`
+  worktrees are skipped when listing.
+- **Cosmos** (`CosmosOverlay.tsx`, plain three.js): a navigable universe — a 6-DOF spaceship camera with
+  inertia, 9 systems rendered as 9 different phenomena (nebula/wormhole/pulsar/belt…), **6 continuous LOD
+  tiers** UNIVERSE → SYSTEM → MODULE → FILE → FUNCTION → CODE, with real files/symbols/source fetched lazily
+  through the read-only `/api/file-source` + `/api/file-symbols` (`src/web/fileApi.ts`, path-traversal
+  guarded). What the agent is touching right now lights up, driven by real `activeSources`.
+- **Mobile**: every ≤860px rule is collected in the **§MOBILE block at the end of `web/styles.css`** (last so
+  it beats the `[data-theme='figma']` overrides without `!important`) — nav becomes a drawer, the header wraps
+  to a second row, the composer takes the full width (16px text, or iOS Safari zooms on focus).
+
+## 11. The context window — self-compaction, overflow recovery, session isolation
+
+Long conversations are normal here (marathon sessions), so `runner.ts` treats context as its own layer:
+
+- **Measure**: `emitContextUsage` (throttled to 800ms) emits `contextTokens/contextMaxTokens` to the UI.
+- **Self-compact**: on reaching `BOW_COMPACT_AT` (default **80%**), `/compact` is queued **right after** the
+  turn that just finished — never cutting into work in progress. A `/compact` bow sends itself never ends in a
+  `result`, so `compact_boundary` (and a failed compaction too) calls `releaseInput()` — without that the
+  session sits idle until the 120s guard fires.
+- **The ceiling has to be the REAL number**: `providerContextTokens` (`config/env.ts`) declares the ceiling per
+  provider (grok = 500k, override with `BOW_PROVIDER_CONTEXT_TOKENS`). The CLI *guesses* a ceiling for models
+  it doesn't know (it guessed 200k for grok) — trusting that guess made bow declare an overflow while more than
+  half the window was still free. For the same reason bow **turns the CLI's own autoCompact off** for external
+  providers and does the compaction itself.
+- **Overflow recovery**: past the hard ceiling even `/compact` fails (compacting has to send the whole
+  conversation up too). The runner then emits `error/context_overflow`, the tab clears its context (drops
+  `conversationId`), and the next turn continues from the `resumeContext` **summary** (20k chars for external
+  AIs — that is the entire memory that survives).
+- **Session isolation**: right after a context wipe an agent is very tempted to "find its memory" by reading
+  another session's `.jsonl` transcript — and then continue *another tab's* work (caught red-handed once). So
+  the conversation stores (`.claude*/projects`, `~/.bow-agent`, `conversations.json`) are blocked at **both**
+  layers: the `PreToolUse` hook (`src/skills/hooks.ts`) *and* `canUseTool`. Both are required: hooks run BEFORE
+  the gate, so auto-approved Read/Grep/Glob would never reach `canUseTool`; conversely a hook alone doesn't see
+  every path Bash can take.
+
+## 12. Token accounting — `core/tokenUsage.ts`
+
+`/usage` (the 5h/weekly plan windows) is an **Anthropic-only control request**: through a gateway the endpoint
+doesn't exist, and it would be the wrong question anyway — an external provider bills pay-as-you-go per token
+and has no session window. What you want to see after switching to Grok is **how many tokens you burned**, so
+bow counts them from the **Claude Code transcripts** — where the SDK records the real `message.usage` of every
+turn, subagent turns included.
+
+- **Scan EVERY Claude config directory** on the machine (`~/.claude`, `~/.claude-<profile>`…): each
+  `CLAUDE_CONFIG_DIR` has its own transcript store, so reading only `~/.claude` misses nearly everything.
+- **Globally de-duplicate by `message.id`**: resume/compact copy history into a new transcript, so one turn
+  lives in several files — summing per file inflates the number.
+- **Cache by (size, mtime)** in `~/.bow-agent/usage-cache.json`: the first scan of ~4000 transcripts takes ~2s,
+  every later one ~30ms.
+- `GET /api/usage/tokens` is behind **`requireAdmin`** — it aggregates tokens across every Claude account on
+  the machine, which is not something to expose to LAN guests of the shared modes.
+
+## 13. Prompt-injection screening & command de-obfuscation
+
+Three speed bumps (not hard walls — the approval gate remains the real boundary):
+
+- **Guard prompt** (`core/systemPrompt.ts`): teach the agent to treat external data (Jira/WBS/images/web/tool
+  results) as **DATA**, never as **INSTRUCTIONS**.
+- **Content screener** (`core/screener.ts`): score external data with one cheap LLM pass before it enters the
+  turn. **Fail-open** — a suspected injection gets the brief wrapped in a warning label and still runs, it is
+  not blocked. It only runs when there really is external data (a Jira ref / docs / images), so text the user
+  typed themselves costs nothing.
+- **Command de-obfuscation** (`core/scannableCommand.ts`): peel the wrappers (quotes, `bash -c`, `eval`,
+  pipe-to-shell) *before* matching. Shared by `isRiskyCommand` (interactive runner) and `autoApprovalPolicy`
+  (full-auto sprint-scan) — raw string matching lets `r""m -rf`, `bash -c 'rm -rf ~'` and `echo rm|bash` through.
+
+## 14. Possible extensions (not done)
 
 - **A UI for picking skills / subagents**: today the agent picks skills itself, and subagents are enabled as
   a whole group by a flag. We could add a picker on the web UI, like the MCP panel.
@@ -491,5 +582,3 @@ through the §8 approval gate. The memory is flat markdown you can edit or delet
   (e.g. `scripts/check-quest.sh`) would be more accurate for repos that happen to share a name.
 - **A journal for failed sessions**: today the journal is only written when a session succeeds — the lessons
   from a failed session, or one whose approval was rejected, are not recorded.
-</content>
-</invoke>
