@@ -28,6 +28,33 @@ export interface UsageSnapshot {
   contextPercentage: number | null;
 }
 
+/** Tổng token đã tiêu — khớp TokenTotals ở src/core/tokenUsage.ts. */
+export interface TokenTotals {
+  calls: number;
+  input: number;
+  output: number;
+  cacheWrite: number;
+  cacheRead: number;
+  total: number;
+}
+
+/**
+ * Báo cáo token của MỘT AI (đếm từ transcript) — khớp TokenUsageReport ở
+ * src/core/tokenUsage.ts. UI dùng cho provider ngoài (Grok), nơi không có hạn mức gói.
+ */
+export interface TokenUsageReport {
+  provider: string;
+  totals: TokenTotals;
+  byModel: Array<{ model: string } & TokenTotals>;
+  byDay: Array<{ day: string } & TokenTotals>;
+  today: TokenTotals;
+  firstDay: string | null;
+  lastDay: string | null;
+  scannedFiles: number;
+  freshFiles: number;
+  scanMs: number;
+}
+
 /** Sự kiện từ backend qua SSE — phải khớp WebEvent ở src/web/session.ts. */
 export type WebEvent =
   | { type: 'text'; text: string }

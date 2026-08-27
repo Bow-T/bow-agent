@@ -21,6 +21,7 @@ import {
   type ProviderId,
 } from '../config/env.js';
 import { runAgent, fetchUsageSnapshot, contextOverflowHint, type RunOptions } from '../core/runner.js';
+import { readTokenUsage } from '../core/tokenUsage.js';
 import { screenExternalData, untrustedNotice } from '../core/screener.js';
 import { buildTaskBrief } from '../input/task.js';
 import { pdfToText } from '../input/pdf.js';
@@ -2050,6 +2051,28 @@ app.get('/api/usage', async (req, res) => {
       });
       return;
     }
+    res.json({ usage });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+/**
+ * GET /api/usage/tokens — TOKEN ĐÃ TIÊU của một AI, đếm từ transcript (xem tokenUsage.ts).
+ *
+ * Bổ khuyết cho /api/usage: gateway ngoài (Grok) không có control request hạn mức của
+ * Anthropic, và cũng không tính theo hạn mức phiên mà theo token pay-as-you-go — nên khi tab
+ * đổi sang provider ngoài, UI đọc endpoint này thay cho thanh hạn mức gói.
+ *
+ * CHỈ ADMIN: số liệu này gộp token của MỌI tài khoản Claude trên máy (mọi CLAUDE_CONFIG_DIR),
+ * không phải thứ để lộ cho khách LAN của các mode chia sẻ.
+ */
+app.get('/api/usage/tokens', requireAdmin, async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  const provider: ProviderId = req.query.provider === 'anthropic' ? 'anthropic' : 'grok';
+  const days = Number(req.query.days);
+  try {
+    const usage = await readTokenUsage({ provider, days: Number.isFinite(days) && days > 0 ? days : undefined });
     res.json({ usage });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
