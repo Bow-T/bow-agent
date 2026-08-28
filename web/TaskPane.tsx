@@ -333,6 +333,16 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
   const [docs, setDocs] = useState<DocAttachment[]>([]);
   const [pdfs, setPdfs] = useState<{ name: string; base64: string }[]>([]);
   const [images, setImages] = useState<ImageAttachment[]>([]);
+  /** Ảnh đang xem phóng to (lightbox) — bấm chip ảnh để mở, Esc/bấm nền để đóng. */
+  const [imgPreview, setImgPreview] = useState<ImageAttachment | null>(null);
+
+  // Esc đóng lightbox ảnh (chỉ gắn listener khi đang mở).
+  useEffect(() => {
+    if (!imgPreview) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setImgPreview(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [imgPreview]);
   const [items, setItems] = useState<ChatItem[]>(() => {
     // Khôi phục lịch sử chat từ phiên trước (giữ qua refresh trang).
     try {
@@ -2648,13 +2658,14 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
               </span>
             ))}
             {images.map((im, i) => (
-              <span key={`i${i}`} className="chip chip-image" title={im.name}>
+              <span key={`i${i}`} className="chip chip-image" title={language === 'vi' ? `Bấm để xem ảnh: ${im.name}` : `Click to preview: ${im.name}`}>
                 <img
                   className="chip-thumb"
                   src={`data:${im.mediaType};base64,${im.base64}`}
                   alt={im.name}
+                  onClick={() => setImgPreview(im)}
                 />
-                <span className="chip-name">{im.name}</span>
+                <span className="chip-name" onClick={() => setImgPreview(im)}>{im.name}</span>
                 <button onClick={() => setImages((p) => p.filter((_, j) => j !== i))}>×</button>
               </span>
             ))}
@@ -2808,6 +2819,23 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
             onClose={() => setCosmosOpen(false)}
           />
         </Suspense>
+      )}
+
+      {/* Xem ảnh đính kèm phóng to. Ảnh đã nằm sẵn trong state (base64) nên không tải lại gì. */}
+      {imgPreview && (
+        <div className="img-lightbox" onClick={() => setImgPreview(null)}>
+          <img
+            src={`data:${imgPreview.mediaType};base64,${imgPreview.base64}`}
+            alt={imgPreview.name}
+            onClick={(e) => e.stopPropagation()}
+          />
+          <div className="img-lightbox-bar">
+            <span className="img-lightbox-name">{imgPreview.name}</span>
+            <button className="btn" onClick={() => setImgPreview(null)}>
+              {language === 'vi' ? 'ĐÓNG' : 'CLOSE'}
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );
