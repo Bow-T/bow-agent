@@ -5,6 +5,7 @@
  * Nguyên tắc: panel chỉ ĐỌC dữ liệu đã có (state per-tab do TaskPane báo lên, hoặc API sẵn
  * có của server). Không panel nào tự mở đường ghi vòng qua cổng duyệt trong runner.ts.
  */
+import { Suspense, lazy } from 'react';
 import { PanelShell, PanelEmpty } from './PanelShell.js';
 import { AgentsPanel } from './AgentsPanel.js';
 import type { CollabApproval } from './ApprovalsPanel.js';
@@ -13,6 +14,8 @@ import { ReposPanel } from './ReposPanel.js';
 import { ActivityPanel } from './ActivityPanel.js';
 import { ApprovalsPanel } from './ApprovalsPanel.js';
 import { SettingsPanel } from './SettingsPanel.js';
+// Bản đồ kéo theo Three.js — lazy để bundle chính không phình vì một màn ít mở.
+const GlobeMapPanel = lazy(() => import('./GlobeMapPanel.js').then((m) => ({ default: m.GlobeMapPanel })));
 import type { Cfg, SkillStatus } from '../App.js';
 import type { AgentSummary, NavSection } from '../types.js';
 
@@ -69,6 +72,16 @@ export function NavSectionView(props: NavSectionViewProps) {
       return <ActivityPanel {...props} />;
     case 'settings':
       return <SettingsPanel {...props} />;
+    case 'map':
+      return (
+        <Suspense fallback={
+          <PanelShell icon="target" title={vi ? 'Bản đồ' : 'Map'}>
+            <PanelEmpty text={vi ? 'Đang dựng quả cầu…' : 'Building the globe…'} />
+          </PanelShell>
+        }>
+          <GlobeMapPanel {...props} />
+        </Suspense>
+      );
     default:
       return (
         <PanelShell icon="info" title={vi ? 'Không có màn này' : 'Unknown section'}>

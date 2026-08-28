@@ -13,10 +13,12 @@ interface PanelShellProps {
   subtitle?: string;
   /** Nút hành động ở góc phải tiêu đề (Làm mới, Thêm…). */
   actions?: ReactNode;
+  /** Class thêm cho vùng thân — màn nào cần chiếm trọn khung, không cuộn (vd Bản đồ). */
+  bodyClass?: string;
   children: ReactNode;
 }
 
-export function PanelShell({ icon, title, subtitle, actions, children }: PanelShellProps) {
+export function PanelShell({ icon, title, subtitle, actions, bodyClass, children }: PanelShellProps) {
   return (
     <section className="section-panel">
       <div className="section-panel-head">
@@ -27,7 +29,7 @@ export function PanelShell({ icon, title, subtitle, actions, children }: PanelSh
         </div>
         {actions && <div className="section-panel-actions">{actions}</div>}
       </div>
-      <div className="section-panel-body">{children}</div>
+      <div className={`section-panel-body${bodyClass ? ` ${bodyClass}` : ''}`}>{children}</div>
     </section>
   );
 }

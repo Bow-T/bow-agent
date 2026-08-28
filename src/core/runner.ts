@@ -1391,6 +1391,9 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   // Trần context THẬT của AI ngoài (0 = Anthropic → tin số CLI báo). Xem providerContextTokens.
   const trueContextMax = providerContextTokens(providerId) ?? 0;
   let lastContextPct: number | null = null;
+  // Số token lần đo trước + mức phình giữa hai lần đo — nguyên liệu cho phanh dự phòng.
+  let lastContextTokens: number | null = null;
+  let lastContextDelta = 0;
   // Đã vượt TRẦN CỨNG của model chưa. Quá trần thì /compact thường nổ theo (nén cũng phải
   // gửi cả hội thoại lên) — NHƯNG vẫn thử nén trước; chỉ dọn phiên khi nén thất bại.
   let contextOverTheLimit = false;
@@ -1452,6 +1455,12 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
       ? (ctx.totalTokens / trueContextMax) * 100
       : ctx.percentage ?? null;
     lastContextPct = pct;
+    if (typeof ctx.totalTokens === 'number') {
+      if (lastContextTokens != null && ctx.totalTokens > lastContextTokens) {
+        lastContextDelta = ctx.totalTokens - lastContextTokens;
+      }
+      lastContextTokens = ctx.totalTokens;
+    }
     if (hardMax > 0 && ctx.totalTokens >= hardMax) contextOverTheLimit = true;
     opts.onEvent({
       type: 'usage',
@@ -1470,6 +1479,9 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
         overLimit: contextOverTheLimit,
         requested: compactRequested,
         at: COMPACT_AT,
+        tokens: lastContextTokens,
+        delta: lastContextDelta,
+        hardMax,
         sent: compactsSent,
       })
     ) {
@@ -1488,10 +1500,21 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
           opts.onSessionId?.(message.session_id);
           // Fail-open: CLI cũ không có control request này thì bỏ qua, ta vẫn còn tầng
           // tự gửi /compact ở cuối lượt bên dưới.
-          // AI ngoài: TẮT auto-compact của CLI — nó nén theo trần nó tự đoán (200k cho grok)
-          // nên co lịch sử sớm gấp 2,5 lần. Việc nén giao cho tầng /compact của bow, canh
-          // theo trần THẬT (trueContextMax). Anthropic giữ nguyên hành vi cũ.
-          void q.applyFlagSettings({ autoCompactEnabled: !usesGateway }).catch(() => {});
+          // Auto-compact của CLI là lưới an toàn DUY NHẤT nén được GIỮA lượt (bow chỉ chen
+          // /compact vào hàng đợi input). Từng tắt nó cho AI ngoài vì CLI nén theo trần nó
+          // tự đoán (200k cho grok) → co lịch sử sớm gấp 2,5 lần; nhưng tắt đi thì một cụm
+          // tool đọc file (+172k/nhịp, đo thật) vọt qua trần mà không ai cứu. Cách đúng:
+          // GIỮ lưới, và khai trần THẬT cho nó qua autoCompactWindow. Không biết trần thật
+          // (provider lạ) thì mới tắt — thà mất lưới còn hơn nén theo số đoán.
+          void q
+            .applyFlagSettings(
+              usesGateway
+                ? trueContextMax
+                  ? { autoCompactEnabled: true, autoCompactWindow: trueContextMax }
+                  : { autoCompactEnabled: false }
+                : { autoCompactEnabled: true },
+            )
+            .catch(() => {});
         }
         // Nén xong: báo cho người dùng biết lịch sử vừa bị co lại (và co bao nhiêu) — nếu
         // im lặng, họ sẽ tưởng agent tự quên việc.
@@ -1640,7 +1663,7 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
         }
         // Đọc snapshot hạn mức + context ngay khi query CÒN SỐNG (control request cần
         // transport chưa đóng). Lỗi/không hỗ trợ → bỏ qua, không chặn kết thúc lượt.
-        const usage = await readUsageSnapshot(q);
+        const usage = await readUsageSnapshot(q, trueContextMax);
         if (usage) {
           // Ghi nhớ rate limits/subscription mới nhất để event context realtime (giữa
           // chừng) tái dùng, không xóa mất phần hạn mức đang hiển thị ở UI.
@@ -1676,6 +1699,9 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
             overLimit: contextOverTheLimit,
             requested: compactRequested,
             at: COMPACT_AT,
+            tokens: lastContextTokens,
+            delta: lastContextDelta,
+            hardMax: trueContextMax || null,
             sent: compactsSent,
           })
         ) {
@@ -1854,6 +1880,13 @@ export function isForeignSessionStore(s: unknown): boolean {
 const MAX_COMPACTS_PER_RUN = 3;
 
 /**
+ * Hệ số an toàn cho phanh dự phòng: nén khi context + (nhịp phình vừa rồi × hệ số) chạm trần.
+ * 1.5 = chừa chỗ cho một nhịp rưỡi nữa. Thấp hơn thì nén muộn, dễ lọt như bản cũ; cao hơn thì
+ * nén quá sớm, phí lịch sử.
+ */
+const COMPACT_SAFETY = 1.5;
+
+/**
  * Có nên xếp /compact NGAY BÂY GIỜ không? Tách thuần để test được cả hai chỗ gọi: phép đo
  * giữa lượt (emitContextUsage) và ranh giới lượt ('result').
  *
@@ -1861,6 +1894,11 @@ const MAX_COMPACTS_PER_RUN = 3;
  * - `requested` = lượt này đã gửi một lời nén rồi → không gửi chồng.
  * - `overLimit` = đã đo vượt TRẦN CỨNG: vẫn thử nén (nén có thể nổ theo, lúc đó mới dọn phiên).
  * - `pct` null (chưa đo được) và chưa quá trần → chưa có cơ sở, đừng nén.
+ * - `tokens`/`delta`/`hardMax`: **phanh dự phòng theo tốc độ phình** — quan trọng hơn ngưỡng %.
+ *   Một cụm tool đọc file trên monorepo nhồi cả trăm nghìn token vào MỘT nhịp đo (đo thật với
+ *   grok: 56k → 228k sau 3 lần đọc file, +172k). Ngưỡng % không bao giờ bắt được vì context
+ *   nhảy từ dưới ngưỡng thẳng qua trần, không có phép đo nào rơi vào giữa. Nên nén ngay khi
+ *   "thêm một nhịp phình như vừa rồi là tràn": tokens + delta × SAFETY >= trần.
  * - `sent`/`max`: phanh chống nén lặp. `compact_boundary` mở khoá `requested` để nén lại được
  *   khi lượt còn dài, nên nếu một lần nén không giảm được bao nhiêu (post ≈ pre) thì phép đo
  *   kế tiếp lại chạm ngưỡng → gửi /compact vô tận. Trần cứng số lần nén mỗi lần chạy.
@@ -1870,13 +1908,21 @@ export function shouldCompactNow(o: {
   overLimit: boolean;
   requested: boolean;
   at: number;
+  tokens?: number | null;
+  delta?: number | null;
+  hardMax?: number | null;
   sent?: number;
   max?: number;
 }): boolean {
   if (o.requested) return false;
   if ((o.sent ?? 0) >= (o.max ?? MAX_COMPACTS_PER_RUN)) return false;
   if (!(o.at > 0 && o.at < 100)) return false;
-  return o.overLimit || (o.pct ?? 0) >= o.at;
+  if (o.overLimit || (o.pct ?? 0) >= o.at) return true;
+  // Nhịp phình vừa rồi lặp lại một lần nữa là tràn → nén trước, đừng đợi chạm ngưỡng %.
+  const tokens = o.tokens ?? 0;
+  const delta = o.delta ?? 0;
+  const hardMax = o.hardMax ?? 0;
+  return hardMax > 0 && delta > 0 && tokens + delta * COMPACT_SAFETY >= hardMax;
 }
 
 /**
@@ -1970,7 +2016,8 @@ function toWindow(
  * độ dùng context window của hội thoại hiện tại. Trả null nếu SDK không hỗ trợ hoặc
  * lỗi (vd đã đóng) — caller chỉ đơn giản không phát event 'usage'.
  */
-async function readUsageSnapshot(q: {
+async function readUsageSnapshot(
+  q: {
   getContextUsage: () => Promise<{
     totalTokens: number;
     maxTokens: number;
@@ -1988,7 +2035,10 @@ async function readUsageSnapshot(q: {
       }[];
     } | null;
   }>;
-}): Promise<UsageSnapshot | null> {
+  },
+  /** Trần THẬT của AI ngoài (0/undefined = Anthropic → tin số CLI báo). Xem providerContextTokens. */
+  trueContextMax = 0,
+): Promise<UsageSnapshot | null> {
   try {
     const [ctx, usage] = await Promise.all([
       q.getContextUsage().catch(() => null),
@@ -2016,8 +2066,12 @@ async function readUsageSnapshot(q: {
       rateLimits,
       subscriptionType: usage?.subscription_type ?? null,
       contextTokens: ctx?.totalTokens ?? null,
-      contextMaxTokens: ctx?.maxTokens ?? null,
-      contextPercentage: ctx?.percentage ?? null,
+      // Cùng lý do như emitContextUsage: với AI ngoài, maxTokens/percentage của CLI là số nó
+      // TỰ ĐOÁN (200k cho grok) nên UI cuối lượt nhảy sang "114%" trong khi thật mới 46% của
+      // trần 500k. Trần thật thắng, và % tính lại theo nó.
+      contextMaxTokens: trueContextMax || ctx?.maxTokens || null,
+      contextPercentage:
+        trueContextMax && ctx ? (ctx.totalTokens / trueContextMax) * 100 : ctx?.percentage ?? null,
     };
   } catch {
     return null;

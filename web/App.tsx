@@ -581,7 +581,7 @@ export function App() {
    *  Nhớ qua reload để mở lại đúng chỗ đang làm (trừ 'cosmos' — đó là overlay, không phải màn). */
   const [navSection, setNavSection] = useState<NavSection>(() => {
     const saved = localStorage.getItem('bow-nav');
-    const valid: NavSection[] = ['workspace', 'agents', 'approvals', 'jira', 'repos', 'activity', 'settings'];
+    const valid: NavSection[] = ['workspace', 'agents', 'approvals', 'jira', 'repos', 'map', 'activity', 'settings'];
     return valid.includes(saved as NavSection) ? (saved as NavSection) : 'workspace';
   });
   useEffect(() => { localStorage.setItem('bow-nav', navSection); }, [navSection]);

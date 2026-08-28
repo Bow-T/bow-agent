@@ -23,3 +23,4 @@
 - [Đòn bẩy token thật](bow-token-real-levers.md) — token cao do model Opus mọi việc + subagent tự spawn, KHÔNG do schema MCP; ĐO breakdown (event result) trước khi cắt
 - [Sổ tay phiên qua compact](bow-session-notes-hook.md) — hook PreCompact ghi .claude/session-notes.md, SessionStart nạp lại; nới autoCompactWindow + /compact có chỉ đạo
 - [Banner "đầy context" là của bow](bow-context-overflow-midturn.md) — grep chuỗi trong src/ trước khi đổ lỗi Claude Code; nén GIỮA lượt + kế toán compactsSent/Settled + BOW_COMPACT_AT=55
+- [Màn Bản đồ (BOW GLOBE)](bow-globe-map.md) — quả cầu WebGL ở nav trái: 4 lớp (code/live/jira/tri thức), mỗi lớp một múi kinh độ; dùng chung 9 hệ với Cosmos qua web/cosmosSystems.ts
