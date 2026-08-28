@@ -521,10 +521,17 @@ through the §8 approval gate. The memory is flat markdown you can edit or delet
 Long conversations are normal here (marathon sessions), so `runner.ts` treats context as its own layer:
 
 - **Measure**: `emitContextUsage` (throttled to 800ms) emits `contextTokens/contextMaxTokens` to the UI.
-- **Self-compact**: on reaching `BOW_COMPACT_AT` (default **80%**), `/compact` is queued **right after** the
-  turn that just finished — never cutting into work in progress. A `/compact` bow sends itself never ends in a
-  `result`, so `compact_boundary` (and a failed compaction too) calls `releaseInput()` — without that the
-  session sits idle until the 120s guard fires.
+- **Self-compact**: on reaching `BOW_COMPACT_AT` (default **80%**), `/compact` is queued. The decision lives
+  in the pure `shouldCompactNow`, called from **two** places: the mid-turn measurement (`emitContextUsage`)
+  and the turn boundary (`result`). Compacting **mid-turn** is what actually saves the session: a marathon
+  turn can grow from below the threshold to past the ceiling without ever reaching `result` — and by then
+  `/compact` blows up too, since compaction must also ship the whole conversation (measured on grok:
+  503,312/500,000 tokens). The input channel is queued, so the SDK picks the compaction up as soon as the
+  agent releases its current tool.
+- **Accounting for compaction turns**: a `/compact` bow sends itself takes a slot in `input.count()` but never
+  ends in a `result`. Counting `compactsSent`/`compactsSettled` keeps the channel open while a compaction is
+  still pending (otherwise the SDK closes the transport before it runs) and subtracts settled slots when
+  asking "is any user turn still unanswered?" — without that the session sits idle until the 120s guard fires.
 - **The ceiling has to be the REAL number**: `providerContextTokens` (`config/env.ts`) declares the ceiling per
   provider (grok = 500k, override with `BOW_PROVIDER_CONTEXT_TOKENS`). The CLI *guesses* a ceiling for models
   it doesn't know (it guessed 200k for grok) — trusting that guess made bow declare an overflow while more than
