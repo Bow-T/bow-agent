@@ -474,10 +474,16 @@ qua cổng duyệt §8. Trí nhớ là markdown phẳng, sửa/xóa tay được
 Hội thoại dài là chuyện thường (phiên marathon), nên `runner.ts` xử lý ngữ cảnh như một tầng riêng:
 
 - **Đo**: `emitContextUsage` (throttle 800ms) phát `contextTokens/contextMaxTokens` cho UI.
-- **Tự nén**: chạm `BOW_COMPACT_AT` (mặc định **80%**) → xếp `/compact` vào hàng đợi **NGAY SAU** lượt vừa
-  xong, không cắt ngang công việc. Lượt `/compact` do bow tự gửi KHÔNG chốt bằng `result`, nên
-  `compact_boundary` (và cả nén lỗi) tự gọi `releaseInput()` — thiếu chỗ này phiên đứng im tới khi idle
-  guard hết 120s.
+- **Tự nén**: chạm `BOW_COMPACT_AT` (mặc định **80%**) → xếp `/compact` vào hàng đợi input. Quyết định nằm
+  ở hàm thuần `shouldCompactNow`, gọi từ **HAI** chỗ: phép đo giữa lượt (`emitContextUsage`) và ranh giới
+  lượt (`result`). Nén **giữa lượt** mới là chỗ cứu được phiên: một lượt marathon phình từ dưới ngưỡng lên
+  quá trần mà không bao giờ chạm `result` — tới lúc đó `/compact` cũng nổ theo vì nén cũng phải gửi cả hội
+  thoại lên (đo thực tế trên grok: 503.312/500.000 token). Kênh input có hàng đợi nên SDK nhận lời nén ngay
+  khi agent nhả tool hiện tại.
+- **Kế toán lời nén**: `/compact` do bow tự gửi chiếm một slot `input.count()` nhưng KHÔNG chốt bằng
+  `result`. Đếm `compactsSent`/`compactsSettled`: còn lời nén chưa xong thì GIỮ kênh mở (nếu không SDK đóng
+  transport trước khi nén kịp chạy), nén xong thì trừ slot ra khi hỏi "còn lời người dùng nào chưa được trả
+  lời?" — thiếu chỗ này phiên đứng im tới khi idle guard hết 120s.
 - **Trần context phải là số THẬT**: `providerContextTokens` (`config/env.ts`) khai trần theo provider
   (grok = 500k, ghi đè bằng `BOW_PROVIDER_CONTEXT_TOKENS`). CLI tự đoán trần cho model lạ (đoán grok chỉ
   200k) → tin số đó thì bow tuyên bố tràn khi phiên còn thừa hơn nửa cửa sổ. Vì lý do đó, với AI ngoài

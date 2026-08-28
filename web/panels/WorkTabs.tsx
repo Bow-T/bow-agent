@@ -296,10 +296,11 @@ interface ContextTabProps {
   stack: string;
   selectedMcps: string[];
   usage: UsageSnapshot | null;
+  onCompact?: () => void;
 }
 
 export function ContextTab({
-  language, cwd, cfg, currentWs, detected, skillStatus, skillStacks, stack, selectedMcps, usage,
+  language, cwd, cfg, currentWs, detected, skillStatus, skillStacks, stack, selectedMcps, usage, onCompact,
 }: ContextTabProps) {
   const vi = language === 'vi';
   const stackLabel = skillStacks.find((s) => s.id === stack)?.label ?? stack;
@@ -350,7 +351,19 @@ export function ContextTab({
         </article>
 
         <article className="ctx-card">
-          <h4><Icon name="info" size={14} /> {vi ? 'Cửa sổ ngữ cảnh' : 'Context window'}</h4>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+            <h4 style={{ margin: 0 }}><Icon name="info" size={14} /> {vi ? 'Cửa sổ ngữ cảnh' : 'Context window'}</h4>
+            {onCompact && (
+              <button
+                type="button"
+                style={{ padding: '2px 8px', fontSize: '11px', cursor: 'pointer', background: 'var(--surface-3)', border: '1px solid var(--hairline)', borderRadius: '4px', color: 'var(--fg-muted)' }}
+                onClick={onCompact}
+                title={vi ? 'Chủ động gửi lệnh /compact để nén lịch sử' : 'Manually send /compact to compress context'}
+              >
+                🗜️ {vi ? 'Nén ngay' : 'Compact now'}
+              </button>
+            )}
+          </div>
           {usage?.contextTokens != null && usage.contextMaxTokens ? (
             <>
               <p>

@@ -567,6 +567,20 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
     setNeedResumeContext(true);
   };
 
+  const handleManualCompact = async () => {
+    if (running && sessionId) {
+      addItem('system', '🗜️ Đã yêu cầu nén context…');
+      await apiFetch(`/api/say/${sessionId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: '/compact' }),
+      }).catch(() => {});
+    } else {
+      setTask('/compact');
+      addItem('system', '🗜️ Chuẩn bị nén context (bấm GỬI hoặc Enter để chạy)…');
+    }
+  };
+
   /**
    * Mở một cuộc cũ VÀO TAB NÀY: nạp items + conversationId + cwd. Bật cờ needResumeContext
    * để lượt chạy kế gửi kèm tóm tắt (phòng phiên SDK đã bị dọn). Dừng phiên đang chạy (nếu có).
@@ -1098,8 +1112,12 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
             const when = ev.resetsAt ? formatResetIn(ev.resetsAt) : '';
             addItem('system', `⏸️ Hết hạn mức phiên (5h)${when ? ` · reset ${when.toLowerCase()}` : ''}. Đang chờ lịch tự chạy tiếp…`);
           } else if (ev.hint) {
-            if (ev.isContextOverflow) recoverFromContextOverflow();
-            addItem('error', ev.hint);
+            if (ev.isContextOverflow) {
+              recoverFromContextOverflow();
+              addItem('system', `🗜️ ${ev.hint}`);
+            } else {
+              addItem('error', ev.hint);
+            }
           } else {
             addItem('error', `Kết thúc bất thường: ${ev.subtype}`);
           }
@@ -1177,8 +1195,12 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
           closeSrc();
           break;
         case 'fatal':
-          if (ev.contextOverflow) recoverFromContextOverflow();
-          addItem('error', ev.message);
+          if (ev.contextOverflow) {
+            recoverFromContextOverflow();
+            addItem('system', `🗜️ ${ev.message}`);
+          } else {
+            addItem('error', ev.message);
+          }
           setRunning(false);
           localStorage.removeItem(K.session);
           closeSrc();
@@ -2738,6 +2760,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
               stack={stack}
               selectedMcps={selectedMcps}
               usage={usage}
+              onCompact={handleManualCompact}
             />
           )}
           {wsTab === 'history' && (

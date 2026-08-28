@@ -134,8 +134,10 @@ Trong đó:
 - Nút theme header xoay vòng **3 giao diện nền**: sáng (giấy da) → tối (mực đêm) → blueprint (bản vẽ), độc lập với **7 màu nhấn**.
 - Khi agent muốn sửa file / chạy lệnh / ghi Jira → **thẻ duyệt** với nút **Cho phép / Từ chối**. Nút **Dừng** hủy giữa chừng.
 - **Tự chạy tiếp khi hết hạn mức phiên (5h)**: phiên đang thực thi bị dừng → hệ thống tự lên lịch & resume khi hạn mức reset (tối đa 3 lần), UI hiện thẻ đếm ngược + nút huỷ.
-- **Hội thoại dài không chết**: chạm ~80% cửa sổ ngữ cảnh (`BOW_COMPACT_AT`) agent tự `/compact` ngay sau lượt
-  đang chạy; lỡ vượt trần cứng thì tab dọn ngữ cảnh và chạy tiếp bằng bản tóm tắt thay vì mất việc.
+- **Hội thoại dài không chết**: chạm ngưỡng cửa sổ ngữ cảnh (`BOW_COMPACT_AT`, mặc định 80%) agent tự
+  `/compact` — **ngay giữa lượt**, không đợi lượt kết thúc, vì một lượt marathon có thể phình quá trần mà
+  không bao giờ chạm `result`; lỡ vượt trần cứng thì tab dọn ngữ cảnh và chạy tiếp bằng bản tóm tắt thay vì
+  mất việc. Chạy AI ngoài (trần nhỏ hơn Claude) nên hạ ngưỡng, ví dụ `BOW_COMPACT_AT=55`.
 
 ### Cosmos — nhìn codebase như một vũ trụ 🌌
 

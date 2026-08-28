@@ -1391,17 +1391,49 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
   // Trần context THẬT của AI ngoài (0 = Anthropic → tin số CLI báo). Xem providerContextTokens.
   const trueContextMax = providerContextTokens(providerId) ?? 0;
   let lastContextPct: number | null = null;
-  // Đã vượt TRẦN CỨNG của model chưa. Quan trọng: quá trần thì /compact cũng nổ theo — bản
-  // thân việc nén phải gửi cả hội thoại lên cho model tóm tắt. Lúc đó chỉ còn cách dọn
-  // ngữ cảnh phía bow (tab giữ nguyên, lượt sau gửi kèm tóm tắt).
+  // Đã vượt TRẦN CỨNG của model chưa. Quá trần thì /compact thường nổ theo (nén cũng phải
+  // gửi cả hội thoại lên) — NHƯNG vẫn thử nén trước; chỉ dọn phiên khi nén thất bại.
   let contextOverTheLimit = false;
   let compactRequested = false;
+  // Đang chờ kết quả /compact: chỉ lúc này mới soi lời agent xem có phải lỗi nén.
+  // compactRequested sống cả lượt (tránh nén 2 lần); cờ này tắt sau boundary/fail.
+  let awaitingCompactResult = false;
+  // Kế toán /compact do BOW tự gửi: mỗi lời nén chiếm một slot trong input.count() nhưng
+  // KHÔNG chốt bằng 'result'. sent > settled = còn lời nén đang chờ chạy → phải GIỮ kênh mở;
+  // settled = số slot trừ ra khi hỏi "còn lời người dùng nào chưa được trả lời?".
+  let compactsSent = 0;
+  let compactsSettled = 0;
+  const canReleaseInput = () =>
+    compactsSent === compactsSettled && doneTurns >= input.count() - compactsSettled;
+  const settleCompact = () => {
+    if (compactsSettled < compactsSent) compactsSettled++;
+    awaitingCompactResult = false;
+  };
+  /**
+   * Xếp /compact vào hàng đợi input. Gọi được từ GIỮA lượt (emitContextUsage) lẫn cuối lượt
+   * ('result') — kênh input có hàng đợi nên SDK nhận ngay khi agent nhả tool hiện tại.
+   *
+   * Nén GIỮA lượt là chỗ mấu chốt: một lượt marathon phình từ dưới ngưỡng lên quá trần mà
+   * không bao giờ chạm 'result', và tới lúc đó /compact cũng nổ theo (đo thực tế trên grok:
+   * 503.312/500.000 token → nén thất bại → mất cả ngữ cảnh tab).
+   */
+  const requestCompact = (pct: number | null) => {
+    compactRequested = true;
+    awaitingCompactResult = true;
+    compactsSent++;
+    opts.onEvent({
+      type: 'tool',
+      name: 'compact',
+      describe: `🗜️ Context đã dùng ${Math.round(pct ?? 0)}% — đang nén lịch sử để phiên chạy tiếp được…`,
+    });
+    input.send('/compact');
+  };
   // Phát "hết chỗ, đã dọn ngữ cảnh" đúng MỘT lần cho mỗi lượt chạy.
   let overflowAnnounced = false;
   const announceOverflow = (raw: string) => {
     if (overflowAnnounced) return;
     overflowAnnounced = true;
-    const hint = contextOverflowHint(raw) ?? contextOverflowHint('maximum prompt length')!;
+    const hint = contextOverflowHint(raw) ?? formatOverflowHint(raw);
     opts.onEvent({ type: 'error', subtype: 'context_overflow', hint, isContextOverflow: true });
   };
   const emitContextUsage = async () => {
@@ -1431,6 +1463,18 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
         contextPercentage: pct,
       },
     });
+    // Chạm ngưỡng GIỮA lượt → nén ngay, đừng đợi 'result' (lượt dài có thể không bao giờ tới).
+    if (
+      shouldCompactNow({
+        pct,
+        overLimit: contextOverTheLimit,
+        requested: compactRequested,
+        at: COMPACT_AT,
+        sent: compactsSent,
+      })
+    ) {
+      requestCompact(pct);
+    }
   };
   try {
   for await (const message of q) {
@@ -1453,13 +1497,22 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
         // im lặng, họ sẽ tưởng agent tự quên việc.
         if (message.subtype === 'status') {
           const st = message as { compact_result?: string; compact_error?: string };
-          if (st.compact_result === 'failed' && contextOverflowHint(st.compact_error)) {
-            contextOverTheLimit = true;
-            announceOverflow(st.compact_error ?? '');
-            if (doneTurns >= input.count() - 1) releaseInput();
+          if (st.compact_result === 'failed') {
+            settleCompact();
+            // Nén thất bại vì tràn (hoặc đã đo quá trần) → lúc đó mới dọn phiên.
+            // Compact fail khác (timeout/mạng) giữ conversationId, chỉ đóng lượt.
+            if (contextOverflowHint(st.compact_error) || contextOverTheLimit) {
+              contextOverTheLimit = true;
+              announceOverflow(st.compact_error ?? '');
+            }
+            if (canReleaseInput()) releaseInput();
           }
         }
         if (message.subtype === 'compact_boundary') {
+          // Nén thành công trên CÙNG phiên — đừng dọn conversationId.
+          contextOverTheLimit = false;
+          settleCompact();
+          compactRequested = false;
           const m = (message as { compact_metadata?: { pre_tokens?: number; post_tokens?: number } }).compact_metadata;
           const pre = m?.pre_tokens ? Math.round(m.pre_tokens / 1000) : null;
           const post = m?.post_tokens ? Math.round(m.post_tokens / 1000) : null;
@@ -1475,7 +1528,7 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
           // releaseInput và phiên treo 2 phút chờ idle guard. Nén xong = lượt đó xong.
           // Trừ 1 vì chính /compact cũng nằm trong input.count(); còn lời người dùng chen
           // thì điều kiện sai và kênh vẫn được giữ mở đúng như trước.
-          if (doneTurns >= input.count() - 1) releaseInput();
+          if (canReleaseInput()) releaseInput();
         }
         break;
       }
@@ -1494,12 +1547,15 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
         for (const block of message.message.content) {
           if (block.type === 'text' && block.text.trim()) {
             opts.onEvent({ type: 'text', text: block.text.trim() });
-            if (contextOverflowHint(block.text)) {
+            // CHỈ soi lời agent khi đang nén: một số bản CLI in lỗi compact ra như text
+            // thay vì system/status. Lượt thường agent viết docs/code có chữ
+            // "maximum prompt length" KHÔNG phải tràn — nhận nhầm sẽ xóa conversationId.
+            if (awaitingCompactResult && contextOverflowHint(block.text)) {
               contextOverTheLimit = true;
               announceOverflow(block.text);
-              // Lỗi nén in ra như lời agent (bản CLI không phát system/status): lượt
-              // /compact này cũng sẽ không có 'result' → tự đóng, đừng treo 2 phút.
-              if (compactRequested && doneTurns >= input.count() - 1) releaseInput();
+              // Lượt /compact này cũng sẽ không có 'result' → tự đóng, đừng treo 2 phút.
+              settleCompact();
+              if (canReleaseInput()) releaseInput();
             }
           } else if (block.type === 'tool_use') {
             let describe = describeTool(block.name);
@@ -1611,20 +1667,21 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
         // chờ agent xử lý, đóng bây giờ là nuốt mất. Phanh chống treo: SDK im quá lâu →
         // idle guard đóng hộ.
         doneTurns++;
-        // Chạm ngưỡng → xếp /compact vào hàng đợi NGAY SAU lượt vừa xong (không cắt ngang
-        // công việc). input.count() tăng theo nên vòng lặp giữ kênh mở tới khi nén xong.
-        if (contextOverTheLimit) {
-          announceOverflow('maximum prompt length');
-        } else if (!compactRequested && COMPACT_AT > 0 && COMPACT_AT < 100 && (lastContextPct ?? 0) >= COMPACT_AT) {
-          compactRequested = true;
-          opts.onEvent({
-            type: 'tool',
-            name: 'compact',
-            describe: `🗜️ Context đã dùng ${Math.round(lastContextPct ?? 0)}% — đang nén lịch sử để phiên chạy tiếp được…`,
-          });
-          input.send('/compact');
+        // Chạm ngưỡng HOẶC vừa chạm trần → xếp /compact NGAY SAU lượt vừa xong (không cắt
+        // ngang việc, không dọn phiên). Đếm token không đủ để tuyên bố tràn — chỉ dọn khi
+        // nén thất bại (status/assistant) hoặc API trả lỗi overflow ở result.
+        if (
+          shouldCompactNow({
+            pct: lastContextPct,
+            overLimit: contextOverTheLimit,
+            requested: compactRequested,
+            at: COMPACT_AT,
+            sent: compactsSent,
+          })
+        ) {
+          requestCompact(lastContextPct);
         }
-        if (doneTurns >= input.count()) releaseInput();
+        if (canReleaseInput()) releaseInput();
         else armIdleGuard();
         break;
       }
@@ -1793,6 +1850,35 @@ export function isForeignSessionStore(s: unknown): boolean {
 }
 
 
+/** Trần số lần tự nén trong MỘT lần chạy — phanh chống vòng lặp nén khi nén không giảm được. */
+const MAX_COMPACTS_PER_RUN = 3;
+
+/**
+ * Có nên xếp /compact NGAY BÂY GIỜ không? Tách thuần để test được cả hai chỗ gọi: phép đo
+ * giữa lượt (emitContextUsage) và ranh giới lượt ('result').
+ *
+ * - `at` ngoài khoảng (0,100) = tắt tự nén, người dùng tự lo bằng tay (BOW_COMPACT_AT).
+ * - `requested` = lượt này đã gửi một lời nén rồi → không gửi chồng.
+ * - `overLimit` = đã đo vượt TRẦN CỨNG: vẫn thử nén (nén có thể nổ theo, lúc đó mới dọn phiên).
+ * - `pct` null (chưa đo được) và chưa quá trần → chưa có cơ sở, đừng nén.
+ * - `sent`/`max`: phanh chống nén lặp. `compact_boundary` mở khoá `requested` để nén lại được
+ *   khi lượt còn dài, nên nếu một lần nén không giảm được bao nhiêu (post ≈ pre) thì phép đo
+ *   kế tiếp lại chạm ngưỡng → gửi /compact vô tận. Trần cứng số lần nén mỗi lần chạy.
+ */
+export function shouldCompactNow(o: {
+  pct: number | null;
+  overLimit: boolean;
+  requested: boolean;
+  at: number;
+  sent?: number;
+  max?: number;
+}): boolean {
+  if (o.requested) return false;
+  if ((o.sent ?? 0) >= (o.max ?? MAX_COMPACTS_PER_RUN)) return false;
+  if (!(o.at > 0 && o.at < 100)) return false;
+  return o.overLimit || (o.pct ?? 0) >= o.at;
+}
+
 /**
  * Nhận diện lỗi TRÀN CONTEXT WINDOW (lịch sử hội thoại vượt trần prompt của model) và trả
  * câu hướng dẫn tiếng Việt; null nếu không phải lỗi đó.
@@ -1802,19 +1888,17 @@ export function isForeignSessionStore(s: unknown): boolean {
  * chạy được nhiều hãng: Anthropic ("maximum prompt length is N but the request contains M
  * tokens", "prompt is too long") và OpenAI/xAI đi qua gateway LiteLLM
  * ("maximum context length", "context_length_exceeded").
+ *
+ * Cố ý KHÔNG bắt trần cụm "maximum prompt length": agent hay nhúng đúng cụm đó khi viết
+ * docs/code; nhận nhầm sẽ xóa conversationId giữa chừng.
  */
 export function contextOverflowHint(raw: string | undefined): string | null {
-  const hay = (raw ?? '').toLowerCase();
-  const hit =
-    hay.includes('maximum prompt length') ||
-    hay.includes('prompt is too long') ||
-    hay.includes('maximum context length') ||
-    hay.includes('context_length_exceeded') ||
-    hay.includes('context length exceeded') ||
-    hay.includes('exceed context limit');
-  if (!hit) return null;
-  // Thông báo của cả hai hãng đều có dạng "<trần> ... <thực tế>" — lấy được thì hiện kèm
-  // cho người dùng thấy vượt bao nhiêu, không lấy được cũng không sao.
+  if (!looksLikeContextOverflow(raw)) return null;
+  return formatOverflowHint(raw);
+}
+
+/** Câu banner khi đã chắc là tràn — dùng cả khi chuỗi gốc không khớp detector. */
+function formatOverflowHint(raw: string | undefined): string {
   const nums = (raw ?? '').match(/\b\d{5,}\b/g);
   const size =
     nums && nums.length >= 2
@@ -1826,6 +1910,50 @@ export function contextOverflowHint(raw: string | undefined): string | null {
     'kèm tóm tắt việc đang làm (không cần mở tab khác). Đỡ tái diễn: bớt MCP (--no-mcp), khai ' +
     '.claude/skills/.bow-skip cho skill không dùng, đọc file theo đoạn thay vì cat cả file.'
   );
+}
+
+function looksLikeContextOverflow(raw: string | undefined): boolean {
+  if (typeof raw !== 'string' || !raw) return false;
+  const hay = raw.toLowerCase();
+  if (
+    hay.includes('context_length_exceeded') ||
+    hay.includes('context length exceeded') ||
+    hay.includes('exceed context limit')
+  ) {
+    return true;
+  }
+  const hasTokenCounts = /\d{5,}/.test(hay);
+  const isErrorShaped =
+    hay.includes('api error') ||
+    hay.includes('badrequesterror') ||
+    hay.includes('invalid-argument') ||
+    hay.includes('error during compaction') ||
+    hay.includes('error during compact') ||
+    hay.includes('returned an error result') ||
+    hay.includes('error result') ||
+    hay.includes('error:');
+  // "prompt is too long: 512000 tokens > 500000 maximum" — hoặc thông báo ngắn của CLI/SDK
+  // (ví dụ "Claude Code returned an error result: Prompt is too long", "Prompt is too long?").
+  // Câu văn trong docs/lời agent thì dài hơn, bỏ qua.
+  const isShortPromptTooLong =
+    /^\s*(claude code returned an error result:\s*)?prompt is too long[\s?.]*$/i.test(raw.trim()) ||
+    (hay.length < 100 && (isErrorShaped || /^\s*prompt is too long\b/.test(hay)));
+
+  if (
+    hay.includes('prompt is too long') &&
+    (hasTokenCounts || isErrorShaped || isShortPromptTooLong)
+  ) {
+    return true;
+  }
+  // Anthropic/xAI: "maximum prompt length is 500000 but the request contains 503196 tokens."
+  if (/maximum prompt length is \d+/.test(hay) && (/contains \d+/.test(hay) || isErrorShaped)) {
+    return true;
+  }
+  // OpenAI: "maximum context length is 256000 tokens. However, your messages resulted in 260311 tokens."
+  if (/maximum context length is \d+/.test(hay) && (hasTokenCounts || isErrorShaped)) {
+    return true;
+  }
+  return false;
 }
 
 /** Chuyển một cửa sổ rate-limit của SDK → UsageWindow (bỏ qua nếu thiếu). */
