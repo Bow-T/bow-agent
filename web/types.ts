@@ -204,6 +204,7 @@ export type NavSection =
   | 'jira'
   | 'repos'
   | 'cosmos'
+  | 'map'
   | 'activity'
   | 'settings';
 

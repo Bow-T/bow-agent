@@ -33,6 +33,7 @@ const NAV_ITEMS: NavItemDef[] = [
   { id: 'jira', icon: 'target', vi: 'Jira', en: 'Jira' },
   { id: 'repos', icon: 'folder', vi: 'Nguồn mã', en: 'Repos', adminOnly: true },
   { id: 'cosmos', icon: 'starChart', vi: 'Cosmos', en: 'Cosmos' },
+  { id: 'map', icon: 'target', vi: 'Bản đồ', en: 'Map' },
   { id: 'activity', icon: 'activityLog', vi: 'Hoạt động', en: 'Activity' },
   { id: 'settings', icon: 'tool', vi: 'Cài đặt', en: 'Settings' },
 ];

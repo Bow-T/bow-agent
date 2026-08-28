@@ -4861,6 +4861,146 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   line-height: 1;
 }
 
+
+/* ══════════════════════════════════════════════════════════════════════════════════════
+ * §BẢN ĐỒ (BOW GLOBE) — màn "map" ở nav trái: quả cầu WebGL + HUD số liệu thật.
+ *
+ * Canvas chiếm trọn thân panel (không cuộn), MỌI lớp chữ nổi lên trên bằng position:absolute
+ * và KHÔNG bắt chuột (pointer-events:none) trừ thẻ chi tiết — nếu không, HUD sẽ nuốt thao tác
+ * xoay cầu. Màu bám token theme (--brass/--step-*), không bảng màu riêng: đổi theme/accent là
+ * cả HUD lẫn cầu đổi theo (canvas đọc lại var qua MutationObserver).
+ * ══════════════════════════════════════════════════════════════════════════════════════ */
+.section-panel-body.globe-body { padding: 0; overflow: hidden; }
+.globe-wrap { position: relative; width: 100%; height: 100%; min-height: 380px; }
+.globe-canvas { position: absolute; inset: 0; touch-action: none; cursor: grab; }
+.globe-canvas canvas { display: block; }
+
+/* Chip bật/tắt lớp (ở hàng hành động của tiêu đề panel). Chấm màu = màu lớp trên cầu. */
+.globe-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 10px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--muted);
+  background: transparent;
+  border: var(--bd-thin) solid var(--hairline);
+  border-radius: var(--r);
+  cursor: pointer;
+}
+.globe-chip i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; opacity: 0.5; }
+.globe-chip.on { color: var(--ink); border-color: color-mix(in srgb, var(--brass) 60%, transparent); background: var(--brass-soft); }
+.globe-chip.on i { opacity: 1; }
+.globe-chip.on[data-l='code'] i { background: var(--step-tool); }
+.globe-chip.on[data-l='live'] i { background: var(--step-thinking); }
+.globe-chip.on[data-l='jira'] i { background: var(--step-result); }
+.globe-chip.on[data-l='source'] i { background: var(--step-approval); }
+
+/* Chú giải múi: nói rõ quả cầu chia vùng theo cái gì (đọc một lần là nhớ chỗ nào là chỗ nào). */
+.globe-zones {
+  position: absolute; top: 12px; left: 14px;
+  display: flex; flex-direction: column; gap: 4px;
+  pointer-events: none;
+}
+.globe-zone {
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.16em;
+  color: var(--muted); opacity: 0.85;
+}
+.globe-zone::before { content: '▸ '; color: var(--brass); }
+.globe-zone.off { opacity: 0.3; text-decoration: line-through; }
+
+/* Dải số liệu trên cùng bên phải — cùng nguồn dữ liệu với các chấm đang vẽ. */
+.globe-stats {
+  position: absolute; top: 10px; right: 14px;
+  display: flex; gap: 14px; flex-wrap: wrap; justify-content: flex-end;
+  pointer-events: none;
+}
+.globe-stat { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.15; }
+.globe-stat b { font-family: var(--mono); font-size: 15px; color: var(--ink); }
+.globe-stat span { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.globe-stat[data-t='run'] b { color: var(--step-tool); }
+.globe-stat[data-t='hot'] b { color: var(--step-error); }
+
+/* Bảng bên trái: xếp hạng thư mục + phân bố sprint (số liệu chính xác mà mắt không đếm được). */
+.globe-side {
+  position: absolute; left: 14px; bottom: 44px;
+  width: 190px; max-width: 42%;
+  padding: 10px 11px;
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  border: var(--bd-thin) solid var(--hairline);
+  border-radius: var(--r);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+}
+.globe-side-t {
+  font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--muted); margin: 8px 0 5px;
+}
+.globe-side-t:first-child { margin-top: 0; }
+.globe-side-row { display: flex; align-items: center; gap: 7px; font-size: 11px; padding: 1.5px 0; }
+.globe-side-row.muted { color: var(--muted); font-size: 10px; }
+.globe-side-row i { width: 7px; height: 7px; border-radius: 2px; flex: none; }
+.globe-side-n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.globe-side-v { font-family: var(--mono); color: var(--muted); }
+
+/* Chú giải màu trạng thái — 4 tone dùng chung với §Step colors. */
+.globe-legend {
+  position: absolute; left: 14px; bottom: 12px;
+  display: flex; gap: 12px; flex-wrap: wrap;
+  pointer-events: none;
+}
+.globe-legend span {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
+}
+.globe-legend span::before { content: ''; width: 7px; height: 7px; border-radius: 50%; }
+.globe-legend span[data-t='hot']::before { background: var(--step-error); }
+.globe-legend span[data-t='run']::before { background: var(--step-tool); }
+.globe-legend span[data-t='ok']::before { background: var(--step-approval); }
+.globe-legend span[data-t='idle']::before { background: var(--muted); }
+
+/* Tooltip bám con trỏ (chỉ đọc, không bắt chuột để cầu vẫn xoay được khi rê qua). */
+.globe-tip {
+  position: absolute; z-index: 4;
+  max-width: 280px;
+  padding: 7px 9px;
+  background: var(--surface);
+  border: var(--bd-thin) solid var(--hairline);
+  border-radius: var(--r);
+  box-shadow: 0 8px 24px -12px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+.globe-tip b { display: block; font-size: 12px; }
+.globe-tip span { display: block; font-family: var(--mono); font-size: 10px; color: var(--muted); word-break: break-all; }
+
+/* Thẻ chi tiết khi bấm vào một điểm — lớp DUY NHẤT bắt chuột (có nút hành động). */
+.globe-detail {
+  position: absolute; right: 14px; bottom: 14px; z-index: 5;
+  width: 300px; max-width: calc(100% - 28px);
+  padding: 12px 13px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  border: var(--bd-thin) solid var(--hairline);
+  border-left: 4px solid var(--brass);
+  border-radius: var(--r);
+  backdrop-filter: blur(8px);
+}
+.globe-detail-h { display: flex; align-items: center; gap: 8px; }
+.globe-detail-h b { flex: 1; min-width: 0; font-size: 13px; word-break: break-all; }
+.globe-detail p { margin: 5px 0 9px; font-size: 11.5px; color: var(--muted); word-break: break-word; }
+.globe-detail dl { margin: 0 0 10px; display: flex; flex-direction: column; gap: 3px; }
+.globe-detail dl > div { display: flex; gap: 8px; font-size: 11px; }
+.globe-detail dt { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); min-width: 88px; }
+.globe-detail dd { margin: 0; flex: 1; min-width: 0; word-break: break-word; }
+.globe-detail .btn { width: 100%; }
+.globe-x {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; flex: none;
+  color: var(--muted);
+  background: transparent;
+  border: var(--bd-thin) solid var(--hairline);
+  border-radius: var(--r);
+  cursor: pointer;
+}
+.globe-x:hover { color: var(--ink); border-color: var(--ink-2); }
+
 /* ══════════════════════════════════════════════════════════════════════════════════════
  * §MOBILE · MÀN HẸP — MỌI luật riêng cho điện thoại/tablet dọc gom Ở ĐÂY, một chỗ duy nhất.
  *
@@ -4979,6 +5119,14 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   .section-panel-actions { flex: 1 1 100%; margin-left: 0; }
   .section-panel-actions .panel-input { flex: 1 1 auto; min-width: 0; }
   .section-panel-body { padding: 12px 12px 24px; }
+  /* Bản đồ trên điện thoại: giữ quả cầu + số liệu chính; bảng xếp hạng bên trái chiếm quá
+     nửa màn nên ẩn, chi tiết điểm trải hết bề ngang cho dễ bấm. */
+  .globe-wrap { min-height: 58vh; }
+  .globe-side { display: none; }
+  .globe-stats { gap: 10px; }
+  .globe-stat b { font-size: 13px; }
+  .globe-detail { left: 10px; right: 10px; width: auto; }
+  .globe-zones { font-size: 9px; }
   .agent-card-grid,
   .settings-grid,
   .ctx-grid { grid-template-columns: minmax(0, 1fr); }
