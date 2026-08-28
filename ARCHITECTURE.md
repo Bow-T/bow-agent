@@ -528,6 +528,11 @@ Long conversations are normal here (marathon sessions), so `runner.ts` treats co
   `/compact` blows up too, since compaction must also ship the whole conversation (measured on grok:
   503,312/500,000 tokens). The input channel is queued, so the SDK picks the compaction up as soon as the
   agent releases its current tool.
+- **Growth-rate safety brake** (matters more than the % threshold): one burst of file-reading tools on a
+  monorepo dumps hundreds of thousands of tokens into a SINGLE measurement gap — measured on grok:
+  `56k → 228k` after three file reads (+172k). A % threshold can never catch that: context jumps from below
+  the threshold straight past the ceiling with no measurement in between. So `shouldCompactNow` also fires
+  when `tokens + delta × 1.5 >= ceiling` — "if one more burst like the last one would overflow, compact now".
 - **Accounting for compaction turns**: a `/compact` bow sends itself takes a slot in `input.count()` but never
   ends in a `result`. Counting `compactsSent`/`compactsSettled` keeps the channel open while a compaction is
   still pending (otherwise the SDK closes the transport before it runs) and subtracts settled slots when
@@ -535,8 +540,11 @@ Long conversations are normal here (marathon sessions), so `runner.ts` treats co
 - **The ceiling has to be the REAL number**: `providerContextTokens` (`config/env.ts`) declares the ceiling per
   provider (grok = 500k, override with `BOW_PROVIDER_CONTEXT_TOKENS`). The CLI *guesses* a ceiling for models
   it doesn't know (it guessed 200k for grok) — trusting that guess made bow declare an overflow while more than
-  half the window was still free. For the same reason bow **turns the CLI's own autoCompact off** for external
-  providers and does the compaction itself.
+  half the window was still free. That once led to **turning the CLI's autoCompact off** for external providers
+  — a mistake: it is the only safety net that can compact *mid-turn* (bow's own `/compact` merely queues an
+  input). With it off, one burst of file-reading tools (+172k per gap, measured) sails past the ceiling with
+  nothing to catch it. The fix is to **keep the net and feed it the REAL ceiling** via
+  `autoCompactWindow = trueContextMax`; only providers whose true ceiling is unknown still turn it off.
 - **Overflow recovery**: past the hard ceiling even `/compact` fails (compacting has to send the whole
   conversation up too). The runner then emits `error/context_overflow`, the tab clears its context (drops
   `conversationId`), and the next turn continues from the `resumeContext` **summary** (20k chars for external

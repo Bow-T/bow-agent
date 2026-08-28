@@ -106,3 +106,23 @@ test('shouldCompactNow: phanh chống nén lặp khi nén không giảm được
   assert.equal(shouldCompactNow({ ...over, sent: 3 }), false);
   assert.equal(shouldCompactNow({ ...over, sent: 1, max: 1 }), false);
 });
+
+/**
+ * Phanh dự phòng theo tốc độ phình — số lấy từ phiên grok THẬT: 56.131 → 228.370 token sau
+ * một cụm 3 lần đọc file (+172.239). Ngưỡng % không bắt được vì nhịp sau đã vọt qua trần.
+ */
+test('shouldCompactNow: nén khi một nhịp phình nữa là tràn, dù % còn dưới ngưỡng', () => {
+  const base = { pct: 46, overLimit: false, requested: false, at: 55, hardMax: 500_000 };
+  // 228.370 + 172.239 × 1.5 = 486.728 → chưa chạm 500k, chưa nén.
+  assert.equal(shouldCompactNow({ ...base, tokens: 228_370, delta: 172_239 }), false);
+  // Nhịp phình to hơn một chút là đủ để tuyên bố nguy hiểm.
+  assert.equal(shouldCompactNow({ ...base, tokens: 228_370, delta: 190_000 }), true);
+  // Phình đều đặn nhưng nhỏ thì cứ chạy tiếp, đừng nén sớm.
+  assert.equal(shouldCompactNow({ ...base, tokens: 228_370, delta: 10_000 }), false);
+});
+
+test('shouldCompactNow: thiếu số đo thì phanh dự phòng im lặng', () => {
+  const base = { pct: 10, overLimit: false, requested: false, at: 55 };
+  assert.equal(shouldCompactNow({ ...base, tokens: 400_000, delta: 400_000, hardMax: 0 }), false);
+  assert.equal(shouldCompactNow({ ...base, tokens: null, delta: null, hardMax: 500_000 }), false);
+});

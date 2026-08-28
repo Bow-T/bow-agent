@@ -44,8 +44,9 @@ trỏ vào `MEMORY.md`. Thư mục này được commit theo git để đồng b
   chạm `BOW_COMPACT_AT` (mặc định 80%) thì xếp `/compact` ngay SAU lượt vừa xong (không cắt ngang);
   vượt trần cứng thì phát `context_overflow` → tab dọn ngữ cảnh, lượt sau chạy tiếp bằng tóm tắt
   (`resumeContext`). Trần context của AI ngoài khai THẬT ở `providerContextTokens` (`env.ts`,
-  grok = 500k, ghi đè bằng `BOW_PROVIDER_CONTEXT_TOKENS`) — **đừng tin số CLI tự đoán**, và tắt
-  autoCompact của CLI cho provider ngoài (nó nén theo trần đoán, sớm gấp ~2,5 lần).
+  grok = 500k, ghi đè bằng `BOW_PROVIDER_CONTEXT_TOKENS`) — **đừng tin số CLI tự đoán**. autoCompact
+  của CLI là lưới DUY NHẤT nén được giữa lượt: **giữ bật**, và khai trần thật cho nó bằng
+  `autoCompactWindow` (tắt hẳn thì một cụm tool đọc file +172k/nhịp vọt qua trần, không ai cứu).
 - **Mỗi tab một phiên — CẤM đọc chéo hội thoại.** Hook `PreToolUse` (`src/skills/hooks.ts`) *và*
   `canUseTool` cùng chặn Read/Grep/Glob/Bash chạm `.claude*/projects`, `~/.bow-agent`,
   `conversations.json`. Phải chặn ở CẢ hai tầng vì hook chạy TRƯỚC cổng duyệt (tool đọc auto-duyệt

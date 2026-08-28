@@ -480,14 +480,22 @@ Hội thoại dài là chuyện thường (phiên marathon), nên `runner.ts` x�
   quá trần mà không bao giờ chạm `result` — tới lúc đó `/compact` cũng nổ theo vì nén cũng phải gửi cả hội
   thoại lên (đo thực tế trên grok: 503.312/500.000 token). Kênh input có hàng đợi nên SDK nhận lời nén ngay
   khi agent nhả tool hiện tại.
+- **Phanh dự phòng theo tốc độ phình** (quan trọng hơn ngưỡng %): một cụm tool đọc file trên monorepo
+  nhồi cả trăm nghìn token vào MỘT nhịp đo — đo thật với grok: `56k → 228k` sau 3 lần đọc file (+172k).
+  Ngưỡng % không bao giờ bắt được vì context nhảy từ dưới ngưỡng thẳng qua trần, không phép đo nào rơi
+  vào giữa. Nên `shouldCompactNow` còn nén khi `tokens + delta × 1.5 >= trần` — "thêm một nhịp phình như
+  vừa rồi là tràn thì nén ngay".
 - **Kế toán lời nén**: `/compact` do bow tự gửi chiếm một slot `input.count()` nhưng KHÔNG chốt bằng
   `result`. Đếm `compactsSent`/`compactsSettled`: còn lời nén chưa xong thì GIỮ kênh mở (nếu không SDK đóng
   transport trước khi nén kịp chạy), nén xong thì trừ slot ra khi hỏi "còn lời người dùng nào chưa được trả
   lời?" — thiếu chỗ này phiên đứng im tới khi idle guard hết 120s.
 - **Trần context phải là số THẬT**: `providerContextTokens` (`config/env.ts`) khai trần theo provider
   (grok = 500k, ghi đè bằng `BOW_PROVIDER_CONTEXT_TOKENS`). CLI tự đoán trần cho model lạ (đoán grok chỉ
-  200k) → tin số đó thì bow tuyên bố tràn khi phiên còn thừa hơn nửa cửa sổ. Vì lý do đó, với AI ngoài
-  bow **tắt autoCompact của CLI** và tự lo việc nén.
+  200k) → tin số đó thì bow tuyên bố tràn khi phiên còn thừa hơn nửa cửa sổ. Từng vì lý do đó mà **tắt
+  hẳn autoCompact của CLI** cho AI ngoài — sai lầm: đó là lưới an toàn DUY NHẤT nén được giữa lượt (tầng
+  `/compact` của bow chỉ chen lời vào hàng đợi input). Tắt đi thì một cụm tool đọc file (+172k mỗi nhịp,
+  đo thật) vọt qua trần mà không ai cứu. Cách đúng: **giữ lưới, khai trần THẬT** cho nó qua
+  `autoCompactWindow = trueContextMax`; chỉ provider không biết trần thật mới tắt.
 - **Cứu tràn**: vượt trần cứng thì `/compact` cũng nổ theo (nén cũng phải gửi cả hội thoại lên). Lúc đó
   runner phát `error/context_overflow`, tab dọn ngữ cảnh (bỏ `conversationId`) và lượt sau chạy tiếp bằng
   **bản tóm tắt** `resumeContext` (20k ký tự cho AI ngoài — đó là toàn bộ trí nhớ còn lại).
