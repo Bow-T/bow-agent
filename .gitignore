@@ -17,3 +17,6 @@ conversations/
 # Agent Skills bow-agent tự TRẢI lúc runtime (nguồn: repo GitHub bow-skill-core/<stack> clone
 # về ~/.bow/skills-cache/, rồi trải sang đây) — không track
 .claude/skills/
+
+# Sổ tay phiên tự sinh (PreCompact hook) — riêng theo máy
+.claude/session-notes.md
