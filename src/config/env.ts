@@ -73,7 +73,7 @@ loadActiveProfileToken();
 export type ProviderId = 'anthropic' | 'grok';
 
 /** Model mặc định của bow khi chạy Anthropic — bản mạnh nhất tier Opus cho agentic dài hơi. */
-const DEFAULT_MODEL = 'claude-opus-4-8';
+const DEFAULT_MODEL = 'claude-opus-5';
 
 /** Model mặc định mỗi provider ngoài: `main` cho việc nặng, `fast` cho việc rẻ (screener/scout). */
 const PROVIDER_MODELS: Record<Exclude<ProviderId, 'anthropic'>, { main: string; fast: string }> = {
@@ -755,7 +755,7 @@ export const config = {
   },
 
   /**
-   * Model mặc định (CLI luôn dùng giá trị này). Opus 4.8 là bản mạnh nhất tier Opus
+   * Model mặc định (CLI luôn dùng giá trị này). Opus 5 là bản mạnh nhất tier Opus
    * cho agentic dài hơi. Web tự chọn model riêng (gửi qua opts.model, ghi đè giá trị này).
    * Chạy provider ngoài (BOW_PROVIDER) thì trả model tương ứng của provider đó.
    */

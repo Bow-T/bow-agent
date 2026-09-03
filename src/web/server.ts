@@ -871,9 +871,9 @@ app.post('/api/run', async (req, res) => {
     //  1. QC/Reviewer read-only → LUÔN Sonnet (nhẹ/rẻ), KHÔNG tin model client gửi (tránh
     //     lỡ dùng Opus khi client cũ/localStorage còn Opus).
     //  2. Mode 'plan' (chỉ HIỂU + LẬP KẾ HOẠCH, KHÔNG sửa file) → hạ Sonnet: lập kế hoạch
-    //     không cần Opus 4.8. Khi user duyệt & chuyển sang execute (manual/edit-auto/auto)
+    //     không cần Opus 5. Khi user duyệt & chuyển sang execute (manual/edit-auto/auto)
     //     mới trả về Opus cho phần sửa code khó. Cắt token cho vòng plan-then-approve.
-    //  3. Còn lại (đang thực thi) → model client chọn (mặc định Opus 4.8).
+    //  3. Còn lại (đang thực thi) → model client chọn (mặc định Opus 5).
     // Admin bấm nút vẫn ghi đè được: nếu client GỬI model tường minh cho phiên plan mà admin
     // muốn Opus, đặt BOW_PLAN_KEEP_MODEL=true để bỏ hạ bậc plan.
     const planKeepsModel = process.env.BOW_PLAN_KEEP_MODEL === 'true';

@@ -21,7 +21,7 @@ import { findClaudeCodeExecutable, buildPerTabEnv } from './runner.js';
  * Model cham screener - re & nhanh la du cho phan loai nhi phan. Override qua env.
  * resolveModel: chay provider ngoai (BOW_PROVIDER) thi quy ve bac 'fast' cua provider do.
  */
-const SCREEN_MODEL = resolveModel(process.env.BOW_SCREEN_MODEL || 'claude-haiku-4-5-20251001');
+const SCREEN_MODEL = resolveModel(process.env.BOW_SCREEN_MODEL || 'claude-haiku-4-5');
 /** Bo han screener neu nguoi van hanh muon (giu hanh vi cu). */
 const SCREEN_DISABLED = process.env.BOW_SCREEN_DISABLE === '1';
 /** Timeout cung - screener cham KHONG duoc lam treo viec chay. Fail-open sau moc nay. */

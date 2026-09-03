@@ -24,7 +24,7 @@ test('provider grok: model claude-* của subagent chuẩn quy về bậc main/f
 test('provider anthropic: model giữ nguyên (không đổi hành vi cũ)', () => {
   const agents = buildSubagents(undefined, 'anthropic');
   assert.equal(agents.reviewer.model, 'claude-sonnet-5');
-  assert.equal(agents['impact-scout'].model, 'claude-haiku-4-5-20251001');
+  assert.equal(agents['impact-scout'].model, 'claude-haiku-4-5');
 });
 
 test('subagent riêng của profile cũng được ánh xạ theo provider', () => {
@@ -32,7 +32,7 @@ test('subagent riêng của profile cũng được ánh xạ theo provider', () 
     custom: {
       description: 'x',
       tools: ['Read'],
-      model: 'claude-opus-4-8',
+      model: 'claude-opus-5',
       prompt: 'p',
     },
   };
