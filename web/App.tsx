@@ -446,9 +446,10 @@ export function formatTokens(n: number): string {
 /** Tên model gọn để hiện trên pill header/composer. Không khớp bảng → trả nguyên id. */
 export function modelLabel(id: string): string {
   switch (id) {
+    case 'claude-opus-5': return 'Opus 5';
     case 'claude-opus-4-8': return 'Opus 4.8';
     case 'claude-sonnet-5': return 'Sonnet 5';
-    case 'claude-haiku-4-5-20251001': return 'Haiku 4.5';
+    case 'claude-haiku-4-5': return 'Haiku 4.5';
     case 'claude-fable-5': return 'Fable 5';
     default: return id;
   }
@@ -489,7 +490,7 @@ interface PaneState {
   /** Đội agent của tab (SOL/VEGA/ORION/LYRA + subagent lạ) — nav trái & màn AGENTS đọc. */
   agents: AgentSummary[];
 }
-const EMPTY_PANE_STATE: PaneState = { running: false, runStartedAt: null, lastRunMs: null, activeConvId: null, title: '', model: 'claude-opus-4-8', claudeProfile: 'default', provider: 'anthropic', usage: null, usageLoading: false, tokenUsage: null, pendingCount: 0, hasContent: false, agents: [] };
+const EMPTY_PANE_STATE: PaneState = { running: false, runStartedAt: null, lastRunMs: null, activeConvId: null, title: '', model: 'claude-opus-5', claudeProfile: 'default', provider: 'anthropic', usage: null, usageLoading: false, tokenUsage: null, pendingCount: 0, hasContent: false, agents: [] };
 
 /** So 2 danh sách agent theo id + trạng thái sáng — chỉ re-render khi có sao thật sự đổi. */
 function sameAgents(a: AgentSummary[], b: AgentSummary[]): boolean {

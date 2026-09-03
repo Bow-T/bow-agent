@@ -17,7 +17,7 @@ import { resolveModelFor, activeProviderId, type ProviderId } from '../config/en
  * trình và gửi 'claude-*' sang gateway Grok (xAI trả 400 "unknown model").
  */
 const SUBAGENT_MODEL = process.env.BOW_SUBAGENT_MODEL || 'claude-sonnet-5';
-const SCOUT_MODEL = process.env.BOW_SCOUT_MODEL || 'claude-haiku-4-5-20251001';
+const SCOUT_MODEL = process.env.BOW_SCOUT_MODEL || 'claude-haiku-4-5';
 
 /**
  * Subagent CHUẨN của bow-agent — bộ "vai trò chuyên biệt" (mượn ý role-specialization

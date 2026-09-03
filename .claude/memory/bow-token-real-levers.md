@@ -10,7 +10,7 @@ token/lượt = ~$0.66/phiên, rất nhỏ). Đừng nhảy vào cắt disallowe
 đổi lấy rủi ro mất tool. User bác đúng: "sai hướng".
 
 **Đòn bẩy THẬT (từ số liệu sprint-runs.json: dry-run CHỈ ĐỌC 6 ticket vẫn tốn ~$2.24/lần):**
-1. **Model Opus 4.8 cho MỌI việc** (config/env.ts:299 `model:'claude-opus-4-8'`) — kể cả đọc
+1. **Model Opus 5 cho MỌI việc** (config/env.ts `DEFAULT_MODEL:'claude-opus-5'`) — kể cả đọc
    ticket, grep, triage. Output Opus $75/M = đắt gấp 50× cache-read. Việc đọc/triage nên hạ
    Sonnet 5 (rẻ 5×) → tiết kiệm ~$1.34/phiên, gấp 2× cắt schema, chất lượng gần như không đổi.
 2. **Subagent tự spawn** — log sprint-live.json có nhiều "🤖 giao việc cho agent phụ". Mỗi

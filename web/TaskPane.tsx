@@ -175,7 +175,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
   // Cấu hình chạy per-tab: model / effort / profile. QC Mode read-only → mặc định Sonnet
   // (nhẹ/rẻ) khi chưa có lựa chọn lưu; các mode khác mặc định Opus.
   const [selectedModel, setSelectedModel] = useState(
-    () => localStorage.getItem(K.model) || (cfg?.isQcMode ? 'claude-sonnet-5' : 'claude-opus-4-8')
+    () => localStorage.getItem(K.model) || (cfg?.isQcMode ? 'claude-sonnet-5' : 'claude-opus-5')
   );
   // AI của tab (Claude / Grok…). Server quyết mặc định (BOW_PROVIDER); admin đổi per-tab.
   const [selectedProvider, setSelectedProvider] = useState(
@@ -435,7 +435,10 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
   useEffect(() => {
     setSelectedModel((m) => {
       if (tabProviderModels) return m.startsWith('claude') ? tabProviderModels.main : m;
-      return m.startsWith('claude') ? m : cfg?.isQcMode ? 'claude-sonnet-5' : 'claude-opus-4-8';
+      // Tab cũ còn giữ id Haiku kèm ngày trong localStorage → kéo về id chuẩn, nếu không
+      // giá trị đó không khớp option nào và ô Mô hình hiện rỗng.
+      if (m === 'claude-haiku-4-5-20251001') return 'claude-haiku-4-5';
+      return m.startsWith('claude') ? m : cfg?.isQcMode ? 'claude-sonnet-5' : 'claude-opus-5';
     });
   }, [tabProviderModels?.main, cfg?.isQcMode]);
 
@@ -2211,9 +2214,10 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
                     ]
                   : [
                       { value: 'claude-fable-5', label: 'Fable 5' },
+                      { value: 'claude-opus-5', label: 'Opus 5' },
                       { value: 'claude-opus-4-8', label: 'Opus 4.8' },
                       { value: 'claude-sonnet-5', label: 'Sonnet 5' },
-                      { value: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
+                      { value: 'claude-haiku-4-5', label: 'Haiku 4.5' },
                     ]
               }
             />

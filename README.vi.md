@@ -542,6 +542,6 @@ memory/               # audit log LAN theo IP (gitignore)
 
 ## Ghi chú
 
-- **Model**: `claude-opus-4-8`. CLI luôn chạy model này; Web UI cho chọn model khác qua giao diện.
+- **Model**: `claude-opus-5`. CLI luôn chạy model này; Web UI cho chọn model khác qua giao diện.
 - **Node ≥ 18** (dùng `fetch` gốc, ESM).
 - Agent **không** tự commit/push/apply-migration trừ khi bạn yêu cầu rõ và duyệt.
