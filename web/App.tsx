@@ -450,6 +450,7 @@ export function modelLabel(id: string): string {
     case 'claude-opus-4-8': return 'Opus 4.8';
     case 'claude-sonnet-5': return 'Sonnet 5';
     case 'claude-haiku-4-5': return 'Haiku 4.5';
+    case 'claude-fable-5-1': return 'Fable 5.1';
     case 'claude-fable-5': return 'Fable 5';
     default: return id;
   }
