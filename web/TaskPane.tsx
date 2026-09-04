@@ -2213,6 +2213,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
                       },
                     ]
                   : [
+                      { value: 'claude-fable-5-1', label: 'Fable 5.1' },
                       { value: 'claude-fable-5', label: 'Fable 5' },
                       { value: 'claude-opus-5', label: 'Opus 5' },
                       { value: 'claude-opus-4-8', label: 'Opus 4.8' },
