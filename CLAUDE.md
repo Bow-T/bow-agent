@@ -39,7 +39,11 @@ trỏ vào `MEMORY.md`. Thư mục này được commit theo git để đồng b
   UI chỉ thấy một tài khoản ảo tên `env` và không sửa được từ web.
 - **MCP tách khỏi profile.** MCP chung lưu `~/.bow-agent/mcp.json` (không phải `~/.claude.json`).
 - **Cổng an toàn duy nhất** = `canUseTool` trong `runner.ts`: tool đọc + Bash an toàn tự chạy;
-  mọi thao tác GHI qua cổng duyệt. Đừng mở đường ghi vòng qua cổng này. Lệnh Bash CHỈ-ĐỌC nhận
+  mọi thao tác GHI qua cổng duyệt. Đừng mở đường ghi vòng qua cổng này. Ngoại lệ HẸP đã chốt:
+  git local cơ bản (`git add`, `git commit -m`, `checkout -b`/`switch -c` nhánh MỚI) tự chạy qua
+  `core/safeLocalGit.ts` — chỉ khi HEAD đang ở nhánh làm việc (nhánh chính main/master/develop/
+  release… luôn hỏi), không `--amend`/`--no-verify`, không đổi sang nhánh có sẵn; Collab non-admin
+  và DevOps KHÔNG được nới. Lệnh Bash CHỈ-ĐỌC nhận
   qua `core/readOnlyBash.ts` (parser tôn trọng NHÁY) chạy TRƯỚC `isRiskyCommand` — vì bộ lọc risky
   quét cả bản đã bung nháy nên đánh oan `awk 'NR>=470…'`/`grep "rm -rf"`, làm toggle Tự duyệt vẫn
   phải bấm tay. Nới đó KHÔNG áp cho non-admin (`requireApprovalForWrites`).
