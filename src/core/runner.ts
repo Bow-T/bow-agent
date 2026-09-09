@@ -38,6 +38,7 @@ import { buildSubagents } from './subagents.js';
 import { createCheckpoint, restoreInstructions, recordAction } from './checkpoint.js';
 import { autopilotBashDecision } from './autopilotBash.js';
 import { isReadOnlyBash } from './readOnlyBash.js';
+import { currentGitBranch, safeLocalGitDecision } from './safeLocalGit.js';
 import { matchesAnyScannable } from './scannableCommand.js';
 import {
   resolveWorkspace,
@@ -1239,6 +1240,19 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
               if (opts.autopilot) recordAction(autopilotRunId, 'Bash', { command: cmd });
               // Fast-path 'safe' CHỈ cho lệnh đơn (không toán tử nối) — chốt chặn M1.
               if (!hasCommandChaining(cmd) && SAFE_COMMANDS.some((re) => re.test(cmd))) return allow;
+              // Git LOCAL cơ bản (git add / git commit -m / tạo nhánh mới): chỉ đổi trạng thái
+              // TRONG repo, không đụng remote, `git reset` lùi được → tự chạy cho khỏi phiền.
+              // Phanh (safeLocalGit.ts): đang đứng trên nhánh CHÍNH thì vẫn hỏi, không tự tạo
+              // nhánh trùng tên nhánh chính, và checkout/switch sang nhánh CÓ SẴN luôn hỏi.
+              // KHÔNG nới cho Collab/non-admin (mọi ghi vẫn treo admin) và DevOps (vai hạ tầng).
+              if (
+                !opts.requireApprovalForWrites &&
+                !isDevOpsMode &&
+                !hasCommandChaining(cmd) &&
+                safeLocalGitDecision(cmd, currentGitBranch(opts.cwd)) === 'auto'
+              ) {
+                return allow;
+              }
               if (opts.requireApprovalForWrites) {
                 return gate({ decisionReason: 'Chạy lệnh cần được duyệt (chế độ cộng tác/không phải admin).' });
               }
