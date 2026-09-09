@@ -534,7 +534,62 @@ Ba "gờ giảm tốc" (không phải hàng rào cứng — cổng duyệt vẫn
   pipe-to-shell) rồi mới match. Dùng chung cho `isRiskyCommand` (runner tương tác) và `autoApprovalPolicy`
   (sprint-scan full-auto) — match chuỗi thô sẽ lọt `r""m -rf`, `bash -c 'rm -rf ~'`, `echo rm|bash`.
 
-## 14. Hướng mở rộng (chưa làm)
+## 14. Duel — hai AI cùng làm một task rồi soi chéo (`core/duel.ts`)
+
+**Vấn đề.** Với task khó, một AI làm xong thì không có ai chấm — người dùng phải tự đọc diff để
+biết chỗ nào sai. Chạy lần hai bằng AI khác thì mất luôn bài của lần một.
+
+**Cách làm.** Hai AI (vd Claude + Grok) nhận *đúng cùng một đề bài*, mỗi bên làm trong một git
+worktree riêng, rồi đổi chéo diff để soi lỗi của nhau. Người dùng đọc hai báo cáo và chọn nhánh
+nào giữ.
+
+```
+                        ┌──────────────────────────┐
+   đề bài  ───────────► │  POST /api/run  duel:true│
+                        └────────────┬─────────────┘
+                                     │ 2 worktree, CÙNG base SHA
+                    ┌────────────────┴────────────────┐
+                    ▼                                 ▼
+        ┌───────────────────────┐         ┌───────────────────────┐
+        │ Phía A · Claude       │  PHA 1  │ Phía B · Grok         │
+        │ wt-<ticket>-a         │ (song   │ wt-<ticket>-b         │
+        │ mode auto + cổng duyệt│  song)  │ mode auto + cổng duyệt│
+        └───────────┬───────────┘         └───────────┬───────────┘
+                    │  git diff <base SHA>            │
+                    └────────────────┬────────────────┘
+                                     │ ĐỔI CHÉO
+                    ┌────────────────┴────────────────┐
+                    ▼                                 ▼
+        ┌───────────────────────┐         ┌───────────────────────┐
+        │ B soi diff của A      │  PHA 2  │ A soi diff của B      │
+        │ 'plan' — READ-ONLY    │ (song   │ 'plan' — READ-ONLY    │
+        └───────────┬───────────┘  song)  └───────────┬───────────┘
+                    └────────────────┬────────────────┘
+                                     ▼
+                     'duel-report' → UI 2 cột + phán quyết
+                                     │
+                          bạn bấm "Cho <AI> sửa theo review"
+                                     ▼
+                     POST /api/duel/:id/fix → lượt THƯỜNG
+                     (resume hội thoại + worktree của phía đó)
+```
+
+**Ràng buộc thiết kế**
+
+| Ràng buộc | Vì sao |
+| --------- | ------ |
+| Cả hai phía gọi `runAgent` như mọi lượt khác | Cổng an toàn vẫn là `canUseTool` duy nhất — duel nhân đôi số luồng, không mở đường ghi mới |
+| Pha 2 ép `mode: 'plan'` | Reviewer chỉ được ĐỌC; sửa theo review là một lượt riêng do người dùng bấm |
+| Mỗi phía một worktree | Hai agent ghi chung một thư mục sẽ đè file + git index của nhau |
+| Base để diff là **SHA**, không phải tên nhánh | Nhánh còn chạy tiếp trong lúc đấu; SHA là mốc bất động |
+| `WebEvent` mang `side?: 'A' \| 'B' \| 'system'` | Khung duyệt phải nói rõ AI nào đang xin, nếu không người dùng duyệt nhầm việc của bên kia |
+| Chỉ admin, chỉ mode Dev | Mode chia sẻ LAN không được tạo worktree hay chạy hai luồng |
+| Chỉ một AI sẵn sàng → chạy đơn + báo một dòng | Người dùng đã gõ đề bài rồi; nuốt yêu cầu là hỏng nhất |
+
+Mặc định **TẮT** (công tắc ⚔️ per-tab, lưu localStorage): một trận tốn khoảng 2–3× token của
+một lượt chạy thường, chỉ đáng cho task thật khó.
+
+## 15. Hướng mở rộng (chưa làm)
 
 - **UI chọn skill / subagent**: hiện agent tự chọn skill; subagent bật cả-cụm qua cờ. Có
   thể thêm ô chọn trên web như panel MCP.

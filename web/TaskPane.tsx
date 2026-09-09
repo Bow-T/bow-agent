@@ -14,6 +14,8 @@ import type {
   ConversationFull,
   DetectedSource,
   DocAttachment,
+  DuelSideTag,
+  DuelSummary,
   ImageAttachment,
   Mode,
   PendingApproval,
@@ -168,6 +170,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
     providerProfile: tabKey('bow-provider-profile', tabId),
     autoApprove: tabKey('bow-auto-approve', tabId),
     autopilot: tabKey('bow-autopilot', tabId),
+    duel: tabKey('bow-duel', tabId),
   };
 
   // ── State/refs PER-TAB ──
@@ -274,6 +277,22 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
   // Autopilot A–Z (CHỈ admin, server cưỡng chế lại): nới cổng cho thao tác git-recoverable +
   // checkpoint/journal để hoàn tác. Per-tab, lưu localStorage.
   const [autopilot, setAutopilot] = useState(() => localStorage.getItem(K.autopilot) === '1');
+  // DUEL (CHỈ admin, server cưỡng chế lại): hai AI cùng làm task trong hai worktree riêng rồi
+  // soi chéo diff của nhau. Tốn ~2-3× token nên mặc định TẮT, bật theo tab khi task thật khó.
+  const [duelOn, setDuelOn] = useState(() => localStorage.getItem(K.duel) === '1');
+  /** Báo cáo trận duel vừa xong (null = chưa có trận nào trong phiên này). */
+  const [duelReport, setDuelReport] = useState<DuelSummary | null>(null);
+  /** Đang chạy lượt "Cho sửa" cho phía nào (chặn bấm hai lần). */
+  const [duelFixing, setDuelFixing] = useState<'A' | 'B' | null>(null);
+  /** Tên hai đấu thủ của trận đang chạy (từ event duel-start) — để đặt tiêu đề hai cột. */
+  const [duelLabels, setDuelLabels] = useState<{ A: string; B: string } | null>(null);
+  /**
+   * Id phiên CỦA TRẬN (khác sessionId hiện tại sau khi bấm "Cho sửa" — lúc đó sessionId đã trỏ
+   * sang lượt sửa). Báo cáo duel nằm ở phiên trận, nên nút của phía còn lại phải hỏi id này.
+   */
+  const [duelSessionId, setDuelSessionId] = useState<string | null>(null);
+  /** Các phía đã gửi đi sửa theo review — nút của phía đó thôi mời bấm lần nữa. */
+  const [duelFixedSides, setDuelFixedSides] = useState<('A' | 'B')[]>([]);
   // Tài khoản Claude PER-TAB (mỗi tab chạy 1 tài khoản riêng). Khởi tạo: lựa chọn đã lưu của
   // tab, nếu chưa có thì theo tài khoản server đang set (cfg.currentClaudeProfile) hoặc 'default'.
   const [selectedClaudeProfile, setSelectedClaudeProfile] = useState(
@@ -415,6 +434,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
   useEffect(() => { localStorage.setItem(K.profile, profile); }, [K.profile, profile]);
   useEffect(() => { localStorage.setItem(K.claudeProfile, selectedClaudeProfile); }, [K.claudeProfile, selectedClaudeProfile]);
   useEffect(() => { localStorage.setItem(K.autopilot, autopilot ? '1' : '0'); }, [K.autopilot, autopilot]);
+  useEffect(() => { localStorage.setItem(K.duel, duelOn ? '1' : '0'); }, [K.duel, duelOn]);
   // Khi cfg về mà tab CHƯA có lựa chọn tài khoản lưu riêng → theo tài khoản server đang set.
   useEffect(() => {
     if (cfg?.currentClaudeProfile && !localStorage.getItem(K.claudeProfile)) {
@@ -800,8 +820,8 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const addItem = (kind: ChatItem['kind'], text: string, tool?: ChatItem['tool']) =>
-    setItems((prev) => [...prev, { id: nextId(), kind, text, tool, ts: Date.now() }]);
+  const addItem = (kind: ChatItem['kind'], text: string, tool?: ChatItem['tool'], side?: DuelSideTag) =>
+    setItems((prev) => [...prev, { id: nextId(), kind, text, tool, ts: Date.now(), side }]);
 
   async function addFiles(files: File[]) {
     for (const f of files) {
@@ -1017,6 +1037,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
           claudeProfile: selectedClaudeProfile,
           useSubagents,
           autopilot,
+          duel: duelOn || undefined,
           conversationId: conversationId || undefined,
           resumeContext: sentResumeContext || undefined,
         }),
@@ -1059,12 +1080,15 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
     };
     src.onmessage = (msg) => {
       const ev = JSON.parse(msg.data) as WebEvent;
+      // Phiên duel gắn nhãn phía vào MỌI event; phiên thường không có → side = undefined và
+      // mọi thứ hiển thị y như trước.
+      const side = ev.side;
       switch (ev.type) {
         case 'text':
-          addItem('agent', ev.text);
+          addItem('agent', ev.text, undefined, side);
           break;
         case 'user-input':
-          addItem('user', ev.text);
+          addItem('user', ev.text, undefined, side);
           break;
         case 'tool':
           setItems((prev) =>
@@ -1078,6 +1102,7 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
                     text: ev.describe,
                     tool: { toolId: ev.id, name: ev.name, summary: ev.summary },
                     ts: Date.now(),
+                    side,
                   },
                 ],
           );
@@ -1095,6 +1120,8 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
           addItem(
             'result',
             `Xong · ${fmtDuration(ev.durationMs)} · ${ev.turns} lượt · ${ev.outputTokens} tokens · $${ev.costUsd.toFixed(4)}`,
+            undefined,
+            side,
           );
           // Breakdown token để CHẨN ĐOÁN token đi đâu: cache-read = nền cố định (MCP schema +
           // skill descriptions + system prompt) đọc lại mỗi lượt (~0.1× giá); fresh = input
@@ -1104,6 +1131,8 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
           addItem(
             'result',
             `↳ token: cache-read ${k(ev.cacheRead)} · fresh ${k(ev.inputFresh)} · cache-write ${k(ev.cacheCreation)} · output ${k(ev.outputTokens)}`,
+            undefined,
+            side,
           );
           setAccumulatedCost((prev) => prev + ev.costUsd);
           break;
@@ -1123,16 +1152,16 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
         case 'error':
           if (ev.isSessionLimit) {
             const when = ev.resetsAt ? formatResetIn(ev.resetsAt) : '';
-            addItem('system', `⏸️ Hết hạn mức phiên (5h)${when ? ` · reset ${when.toLowerCase()}` : ''}. Đang chờ lịch tự chạy tiếp…`);
+            addItem('system', `⏸️ Hết hạn mức phiên (5h)${when ? ` · reset ${when.toLowerCase()}` : ''}. Đang chờ lịch tự chạy tiếp…`, undefined, side);
           } else if (ev.hint) {
             if (ev.isContextOverflow) {
               recoverFromContextOverflow();
-              addItem('system', `🗜️ ${ev.hint}`);
+              addItem('system', `🗜️ ${ev.hint}`, undefined, side);
             } else {
-              addItem('error', ev.hint);
+              addItem('error', ev.hint, undefined, side);
             }
           } else {
-            addItem('error', `Kết thúc bất thường: ${ev.subtype}`);
+            addItem('error', `Kết thúc bất thường: ${ev.subtype}`, undefined, side);
           }
           break;
         case 'auto-resume-scheduled': {
@@ -1169,12 +1198,13 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
             blockedPath: ev.blockedPath,
             decisionReason: ev.decisionReason,
             risky: ev.risky,
+            side: ev.side,
           };
           // Tự động duyệt: BẬT + thao tác KHÔNG rủi ro → tự cho phép ngay, khỏi hiện popup.
           // Rủi ro (ev.risky) VẪN rơi vào hàng chờ để người bấm — phanh cứng. Dùng ref để
           // đọc trạng thái toggle mới nhất (handler này là closure cũ, không re-subscribe).
           if (autoApproveRef.current && !ev.risky) {
-            addItem('system', `⚡ Tự duyệt: ${ev.toolName}`);
+            addItem('system', `⚡ Tự duyệt: ${ev.toolName}`, undefined, side);
             void decide(approval, true);
             break;
           }
@@ -1201,6 +1231,18 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
             }
             return prev;
           });
+          break;
+        case 'duel-start':
+          setDuelSessionId(sid);
+          setDuelFixedSides([]);
+          setDuelLabels({
+            A: ev.sides.find((sd) => sd.side === 'A')?.label ?? 'Đấu thủ A',
+            B: ev.sides.find((sd) => sd.side === 'B')?.label ?? 'Đấu thủ B',
+          });
+          setDuelReport(null);
+          break;
+        case 'duel-report':
+          setDuelReport(ev.report);
           break;
         case 'done':
           setRunning(false);
@@ -1236,6 +1278,48 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionId: sessionIdRef.current ?? sessionId, id: approval.id, approved }),
     }).catch(() => {});
+  }
+
+  /**
+   * "Cho sửa": đẩy báo cáo của reviewer về lại chính tác giả để sửa. Server chạy một lượt
+   * BÌNH THƯỜNG (resume đúng hội thoại của phía đó, trong worktree của phía đó) nên mọi thao
+   * tác ghi vẫn qua cổng duyệt như mọi lượt khác.
+   */
+  async function duelFix(side: 'A' | 'B', label: string) {
+    const matchId = duelSessionId ?? sessionIdRef.current ?? sessionId;
+    if (!matchId || duelFixing) return;
+    setDuelFixing(side);
+    try {
+      const res = await apiFetch(`/api/duel/${matchId}/fix`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ side }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        addItem('error', body.error ?? `HTTP ${res.status}`);
+        return;
+      }
+      const { sessionId: sid } = await res.json();
+      addItem('system', `🔧 ${label} bắt đầu sửa theo review…`, undefined, side);
+      setSessionId(sid);
+      localStorage.setItem(K.session, sid);
+      setRunning(true);
+      // Chỉ khoá nút của phía vừa gửi — báo cáo của phía kia vẫn còn để bấm.
+      setDuelFixedSides((prev) => (prev.includes(side) ? prev : [...prev, side]));
+      // Mốc baseline mới: streamEvents cắt items về mốc phiên trước, không đặt lại thì hai
+      // cột vừa xem bị xoá sạch ngay khi lượt sửa bắt đầu.
+      setItems((prev) => {
+        sessionBaselineRef.current = prev.length;
+        localStorage.setItem(K.baseline, String(prev.length));
+        return prev;
+      });
+      streamEvents(sid);
+    } catch (err) {
+      addItem('error', `Không gọi được backend: ${(err as Error).message}`);
+    } finally {
+      setDuelFixing(null);
+    }
   }
 
   async function answerQuestion(q: PendingQuestion, answers: Record<string, string> | null) {
@@ -1606,6 +1690,126 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onStateChange, running, runStartedAt, lastRunMs, activeConvId, items, selectedModel, selectedClaudeProfile, selectedProvider, usage, usageLoading, tokenUsage, pending.length, questions.length]);
 
+  /**
+   * Dựng các dòng chat cho MỘT danh sách item. Tách thành hàm để phiên DUEL dùng lại y
+   * nguyên cách hiển thị (gộp tool, bong bóng, trạng thái đang chạy) cho từng cột — hai
+   * cột mà render khác nhau thì không so sánh được hai bên.
+   */
+  const renderChatRows = (list: ChatItem[]) => {
+    // Gộp các dòng tool LIÊN TIẾP (đọc file, tìm code, chạy lệnh…) thành MỘT
+    // nhóm gấp/mở gọn, thay vì đổ hàng chục dòng "đọc file…" ra khung chat.
+    // Các dòng khác (user hỏi / agent trả lời / kết quả) vẫn hiện inline như cũ.
+    // Riêng "gọi agent phụ" giữ nguyên là 1 dòng riêng vì đó là mốc đáng chú ý.
+    const isAgentCall = (it: ChatItem) =>
+      it.kind === 'tool' && it.text.includes('agent phụ');
+
+    type Row =
+      | { kind: 'item'; it: ChatItem }
+      | { kind: 'group'; id: string; tools: ChatItem[] };
+    const rows: Row[] = [];
+    let buf: ChatItem[] = [];
+    const flush = () => {
+      if (buf.length === 0) return;
+      if (buf.length === 1) {
+        // 1 tool đơn lẻ: không cần gộp, hiện thẳng cho gọn.
+        rows.push({ kind: 'item', it: buf[0] });
+      } else {
+        rows.push({ kind: 'group', id: `tg-${buf[0].id}`, tools: buf });
+      }
+      buf = [];
+    };
+    list.forEach((it) => {
+      if (it.kind === 'tool' && !isAgentCall(it)) {
+        buf.push(it);
+      } else {
+        flush();
+        rows.push({ kind: 'item', it });
+      }
+    });
+    flush();
+
+    const lastToolItem = running && pending.length === 0 && questions.length === 0
+      ? [...list].reverse().find((n) => n.kind === 'tool')
+      : undefined;
+
+    return rows.map((row) => {
+      if (row.kind === 'group') {
+        const open = expandedChatGroups.has(row.id);
+        const groupRunning = lastToolItem
+          ? row.tools.some((t) => t.id === lastToolItem.id)
+          : false;
+        // Đếm theo nhãn để hiện "đọc file… ×3" cho gọn.
+        const counts: Record<string, number> = {};
+        row.tools.forEach((t) => {
+          counts[t.text] = (counts[t.text] || 0) + 1;
+        });
+        const summary = Object.entries(counts)
+          .map(([txt, c]) => (c > 1 ? `${txt} ×${c}` : txt))
+          .join(' · ');
+        return (
+          <div
+            key={row.id}
+            className={`bubble tool tool-group${groupRunning ? ' running' : ''}`}
+          >
+            <button
+              type="button"
+              className="tool-group-head"
+              onClick={() =>
+                setExpandedChatGroups((prev) => {
+                  const next = new Set(prev);
+                  next.has(row.id) ? next.delete(row.id) : next.add(row.id);
+                  return next;
+                })
+              }
+            >
+              <Icon name={open ? 'caretDown' : 'caretRight'} size={13} />
+              <span className="tool-group-title">
+                ⚙️ {row.tools.length} thao tác mã nguồn
+              </span>
+              {!open && <span className="tool-group-preview">{summary}</span>}
+            </button>
+            {open && (
+              <ul className="tool-group-list">
+                {row.tools.map((t) => (
+                  <li key={t.id} className="tool-group-row">
+                    <span className="tg-name">{t.text}</span>
+                    {t.tool?.summary && (
+                      <span className="tg-summary">{t.tool.summary}</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        );
+      }
+
+      const it = row.it;
+      const isLastToolRunning = lastToolItem?.id === it.id;
+      // Nhãn người nói (mockup): chỉ cho user/agent — tool/result/error giữ dạng dải gọn.
+      const speaker = it.kind === 'user'
+        ? { icon: '👤', name: language === 'vi' ? 'BẠN' : 'YOU' }
+        : it.kind === 'agent'
+          ? { icon: '🤖', name: 'AGENT' }
+          : null;
+      return (
+        <div
+          key={it.id}
+          data-id={it.id}
+          className={`bubble ${it.kind}${isLastToolRunning ? ' running' : ''}`}
+        >
+          {speaker && (
+            <div className="bubble-head">
+              <span className="bubble-av" aria-hidden="true">{speaker.icon}</span>
+              <b>{speaker.name}</b>
+            </div>
+          )}
+          {it.kind === 'agent' ? <Markdown text={it.text} /> : it.text}
+        </div>
+      );
+    });
+  };
+
   return (
     <div className="task-pane" hidden={!visible}>
       <div className="main-layout">
@@ -1753,120 +1957,59 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
             </div>
           </div>
         )}
-        {(() => {
-          // Gộp các dòng tool LIÊN TIẾP (đọc file, tìm code, chạy lệnh…) thành MỘT
-          // nhóm gấp/mở gọn, thay vì đổ hàng chục dòng "đọc file…" ra khung chat.
-          // Các dòng khác (user hỏi / agent trả lời / kết quả) vẫn hiện inline như cũ.
-          // Riêng "gọi agent phụ" giữ nguyên là 1 dòng riêng vì đó là mốc đáng chú ý.
-          const isAgentCall = (it: ChatItem) =>
-            it.kind === 'tool' && it.text.includes('agent phụ');
+        {/* Dòng của phiên thường + thông báo của bộ điều phối duel (side='system') chạy dọc
+            giữa; hai đấu thủ có cột riêng bên dưới. */}
+        {renderChatRows(items.filter((it) => !it.side || it.side === 'system'))}
 
-          type Row =
-            | { kind: 'item'; it: ChatItem }
-            | { kind: 'group'; id: string; tools: ChatItem[] };
-          const rows: Row[] = [];
-          let buf: ChatItem[] = [];
-          const flush = () => {
-            if (buf.length === 0) return;
-            if (buf.length === 1) {
-              // 1 tool đơn lẻ: không cần gộp, hiện thẳng cho gọn.
-              rows.push({ kind: 'item', it: buf[0] });
-            } else {
-              rows.push({ kind: 'group', id: `tg-${buf[0].id}`, tools: buf });
-            }
-            buf = [];
-          };
-          items.forEach((it) => {
-            if (it.kind === 'tool' && !isAgentCall(it)) {
-              buf.push(it);
-            } else {
-              flush();
-              rows.push({ kind: 'item', it });
-            }
-          });
-          flush();
-
-          const lastToolItem = running && pending.length === 0 && questions.length === 0
-            ? [...items].reverse().find((n) => n.kind === 'tool')
-            : undefined;
-
-          return rows.map((row) => {
-            if (row.kind === 'group') {
-              const open = expandedChatGroups.has(row.id);
-              const groupRunning = lastToolItem
-                ? row.tools.some((t) => t.id === lastToolItem.id)
-                : false;
-              // Đếm theo nhãn để hiện "đọc file… ×3" cho gọn.
-              const counts: Record<string, number> = {};
-              row.tools.forEach((t) => {
-                counts[t.text] = (counts[t.text] || 0) + 1;
-              });
-              const summary = Object.entries(counts)
-                .map(([txt, c]) => (c > 1 ? `${txt} ×${c}` : txt))
-                .join(' · ');
+        {/* DUEL — hai cột song song, mỗi cột là một AI làm cùng đề bài trong worktree riêng.
+            Hiện ngay khi trận bắt đầu (duel-start) chứ không đợi tới lúc có báo cáo. */}
+        {(duelLabels || items.some((it) => it.side === 'A' || it.side === 'B')) && (
+          <div className="duel-grid">
+            {(['A', 'B'] as const).map((sd) => {
+              const label = duelLabels?.[sd] ?? (sd === 'A' ? 'Đấu thủ A' : 'Đấu thủ B');
+              const summary = duelReport?.sides.find((x) => x.side === sd);
               return (
-                <div
-                  key={row.id}
-                  className={`bubble tool tool-group${groupRunning ? ' running' : ''}`}
-                >
-                  <button
-                    type="button"
-                    className="tool-group-head"
-                    onClick={() =>
-                      setExpandedChatGroups((prev) => {
-                        const next = new Set(prev);
-                        next.has(row.id) ? next.delete(row.id) : next.add(row.id);
-                        return next;
-                      })
-                    }
-                  >
-                    <Icon name={open ? 'caretDown' : 'caretRight'} size={13} />
-                    <span className="tool-group-title">
-                      ⚙️ {row.tools.length} thao tác mã nguồn
-                    </span>
-                    {!open && <span className="tool-group-preview">{summary}</span>}
-                  </button>
-                  {open && (
-                    <ul className="tool-group-list">
-                      {row.tools.map((t) => (
-                        <li key={t.id} className="tool-group-row">
-                          <span className="tg-name">{t.text}</span>
-                          {t.tool?.summary && (
-                            <span className="tg-summary">{t.tool.summary}</span>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
+                <div key={sd} className={`duel-col duel-${sd.toLowerCase()}`}>
+                  <div className="duel-col-head">
+                    <span className="duel-badge">{sd}</span>
+                    <b>{label}</b>
+                    {summary && (
+                      <span className="duel-col-meta" title={summary.branch}>
+                        {summary.changedFiles.length} file · {summary.branch}
+                      </span>
+                    )}
+                  </div>
+                  <div className="duel-col-body">{renderChatRows(items.filter((it) => it.side === sd))}</div>
+                  {summary && (
+                    <div className={`duel-verdict${summary.needsFix ? ' needs-fix' : ''}`}>
+                      <div className="duel-verdict-head">
+                        <Icon name="search" size={14} />{' '}
+                        {summary.reviewedBy ?? 'AI còn lại'} chấm {label}:{' '}
+                        <b>{summary.review ? (summary.needsFix ? 'CẦN SỬA' : 'ĐẠT') : 'không có báo cáo'}</b>
+                      </div>
+                      {summary.error && <div className="duel-verdict-error">Lỗi khi chạy: {summary.error}</div>}
+                      {summary.review && <Markdown text={summary.review} />}
+                      {summary.needsFix && (
+                        duelFixedSides.includes(sd) ? (
+                          <div className="duel-fix-sent">✔️ Đã gửi review cho {label} sửa.</div>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn duel-fix-btn"
+                            disabled={duelFixing !== null || running}
+                            onClick={() => duelFix(sd, label)}
+                          >
+                            {duelFixing === sd ? 'Đang gửi…' : `Cho ${label} sửa theo review`}
+                          </button>
+                        )
+                      )}
+                    </div>
                   )}
                 </div>
               );
-            }
-
-            const it = row.it;
-            const isLastToolRunning = lastToolItem?.id === it.id;
-            // Nhãn người nói (mockup): chỉ cho user/agent — tool/result/error giữ dạng dải gọn.
-            const speaker = it.kind === 'user'
-              ? { icon: '👤', name: language === 'vi' ? 'BẠN' : 'YOU' }
-              : it.kind === 'agent'
-                ? { icon: '🤖', name: 'AGENT' }
-                : null;
-            return (
-              <div
-                key={it.id}
-                data-id={it.id}
-                className={`bubble ${it.kind}${isLastToolRunning ? ' running' : ''}`}
-              >
-                {speaker && (
-                  <div className="bubble-head">
-                    <span className="bubble-av" aria-hidden="true">{speaker.icon}</span>
-                    <b>{speaker.name}</b>
-                  </div>
-                )}
-                {it.kind === 'agent' ? <Markdown text={it.text} /> : it.text}
-              </div>
-            );
-          });
-        })()}
+            })}
+          </div>
+        )}
         {running && pending.length === 0 && questions.length === 0 && (
           <div className="thinking">
             Agent đang làm việc
@@ -1922,6 +2065,11 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
             <div key={p.id} className="approval">
               <div className="approval-head">
                 <Icon name="block" size={16} /> {p.title || `Cần duyệt: ${p.toolName}`}
+                {(p.side === 'A' || p.side === 'B') && (
+                  <span className={`duel-badge duel-badge-${p.side.toLowerCase()}`}>
+                    {p.side} · {duelLabels?.[p.side] ?? `Đấu thủ ${p.side}`}
+                  </span>
+                )}
               </div>
               <div className="approval-body-custom">
                 {p.description && <div className="approval-desc">{p.description}</div>}
@@ -2566,6 +2714,28 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
               />
               <span className="bow-switch-track" aria-hidden="true"><span className="bow-switch-thumb" /></span>
               <span className="bow-switch-label">🛸 {language === 'vi' ? 'Autopilot' : 'Autopilot'}</span>
+            </label>
+          )}
+          {/* DUEL: hai AI (Claude + Grok) cùng làm task trong hai worktree riêng rồi soi chéo diff.
+              Tốn ~2-3× token nên mặc định TẮT. CHỈ admin; server cưỡng chế lại (duelAllowed) và tự
+              lui về chạy đơn nếu máy chỉ có một AI sẵn sàng. */}
+          {cfg?.isAdmin && (
+            <label
+              className={`bow-switch${duelOn ? ' on' : ''}${running ? ' disabled' : ''}`}
+              title={
+                language === 'vi'
+                  ? 'Duel: hai AI cùng làm task này trong hai git worktree riêng, xong đổi chéo diff để soi lỗi của nhau, rồi bạn chọn nhánh nào giữ. Tốn khoảng 2-3 lần token một lượt chạy thường.'
+                  : 'Duel: two AIs do this task in two separate git worktrees, then cross-review each other diffs so you pick the branch to keep. Costs about 2-3x the tokens of a normal run.'
+              }
+            >
+              <input
+                type="checkbox"
+                checked={duelOn}
+                disabled={running}
+                onChange={(e) => { setDuelOn(e.target.checked); if (e.target.checked && mode === 'plan') setMode('auto'); }}
+              />
+              <span className="bow-switch-track" aria-hidden="true"><span className="bow-switch-thumb" /></span>
+              <span className="bow-switch-label">⚔️ {language === 'vi' ? 'Duel 2 AI' : 'Duel 2 AIs'}</span>
             </label>
           )}
           {/* Ô chọn thư mục repo (cwd) — thu gọn, nằm cuối hàng bên phải Effort.

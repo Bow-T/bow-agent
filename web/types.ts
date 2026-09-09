@@ -55,8 +55,37 @@ export interface TokenUsageReport {
   scanMs: number;
 }
 
+/**
+ * Nhãn PHÍA phát ra sự kiện ở phiên duel (hai AI chạy song song) — khớp DuelSideTag ở
+ * src/web/session.ts. Vắng mặt = phiên thường một luồng.
+ */
+export type DuelSideTag = 'A' | 'B' | 'system';
+
+/** Tóm tắt một phía sau trận duel — khớp DuelSideSummary ở src/web/session.ts. */
+export interface DuelSideSummary {
+  side: 'A' | 'B';
+  label: string;
+  branch: string;
+  cwd: string;
+  changedFiles: string[];
+  result: string | null;
+  error?: string;
+  /** Báo cáo do phía KIA viết về phía này. */
+  review: string | null;
+  reviewedBy?: string;
+  /** Reviewer kết luận CẦN SỬA → UI mời nút "Cho sửa". */
+  needsFix: boolean;
+}
+
+/** Kết quả trọn trận duel — khớp DuelSummary ở src/web/session.ts. */
+export interface DuelSummary {
+  ticket: string;
+  baseSha: string;
+  sides: DuelSideSummary[];
+}
+
 /** Sự kiện từ backend qua SSE — phải khớp WebEvent ở src/web/session.ts. */
-export type WebEvent =
+type WebEventBody =
   | { type: 'text'; text: string }
   | { type: 'tool'; id?: string; name: string; describe: string; summary?: string }
   | { type: 'tool-result'; toolId: string; text: string; isError: boolean }
@@ -101,7 +130,15 @@ export type WebEvent =
   | { type: 'done'; result: string | null }
   // `contextOverflow` = phiên chết vì tràn context window → tab tự dọn conversationId và
   // bật cờ gửi kèm tóm tắt, người dùng gõ tiếp là chạy được ngay (không phải mở tab mới).
-  | { type: 'fatal'; message: string; contextOverflow?: boolean };
+  | { type: 'fatal'; message: string; contextOverflow?: boolean }
+  | { type: 'duel-start'; ticket: string; sides: { side: 'A' | 'B'; label: string }[] }
+  | { type: 'duel-report'; report: DuelSummary };
+
+/**
+ * Sự kiện SSE = nội dung + nhãn phía. `side` nằm NGOÀI union (như ở session.ts) để mọi nhánh
+ * event tự mang được nhãn mà không phải khai lại từng nhánh.
+ */
+export type WebEvent = WebEventBody & { side?: DuelSideTag };
 
 /** Chi tiết một lần gọi tool — để hiển thị "đã làm gì cụ thể" khi mở rộng Activity Log. */
 export interface ToolDetail {
@@ -127,6 +164,8 @@ export interface ChatItem {
   /** Mốc thời gian tạo (ms). Cột "Hoạt động agent" hiện giờ HH:MM:SS. Item cũ lưu
    *  trước khi có trường này thì không có giờ — hiển thị bỏ trống, KHÔNG bịa. */
   ts?: number;
+  /** Phía phát ra dòng này ở phiên duel — quyết định dòng nằm ở cột nào. */
+  side?: DuelSideTag;
 }
 
 /** Yêu cầu duyệt đang chờ người dùng bấm nút. */
@@ -140,6 +179,8 @@ export interface PendingApproval {
   decisionReason?: string;
   /** True nếu thao tác RỦI RO — toggle Auto-approve bỏ qua (vẫn hỏi người). */
   risky?: boolean;
+  /** Phía xin duyệt (phiên duel) — phải nói rõ AI nào đang xin để không duyệt nhầm. */
+  side?: DuelSideTag;
 }
 
 /** Câu hỏi (AskUserQuestion) đang chờ người dùng chọn. */

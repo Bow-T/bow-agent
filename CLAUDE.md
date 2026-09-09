@@ -111,6 +111,69 @@ qua `adminBus` như Collab (`routeToAdmin = (isCollabMode || isDevOpsMode) && !i
 > `rm -rf`/force-push/`execute_sql`/tạo-xoá issue). "Tự lên lịch" = config `~/.bow-agent/sprint-schedule.json`
 > (agent giữ lịch) + launchd gọi `sprint-scan --tick` mỗi 5 phút (OS giữ sống). Đổi lịch qua CLI, KHÔNG qua web.
 
+## Duel — hai AI cùng làm một task rồi soi chéo (`core/duel.ts`)
+
+Bật bằng công tắc **⚔️ Duel 2 AI** trên thanh cấu hình tab (CHỈ admin; mặc định TẮT vì tốn
+~2–3× token). Body `/api/run` gửi `duel: true` → server rẽ sang `runDuelSession` thay vì
+`runAgentSession`. Không có endpoint thứ hai: `/api/run` đã lo brief/Jira/screener/profile/MCP,
+duel chỉ khác **chỗ chạy**.
+
+```
+                        ┌──────────────────────────┐
+   bạn gõ đề bài  ────► │  POST /api/run           │
+   (⚔️ Duel = ON)       │  duel:true → runDuel()   │
+                        └────────────┬─────────────┘
+                                     │ tạo 2 worktree từ CÙNG base SHA
+                    ┌────────────────┴────────────────┐
+                    ▼                                 ▼
+        ┌───────────────────────┐         ┌───────────────────────┐
+        │ Phía A · Claude       │         │ Phía B · Grok         │
+        │ wt-<ticket>-a         │  PHA 1  │ wt-<ticket>-b         │
+        │ feat/<ticket>-a       │ (song   │ feat/<ticket>-b       │
+        │ mode auto + cổng duyệt│  song)  │ mode auto + cổng duyệt│
+        └───────────┬───────────┘         └───────────┬───────────┘
+                    │ git diff <base>                 │ git diff <base>
+                    └────────────────┬────────────────┘
+                                     │ ĐỔI CHÉO
+                    ┌────────────────┴────────────────┐
+                    ▼                                 ▼
+        ┌───────────────────────┐         ┌───────────────────────┐
+        │ B soi diff của A      │  PHA 2  │ A soi diff của B      │
+        │ mode 'plan' READ-ONLY │ (song   │ mode 'plan' READ-ONLY │
+        │ cwd = worktree của A  │  song)  │ cwd = worktree của B  │
+        └───────────┬───────────┘         └───────────┬───────────┘
+                    └────────────────┬────────────────┘
+                                     ▼
+                        ┌──────────────────────────┐
+                        │ event 'duel-report'      │
+                        │ UI: 2 cột + phán quyết   │
+                        └────────────┬─────────────┘
+                                     │ bạn bấm "Cho <AI> sửa theo review"
+                                     ▼
+                        ┌──────────────────────────┐
+                        │ POST /api/duel/:id/fix   │
+                        │ lượt THƯỜNG: resume đúng │
+                        │ hội thoại + worktree của │
+                        │ phía đó, qua cổng duyệt  │
+                        └──────────────────────────┘
+```
+
+Điểm phải giữ khi sửa:
+
+- **Không nới quyền.** Cả hai phía gọi `runAgent` như mọi lượt khác ⇒ vẫn qua `canUseTool`.
+  Duel chỉ nhân đôi số luồng, KHÔNG mở đường ghi mới. Pha 2 ép `mode: 'plan'` nên reviewer
+  không thể sửa gì — muốn sửa phải qua nút "Cho sửa" (một lượt riêng, người dùng bấm).
+- **Mỗi phía một worktree.** Hai agent ghi chung một thư mục sẽ đè file + git index của nhau.
+  Base để diff là **SHA của repo gốc lúc bắt đầu**, không phải tên nhánh (nhánh còn chạy tiếp).
+- **Event mang nhãn phía.** `WebEvent` = nội dung `& { side?: 'A'|'B'|'system' }` (khai ở
+  `session.ts`, gương ở `web/types.ts`). Khung duyệt PHẢI hiện nhãn phía — hai bên cùng xin
+  duyệt mà không biết ai xin thì người dùng duyệt nhầm việc của bên kia.
+- **Chỉ admin, chỉ mode Dev.** Các mode chia sẻ LAN (QC/Collab/BA/Reviewer/DevOps) không được
+  tạo worktree hay chạy hai luồng (`duelAllowed` ở `server.ts`).
+- **Chỉ có một AI sẵn sàng** (chưa login Claude / chưa có token gateway) → báo một dòng rồi
+  chạy đơn luồng như thường, KHÔNG nuốt yêu cầu của người dùng.
+- **Nói chen**: `POST /api/say/:id` nhận thêm `side` — thiếu `side` thì lời nói vào CẢ HAI phía.
+
 ## Tài liệu chi tiết
 
 - **README.md** — hướng dẫn dùng (CLI/Web, cờ, MCP, profile, subagents).
