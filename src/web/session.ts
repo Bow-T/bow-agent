@@ -6,8 +6,15 @@ import type { AgentEvent, Question } from '../core/runner.js';
  * Promise duyệt đang treo (chờ người dùng bấm nút Cho phép/Từ chối trên UI).
  */
 
+/**
+ * Nhãn PHÍA phát ra sự kiện khi phiên là một trận duel (hai AI chạy song song):
+ * 'A'/'B' = một trong hai đấu thủ, 'system' = thông báo của chính bộ điều phối duel.
+ * Vắng mặt = phiên thường một luồng (mọi event của cùng một agent).
+ */
+export type DuelSideTag = 'A' | 'B' | 'system';
+
 /** Sự kiện gửi tới UI qua SSE — bao gồm sự kiện agent + yêu cầu duyệt + kết thúc. */
-export type WebEvent =
+type WebEventBody =
   | AgentEvent
   | {
       type: 'approval-request';
@@ -60,7 +67,50 @@ export type WebEvent =
   // `contextOverflow` = phiên chết vì tràn context window. Tab nhận cờ này thì tự dọn
   // conversationId + gửi kèm tóm tắt ở lượt sau (xem web/TaskPane.tsx), người dùng không
   // phải mở tab mới.
-  | { type: 'fatal'; message: string; contextOverflow?: boolean };
+  | { type: 'fatal'; message: string; contextOverflow?: boolean }
+  | {
+      // Mở màn một trận duel: UI dựng ngay hai cột có TÊN THẬT của hai đấu thủ, thay vì đợi
+      // tới cuối trận mới biết ai là ai.
+      type: 'duel-start';
+      ticket: string;
+      sides: { side: 'A' | 'B'; label: string }[];
+    }
+  | {
+      // Kết quả trọn một trận duel: hai phía + review chéo. UI dựng bảng so sánh và nút
+      // "Cho sửa" từ đây (payload khớp DuelSummary bên dưới).
+      type: 'duel-report';
+      report: DuelSummary;
+    };
+
+/** Tóm tắt một phía sau trận duel — đủ để UI vẽ cột và bấm "Cho sửa". */
+export interface DuelSideSummary {
+  side: 'A' | 'B';
+  label: string;
+  branch: string;
+  cwd: string;
+  changedFiles: string[];
+  /** Text kết quả cuối của phía này. */
+  result: string | null;
+  error?: string;
+  /** Báo cáo do phía KIA viết về phía này (null = không review được). */
+  review: string | null;
+  reviewedBy?: string;
+  /** Có findings để bấm "Cho sửa" hay không (reviewer kết luận CẦN SỬA). */
+  needsFix: boolean;
+}
+
+/** Payload sự kiện 'duel-report'. */
+export interface DuelSummary {
+  ticket: string;
+  baseSha: string;
+  sides: DuelSideSummary[];
+}
+
+/**
+ * Sự kiện SSE = nội dung + nhãn phía (chỉ có ở phiên duel). Để `side` ở NGOÀI union giúp
+ * mọi nhánh event tự động mang được nhãn mà không phải khai lại ở từng nhánh.
+ */
+export type WebEvent = WebEventBody & { side?: DuelSideTag };
 
 interface PendingApproval {
   resolve: (approved: boolean) => void;
@@ -99,6 +149,11 @@ export class Session {
    * phiên hết nhận và trả 409 để client chạy lượt mới thay vì nuốt mất câu.
    */
   sendInput?: (text: string) => void;
+  /**
+   * Phiên DUEL có hai luồng chạy song song nên có hai kênh nói chen. `sendInput` ở trên chỉ đủ
+   * cho phiên thường; map này giữ kênh của từng phía để /api/say gửi đúng chỗ (hoặc cả hai).
+   */
+  sendInputBySide?: Partial<Record<'A' | 'B', (text: string) => void>>;
   private closed = false;
   /** Timer ngắt kết nối tạm thời (reload trang). */
   private disconnectTimer: NodeJS.Timeout | null = null;
@@ -194,6 +249,9 @@ export class Session {
       blockedPath?: string;
       decisionReason?: string;
       risky?: boolean;
+      /** Phía xin duyệt (phiên duel) — UI phải nói rõ AI NÀO đang xin, nếu không người
+       *  dùng duyệt nhầm việc của bên kia. */
+      side?: DuelSideTag;
     },
   ): Promise<boolean> {
     const id = randomUUID();
@@ -209,6 +267,7 @@ export class Session {
         blockedPath: meta?.blockedPath,
         decisionReason: meta?.decisionReason,
         risky: meta?.risky,
+        side: meta?.side,
       });
     });
   }
@@ -226,11 +285,11 @@ export class Session {
    * Agent hỏi người dùng (AskUserQuestion): đẩy 'question-request' lên UI rồi treo
    * Promise chờ người dùng gọi resolveQuestion(id, answers).
    */
-  requestQuestion(questions: Question[]): Promise<Record<string, string> | null> {
+  requestQuestion(questions: Question[], side?: DuelSideTag): Promise<Record<string, string> | null> {
     const id = randomUUID();
     return new Promise<Record<string, string> | null>((resolve) => {
       this.pendingQuestions.set(id, { resolve });
-      this.push({ type: 'question-request', id, questions });
+      this.push({ type: 'question-request', id, questions, side });
     });
   }
 
@@ -255,6 +314,7 @@ export class Session {
     this.closed = true;
     // Hết nhận lời chen: kênh streaming input của runner đã (hoặc sắp) đóng.
     this.sendInput = undefined;
+    this.sendInputBySide = undefined;
     // R9: hủy timer ngắt-kết-nối 30s còn treo (nếu có). Nếu không, timer đó nổ sau khi
     // phiên đã đóng và removeSession SỚM (30s), phá vỡ cửa sổ grace 60s của onDispose
     // (SSE muộn mất cơ hội replay history) + gọi abort/removeSession thừa.

@@ -5015,6 +5015,72 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .globe-x:hover { color: var(--ink); border-color: var(--ink-2); }
 
 /* ══════════════════════════════════════════════════════════════════════════════════════
+ * §DUEL · HAI AI CHẠY SONG SONG — hai cột trong khung chat, mỗi cột một đấu thủ.
+ *
+ * Hai cột dùng LẠI nguyên bộ .bubble của khung chat (renderChatRows chung) nên ở đây chỉ có
+ * phần khung: lưới, đầu cột, và thẻ phán quyết review chéo. Luật thu về 1 cột ở màn hẹp nằm
+ * dưới §MOBILE như mọi luật mobile khác.
+ * ══════════════════════════════════════════════════════════════════════════════════════ */
+.duel-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 10px;
+  align-items: start;
+}
+.duel-col {
+  min-width: 0; /* cho phép cột co lại — nếu không, diff/lệnh dài sẽ đẩy tràn ngang cả khung chat */
+  border: var(--bd-thin) solid var(--hairline);
+  border-radius: var(--r);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.duel-col-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: var(--bd-thin) solid var(--hairline);
+  font-size: 12.5px;
+}
+.duel-col-meta { margin-left: auto; color: var(--ink-2); font-size: 11px; opacity: 0.85; }
+.duel-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border: var(--bd-thin) solid var(--hairline);
+}
+.duel-a .duel-badge, .duel-badge-a { background: var(--brass-soft); color: var(--ink); }
+.duel-b .duel-badge, .duel-badge-b { background: var(--danger-soft); color: var(--ink); }
+.duel-badge-a, .duel-badge-b { margin-left: 8px; }
+/* Cột cuộn riêng: một bên chạy dài không được kéo cả trang dài theo, và hai bên phải so
+   sánh được cạnh nhau mà không phải cuộn qua lại. */
+.duel-col-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+.duel-col-body .bubble { max-width: 100%; }
+.duel-verdict {
+  border-top: var(--bd-thin) solid var(--hairline);
+  padding: 10px;
+  font-size: 13px;
+  background: var(--surface);
+}
+.duel-verdict.needs-fix { border-top-color: var(--danger); }
+.duel-verdict-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 12.5px; }
+.duel-verdict-error { color: var(--danger); margin-bottom: 6px; }
+.duel-fix-btn { margin-top: 8px; }
+.duel-fix-sent { margin-top: 8px; font-size: 12px; color: var(--ink-2); }
+
+/* ══════════════════════════════════════════════════════════════════════════════════════
  * §MOBILE · MÀN HẸP — MỌI luật riêng cho điện thoại/tablet dọc gom Ở ĐÂY, một chỗ duy nhất.
  *
  * Đặt CUỐI FILE có chủ đích: khối này phải thắng mọi khai báo layout phía trên (kể cả các
@@ -5200,4 +5266,11 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   .question-actions .btn { flex: 1 1 auto; }
   .brand { padding: 0 10px; }
   .m-status { padding: 0 8px; }
+}
+
+/* §DUEL trên màn hẹp: hai cột xếp chồng thành một, cột không cuộn riêng nữa (cuộn lồng trên
+   điện thoại rất khó trúng) — người dùng cuộn cả trang như phiên thường. */
+@media (max-width: 860px) {
+  .duel-grid { grid-template-columns: 1fr; }
+  .duel-col-body { max-height: none; overflow-y: visible; }
 }

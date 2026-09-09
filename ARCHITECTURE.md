@@ -587,7 +587,62 @@ Three speed bumps (not hard walls — the approval gate remains the real boundar
   pipe-to-shell) *before* matching. Shared by `isRiskyCommand` (interactive runner) and `autoApprovalPolicy`
   (full-auto sprint-scan) — raw string matching lets `r""m -rf`, `bash -c 'rm -rf ~'` and `echo rm|bash` through.
 
-## 14. Possible extensions (not done)
+## 14. Duel — two AIs on one task, then cross-review (`core/duel.ts`)
+
+**Problem.** On a hard task, one AI finishes and nobody grades it — the user has to read the diff
+themselves to find what is wrong. Re-running with a different AI throws away the first attempt.
+
+**Approach.** Two AIs (e.g. Claude + Grok) get *exactly the same brief*, each works in its own git
+worktree, then they swap diffs and review each other. The user reads both reports and picks the
+branch to keep.
+
+```
+                        ┌──────────────────────────┐
+   brief  ────────────► │  POST /api/run  duel:true│
+                        └────────────┬─────────────┘
+                                     │ 2 worktrees, SAME base SHA
+                    ┌────────────────┴────────────────┐
+                    ▼                                 ▼
+        ┌───────────────────────┐         ┌───────────────────────┐
+        │ Side A · Claude       │ PHASE 1 │ Side B · Grok         │
+        │ wt-<ticket>-a         │ (paral- │ wt-<ticket>-b         │
+        │ auto mode + approvals │  lel)   │ auto mode + approvals │
+        └───────────┬───────────┘         └───────────┬───────────┘
+                    │  git diff <base SHA>            │
+                    └────────────────┬────────────────┘
+                                     │ SWAP
+                    ┌────────────────┴────────────────┐
+                    ▼                                 ▼
+        ┌───────────────────────┐         ┌───────────────────────┐
+        │ B reviews A's diff    │ PHASE 2 │ A reviews B's diff    │
+        │ 'plan' — READ-ONLY    │ (paral- │ 'plan' — READ-ONLY    │
+        └───────────┬───────────┘  lel)   └───────────┬───────────┘
+                    └────────────────┬────────────────┘
+                                     ▼
+                    'duel-report' → two-column UI + verdict
+                                     │
+                            user clicks "let <AI> fix it"
+                                     ▼
+                     POST /api/duel/:id/fix → NORMAL run
+                     (resumes that side's conversation + worktree)
+```
+
+**Design constraints**
+
+| Constraint | Why |
+| ---------- | --- |
+| Both sides call `runAgent` like any other run | `canUseTool` stays the single safety gate — duel doubles the number of streams, it does not open a new write path |
+| Phase 2 is forced to `mode: 'plan'` | The reviewer may only READ; fixing per the review is a separate, user-initiated run |
+| One worktree per side | Two agents writing the same directory would clobber each other's files and git index |
+| The diff base is a **SHA**, not a branch name | The branches keep moving during the match; the SHA is a fixed marker |
+| `WebEvent` carries `side?: 'A' \| 'B' \| 'system'` | The approval card must say which AI is asking, otherwise the user approves the wrong side's action |
+| Admin only, Dev mode only | LAN-shared modes may not create worktrees or run two streams |
+| Only one AI ready → single run plus a one-line notice | The user already typed the brief; swallowing it would be the worst outcome |
+
+**Off** by default (a per-tab ⚔️ switch kept in localStorage): a match costs roughly 2–3× the
+tokens of a normal run, so it is only worth it on genuinely hard tasks.
+
+## 15. Possible extensions (not done)
 
 - **A UI for picking skills / subagents**: today the agent picks skills itself, and subagents are enabled as
   a whole group by a flag. We could add a picker on the web UI, like the MCP panel.

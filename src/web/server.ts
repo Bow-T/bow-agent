@@ -63,6 +63,7 @@ import { loadRegistry, skillStatus, syncSkills } from '../skills/externalSkills.
 import { parseJiraRef } from '../input/jira-ref.js';
 import { fetchJiraTicketImages, fetchJiraTicketVideos } from '../input/jira-attachments.js';
 import { createTicketWorktree, listWorktrees, removeTicketWorktree } from '../core/gitWorktree.js';
+import { runDuel, buildFixBrief, type DuelSideSpec, type DuelSideId } from '../core/duel.js';
 import { STANDARD_SUBAGENTS } from '../core/subagents.js';
 import { listSprints, listSprintIssues, readJiraAuth } from '../scheduler/jiraApi.js';
 import {
@@ -650,6 +651,166 @@ function runAgentSession(session: ReturnType<typeof createSession>, params: RunP
 }
 
 /**
+ * DUEL — hai AI cùng làm một task trong hai worktree riêng rồi soi chéo diff của nhau.
+ *
+ * VÌ SAO ở đây mà không phải endpoint riêng: /api/run đã lo hết phần nặng (dựng brief, ảnh/video
+ * Jira, screener chống injection, profile, MCP). Duel chỉ khác ở CHỖ CHẠY — nên nó là một nhánh
+ * của cùng handler, không phải một đường vào thứ hai (đường vào thứ hai = một cổng an toàn thứ hai
+ * phải bảo trì song song).
+ */
+interface DuelConfig {
+  ticket: string;
+  sides: [DuelSideSpec, DuelSideSpec];
+}
+
+/** Một phía trong báo cáo duel đã lưu — đủ để chạy lượt "Cho sửa" sau đó. */
+interface StoredDuelSide {
+  side: DuelSideId;
+  spec: DuelSideSpec;
+  cwd: string;
+  branch: string;
+  conversationId?: string;
+  review: string | null;
+}
+
+/**
+ * Báo cáo duel gần đây, keyed theo sessionId — POST /api/duel/:id/fix tra ở đây để biết worktree,
+ * hội thoại và báo cáo review của từng phía. Giữ tối đa DUEL_REPORT_KEEP bản (LRU thô theo thứ tự
+ * chèn) để không rò bộ nhớ khi chạy nhiều trận.
+ */
+const duelReports = new Map<string, { params: RunParams; sides: StoredDuelSide[] }>();
+const DUEL_REPORT_KEEP = 20;
+
+function rememberDuelReport(sessionId: string, entry: { params: RunParams; sides: StoredDuelSide[] }): void {
+  duelReports.set(sessionId, entry);
+  while (duelReports.size > DUEL_REPORT_KEEP) {
+    const oldest = duelReports.keys().next().value;
+    if (oldest === undefined) break;
+    duelReports.delete(oldest);
+  }
+}
+
+/** Nhãn hiển thị của một AI ('Claude', 'Grok'…) — lấy từ danh sách provider đã khai. */
+function providerLabel(id: ProviderId): string {
+  return availableProviders().find((p) => p.id === id)?.label ?? id;
+}
+
+/**
+ * Chọn ĐỐI THỦ cho phía A: AI khác A và đã sẵn sàng (đã login Claude / có token gateway).
+ * Trả null nếu máy chỉ cấu hình đúng một AI — khi đó duel vô nghĩa, caller tự lui về chạy đơn.
+ */
+function pickOpponent(a: ProviderId): ProviderId | null {
+  const other = availableProviders().find((p) => p.id !== a && p.ready && providerReady(p.id));
+  return other ? other.id : null;
+}
+
+/** Tên ticket cho trận: ưu tiên người dùng gõ, sau đó Jira key, cuối cùng là dấu thời gian. */
+function resolveDuelTicket(explicit: unknown, jiraRef: string): string {
+  if (typeof explicit === 'string' && explicit.trim()) return explicit.trim();
+  const key = jiraRef ? parseJiraRef(jiraRef).ticketKey : undefined;
+  const d = new Date();
+  const stamp = `${String(d.getDate()).padStart(2, '0')}${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}`;
+  // Kèm dấu thời gian NGAY CẢ khi có Jira key: chạy lại cùng ticket lần hai sẽ đụng
+  // "branch đã tồn tại" của lần trước, người dùng chẳng làm gì sai mà trận không chạy được.
+  return key ? `${key}-duel-${stamp}` : `duel-${stamp}`;
+}
+
+/**
+ * Chạy một trận duel trên một session web. Mọi thao tác ghi của HAI phía vẫn qua đúng cổng duyệt
+ * của `runAgent` — điểm khác duy nhất là event/approval được gắn nhãn phía để UI không lẫn.
+ */
+function runDuelSession(session: ReturnType<typeof createSession>, params: RunParams, duel: DuelConfig): void {
+  const conversationIds = new Map<DuelSideId, string>();
+  const sendBySide: Partial<Record<'A' | 'B', (text: string) => void>> = {};
+  session.sendInputBySide = sendBySide;
+  session.push({
+    type: 'duel-start',
+    ticket: duel.ticket,
+    sides: duel.sides.map((sd) => ({ side: sd.id, label: sd.label })),
+  });
+
+  runDuel({
+    repoCwd: params.cwd,
+    ticket: duel.ticket,
+    brief: params.brief,
+    sides: duel.sides,
+    // 'plan' không có gì để đấu (không ai sửa file) nên duel luôn chạy mode thực thi.
+    mode: params.mode === 'plan' ? 'auto' : params.mode,
+    runBase: {
+      collabMode: params.collabMode,
+      baMode: params.baMode,
+      devopsMode: params.devopsMode,
+      requireApprovalForWrites: params.requireApprovalForWrites,
+      effort: params.effort,
+      language: params.language,
+      projectProfile: params.projectProfile,
+      images: params.images && params.images.length > 0 ? params.images : undefined,
+      mcpServers: params.mcpServers && params.mcpServers.length > 0 ? params.mcpServers : undefined,
+      userMcpServers:
+        params.userMcpServers && Object.keys(params.userMcpServers).length > 0 ? params.userMcpServers : undefined,
+      stack: params.stack || undefined,
+      useSubagents: params.useSubagents,
+      autopilot: params.autopilot,
+      runId: session.id,
+    },
+    abortSignal: session.abort.signal,
+    onEvent: (side, ev) => session.push({ ...ev, side }),
+    onApproval: (side, toolName, input, meta) =>
+      session.requestApproval(toolName, input, { ...meta, side }),
+    onQuestion: (side, questions) => session.requestQuestion(questions, side),
+    onSessionId: (side, id) => {
+      conversationIds.set(side, id);
+      session.push({ type: 'conversation', conversationId: id, side });
+    },
+    onInputChannel: (side, send) => {
+      sendBySide[side] = send;
+    },
+  })
+    .then((report) => {
+      const stored: StoredDuelSide[] = report.sides.map((s) => ({
+        side: s.id,
+        spec: duel.sides.find((spec) => spec.id === s.id)!,
+        cwd: s.cwd,
+        branch: s.branch,
+        conversationId: s.conversationId ?? conversationIds.get(s.id),
+        review: s.review,
+      }));
+      rememberDuelReport(session.id, { params, sides: stored });
+      session.push({
+        type: 'duel-report',
+        report: {
+          ticket: report.ticket,
+          baseSha: report.baseSha,
+          sides: report.sides.map((s) => ({
+            side: s.id,
+            label: s.label,
+            branch: s.branch,
+            cwd: s.cwd,
+            changedFiles: s.changedFiles,
+            result: s.result,
+            error: s.error,
+            review: s.review,
+            reviewedBy: s.reviewedBy,
+            // Chỉ mời "Cho sửa" khi reviewer THỰC SỰ kết luận cần sửa — tránh nút mời gọi
+            // người dùng đốt thêm một lượt cho báo cáo "ĐẠT".
+            needsFix: Boolean(s.review && /CẦN SỬA/i.test(s.review)),
+          })),
+        },
+      });
+      logAudit(`IP: ${params.cleanIp} - DUEL ${duel.ticket} HOÀN THÀNH: session=${session.id}`, params.cleanIp, params.clientName);
+      session.push({ type: 'done', result: null });
+    })
+    .catch((err: unknown) => {
+      const msg = (err as Error).message;
+      logAudit(`IP: ${params.cleanIp} - DUEL ${duel.ticket} THẤT BẠI: ${msg}`, params.cleanIp, params.clientName);
+      session.push({ type: 'fatal', message: msg });
+    })
+    .finally(() => {
+      session.close();
+    });
+}
+
+/**
  * POST /api/run — bắt đầu một phiên agent.
  * body: { text?, ticketKey?, wbs?, mode: 'plan'|'execute', profile, effort, cwd }
  * Trả { sessionId }. Sự kiện stream qua GET /api/events/:id.
@@ -675,6 +836,9 @@ app.post('/api/run', async (req, res) => {
       stack,
       useSubagents,
       autopilot,
+      duel,
+      duelTicket,
+      duelOpponent,
       conversationId,
       resumeContext,
     } = req.body ?? {};
@@ -953,38 +1117,98 @@ app.post('/api/run', async (req, res) => {
       }
     }
 
+    const runParams: RunParams = {
+      brief,
+      cwd: workdir,
+      mode: runMode,
+      collabMode: isCollabMode,
+      baMode: isBaMode,
+      devopsMode: isDevOpsMode,
+      effort: effort ?? 'high',
+      language: language === 'en' ? 'en' : 'vi',
+      projectProfile,
+      images: uploadImages,
+      mcpServers: effectiveMcp,
+      userMcpServers,
+      stack: typeof stack === 'string' ? stack : undefined,
+      useSubagents: allowSubagents,
+      autopilot: effectiveAutopilot,
+      model: effectiveModel,
+      provider: effectiveProvider,
+      providerProfile: effectiveProviderProfile,
+      claudeProfile: effectiveClaudeProfile,
+      isExecuting,
+      routeToAdmin,
+      requireApprovalForWrites,
+      cleanIp,
+      clientName,
+      resumeSessionId,
+    };
+
+    // DUEL: hai AI cùng làm task trong hai worktree rồi soi chéo. CHỈ admin localhost ở mode Dev —
+    // các mode chia sẻ LAN (QC/Collab/BA/Reviewer/DevOps) không được tạo worktree/chạy hai luồng.
+    const duelAllowed = isAdmin && !isQcMode && !isReviewerMode && !isCollabMode && !isBaMode && !isDevOpsMode;
+    if (duel === true && duelAllowed) {
+      const sideAProvider: ProviderId = effectiveProvider ?? config.provider;
+      const requestedOpponent =
+        duelOpponent && typeof duelOpponent === 'object' ? (duelOpponent as Record<string, unknown>) : undefined;
+      const opponentAsked =
+        requestedOpponent?.provider === 'anthropic' || requestedOpponent?.provider === 'grok'
+          ? (requestedOpponent.provider as ProviderId)
+          : undefined;
+      const opponentProfile =
+        typeof requestedOpponent?.providerProfile === 'string' && requestedOpponent.providerProfile.trim()
+          ? (requestedOpponent.providerProfile as string).trim()
+          : undefined;
+      const sideBProvider =
+        opponentAsked && opponentAsked !== sideAProvider && providerReady(opponentAsked, opponentProfile)
+          ? opponentAsked
+          : pickOpponent(sideAProvider);
+
+      if (!sideBProvider) {
+        // Chỉ có một AI sẵn sàng → không có gì để đấu. Nói thẳng rồi chạy đơn luồng như thường,
+        // vì người dùng đã gõ đề bài rồi, nuốt luôn yêu cầu mới là tệ nhất.
+        session.push({
+          type: 'text',
+          text:
+            '⚠️ Duel cần HAI AI sẵn sàng nhưng máy chỉ cấu hình được một ' +
+            `(${providerLabel(sideAProvider)}). Chạy đơn luồng như bình thường.`,
+        });
+      } else {
+        // Mode 'plan' bị hạ model xuống Sonnet; duel luôn chạy thực thi nên trả lại model
+        // người dùng chọn, nếu không hai bên đấu bằng model không ai muốn.
+        const duelModel = runMode === 'plan' ? (typeof model === 'string' ? model : undefined) : effectiveModel;
+        const sides: [DuelSideSpec, DuelSideSpec] = [
+          {
+            id: 'A',
+            label: providerLabel(sideAProvider),
+            provider: sideAProvider,
+            providerProfile: effectiveProviderProfile,
+            claudeProfile: effectiveClaudeProfile,
+            model: duelModel,
+          },
+          {
+            id: 'B',
+            label: providerLabel(sideBProvider),
+            provider: sideBProvider,
+            providerProfile: opponentProfile,
+            claudeProfile: sideBProvider === 'anthropic' ? effectiveClaudeProfile : undefined,
+            model: duelModel,
+          },
+        ];
+        const ticket = resolveDuelTicket(duelTicket, activeJiraRef);
+        logAudit(
+          `IP: ${cleanIp} - DUEL khởi động: ticket=${ticket}, ${sides[0].label} vs ${sides[1].label}, session=${session.id}`,
+          cleanIp,
+          clientName,
+        );
+        runDuelSession(session, runParams, { ticket, sides });
+        return;
+      }
+    }
+
     // Chạy agent nền + tự lên lịch chạy tiếp nếu dừng vì hết hạn mức phiên (chỉ khi đang thực thi).
-    runAgentSession(
-      session,
-      {
-        brief,
-        cwd: workdir,
-        mode: runMode,
-        collabMode: isCollabMode,
-        baMode: isBaMode,
-        devopsMode: isDevOpsMode,
-        effort: effort ?? 'high',
-        language: language === 'en' ? 'en' : 'vi',
-        projectProfile,
-        images: uploadImages,
-        mcpServers: effectiveMcp,
-        userMcpServers,
-        stack: typeof stack === 'string' ? stack : undefined,
-        useSubagents: allowSubagents,
-        autopilot: effectiveAutopilot,
-        model: effectiveModel,
-        provider: effectiveProvider,
-        providerProfile: effectiveProviderProfile,
-        claudeProfile: effectiveClaudeProfile,
-        isExecuting,
-        routeToAdmin,
-        requireApprovalForWrites,
-        cleanIp,
-        clientName,
-        resumeSessionId,
-      },
-      0,
-    );
+    runAgentSession(session, runParams, 0);
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
@@ -1145,7 +1369,18 @@ app.post('/api/answer', (req, res) => {
 app.post('/api/say/:id', (req, res) => {
   const cleanIp = getCleanIp(req);
   const session = getSession(req.params.id);
-  const send = session?.sendInput;
+  // Phiên duel có HAI luồng đang chạy: body.side chọn phía nghe ('A'/'B'), thiếu side thì nói
+  // cho cả hai (cùng một đề bài, nhắc thêm điều gì thường là nhắc cả hai bên).
+  const bySide = session?.sendInputBySide;
+  const askedSide = req.body?.side === 'A' || req.body?.side === 'B' ? (req.body.side as 'A' | 'B') : undefined;
+  const duelTargets = bySide
+    ? (askedSide ? [bySide[askedSide]] : [bySide.A, bySide.B]).filter(
+        (fn): fn is (text: string) => void => typeof fn === 'function',
+      )
+    : [];
+  const send = duelTargets.length
+    ? (text: string) => duelTargets.forEach((fn) => fn(text))
+    : session?.sendInput;
   if (!session || !send) {
     // Phiên vừa xong/đã đóng → client tự chuyển sang chạy lượt mới (resume conversationId).
     res.status(409).json({ error: 'Phiên đã kết thúc, không nhận thêm lời.' });
@@ -1171,6 +1406,63 @@ app.post('/api/say/:id', (req, res) => {
   session.push({ type: 'user-input', text });
   send(text);
   res.json({ ok: true });
+});
+
+/**
+ * POST /api/duel/:id/fix — đẩy báo cáo review của bên KIA về lại chính tác giả để sửa.
+ * body: { side: 'A' | 'B' } — phía SẼ SỬA (nhận review về mình).
+ *
+ * Đây là lượt chạy BÌNH THƯỜNG (một luồng, resume đúng hội thoại của phía đó, trong worktree của
+ * phía đó) nên nó đi qua runAgentSession và cổng duyệt như mọi lượt khác — không có đường tắt nào
+ * cho việc sửa theo review. Trả sessionId mới để client mở SSE theo dõi.
+ */
+app.post('/api/duel/:id/fix', requireAdmin, checkReadonlyConfig, (req, res) => {
+  const cleanIp = getCleanIp(req);
+  const entry = duelReports.get(req.params.id);
+  if (!entry) {
+    res.status(404).json({ error: 'Không tìm thấy báo cáo duel của phiên này (có thể đã quá cũ).' });
+    return;
+  }
+  const sideId = req.body?.side === 'A' || req.body?.side === 'B' ? (req.body.side as DuelSideId) : undefined;
+  const target = entry.sides.find((sd) => sd.side === sideId);
+  if (!target) {
+    res.status(400).json({ error: "Thiếu hoặc sai 'side' (phải là 'A' hoặc 'B')." });
+    return;
+  }
+  if (!target.review) {
+    res.status(400).json({ error: `${target.spec.label} không có báo cáo review nào để sửa theo.` });
+    return;
+  }
+  const reviewer = entry.sides.find((sd) => sd.side !== target.side);
+
+  const session = createSession();
+  (session as any).clientIp = cleanIp;
+  (session as any).clientName = getClientName(req);
+  res.json({ sessionId: session.id });
+
+  logAudit(
+    `IP: ${cleanIp} - DUEL sửa theo review: phía ${target.side} (${target.spec.label}) tại ${target.cwd}, session=${session.id}`,
+    cleanIp,
+    getClientName(req),
+  );
+  runAgentSession(
+    session,
+    {
+      ...entry.params,
+      brief: buildFixBrief({ reviewerLabel: reviewer?.spec.label ?? 'AI còn lại', review: target.review }),
+      cwd: target.cwd,
+      // Sửa code thì phải ở mode thực thi; nếu trận chạy từ tab đang để 'plan' thì nâng lên 'auto'
+      // (cổng duyệt của runner vẫn gác từng thao tác như thường).
+      mode: entry.params.mode === 'plan' ? 'auto' : entry.params.mode,
+      isExecuting: true,
+      provider: target.spec.provider,
+      providerProfile: target.spec.providerProfile,
+      claudeProfile: target.spec.claudeProfile,
+      model: target.spec.model,
+      resumeSessionId: target.conversationId,
+    },
+    0,
+  );
 });
 
 /** POST /api/stop/:id — dừng agent giữa chừng. */
