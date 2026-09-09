@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { PixelSelect } from './PixelSelect.js';
 import { AccentPicker } from './AccentPicker.js';
 import { modeDef } from './ModeSelect.js';
@@ -683,6 +683,11 @@ export function App() {
   const [histPanelOpen, setHistPanelOpen] = useState(false);
   const [histList, setHistList] = useState<ConversationSummary[]>([]);
   const [histSearch, setHistSearch] = useState('');
+  // Lọc thêm: theo dự án (cwd, '' = tất cả) và theo khoảng ngày cập nhật.
+  const [histProject, setHistProject] = useState('');
+  const [histRange, setHistRange] = useState<'all' | 'today' | '7d' | '30d' | 'custom'>('all');
+  const [histFrom, setHistFrom] = useState('');
+  const [histTo, setHistTo] = useState('');
   const [histError, setHistError] = useState('');
   const [histBusy, setHistBusy] = useState(false);
   // id cuộc đang chờ xác nhận xóa (mở hộp xác nhận riêng). null = không xóa.
@@ -690,6 +695,35 @@ export function App() {
   // id cuộc đang sửa tên tại chỗ + giá trị nháp. null = không sửa.
   const [histRenameId, setHistRenameId] = useState<string | null>(null);
   const [histRenameText, setHistRenameText] = useState('');
+
+  // Danh sách dự án (cwd) rút từ lịch sử + số cuộc mỗi dự án — nguồn cho bộ lọc dự án.
+  const histProjects = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const c of histList) if (c.cwd) m.set(c.cwd, (m.get(c.cwd) ?? 0) + 1);
+    return [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  }, [histList]);
+
+  // Lọc lịch sử: tiêu đề + dự án (cwd) + khoảng ngày (theo updatedAt).
+  const histFiltered = useMemo(() => {
+    const q = histSearch.trim().toLowerCase();
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    let from = -Infinity;
+    let to = Infinity;
+    if (histRange === 'today') from = startOfToday;
+    else if (histRange === '7d') from = startOfToday - 6 * 86400000;
+    else if (histRange === '30d') from = startOfToday - 29 * 86400000;
+    else if (histRange === 'custom') {
+      if (histFrom) from = new Date(`${histFrom}T00:00:00`).getTime();
+      if (histTo) to = new Date(`${histTo}T23:59:59.999`).getTime();
+    }
+    return histList.filter((c) => (
+      (!q || c.title.toLowerCase().includes(q))
+      && (!histProject || c.cwd === histProject)
+      && c.updatedAt >= from
+      && c.updatedAt <= to
+    ));
+  }, [histList, histSearch, histProject, histRange, histFrom, histTo]);
 
   // Đồng bộ hóa cấu hình composer vào localStorage (per-tab task/conversationId đã dời sang TaskPane)
   useEffect(() => { localStorage.setItem('bow-cwd', cwd); }, [cwd]);
@@ -3365,7 +3399,7 @@ export function App() {
               )}
 
               {/* Ô tìm kiếm theo tiêu đề */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
                 <Icon name="search" size={14} />
                 <input
                   placeholder="Tìm theo tiêu đề…"
@@ -3375,17 +3409,71 @@ export function App() {
                 />
               </div>
 
+              {/* Lọc theo dự án (cwd) + khoảng ngày cập nhật */}
+              <div className="hist-filters">
+                <select
+                  value={histProject}
+                  onChange={(e) => setHistProject(e.target.value)}
+                  title={histProject || 'Tất cả dự án'}
+                  style={{ padding: '7px', flex: '1 1 200px', minWidth: 0 }}
+                >
+                  <option value="">Tất cả dự án ({histList.length})</option>
+                  {histProjects.map(([dir, n]) => (
+                    <option key={dir} value={dir} title={dir}>
+                      {dir.split('/').filter(Boolean).pop() || dir} ({n})
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={histRange}
+                  onChange={(e) => setHistRange(e.target.value as typeof histRange)}
+                  style={{ padding: '7px', flex: '0 1 150px' }}
+                >
+                  <option value="all">Mọi thời gian</option>
+                  <option value="today">Hôm nay</option>
+                  <option value="7d">7 ngày qua</option>
+                  <option value="30d">30 ngày qua</option>
+                  <option value="custom">Khoảng ngày…</option>
+                </select>
+                {histRange === 'custom' && (
+                  <>
+                    <input
+                      type="date"
+                      value={histFrom}
+                      max={histTo || undefined}
+                      onChange={(e) => setHistFrom(e.target.value)}
+                      title="Từ ngày"
+                      style={{ padding: '6px', flex: '1 1 130px', minWidth: 0 }}
+                    />
+                    <input
+                      type="date"
+                      value={histTo}
+                      min={histFrom || undefined}
+                      onChange={(e) => setHistTo(e.target.value)}
+                      title="Đến ngày"
+                      style={{ padding: '6px', flex: '1 1 130px', minWidth: 0 }}
+                    />
+                  </>
+                )}
+                {(histProject || histRange !== 'all' || histSearch) && (
+                  <button
+                    className="hist-action-btn"
+                    onClick={() => { setHistProject(''); setHistRange('all'); setHistFrom(''); setHistTo(''); setHistSearch(''); }}
+                    title="Bỏ mọi bộ lọc"
+                  >
+                    Xóa lọc
+                  </button>
+                )}
+              </div>
+
               <div className="hist-list">
                 {(() => {
-                  const q = histSearch.trim().toLowerCase();
-                  const filtered = q
-                    ? histList.filter((c) => c.title.toLowerCase().includes(q))
-                    : histList;
+                  const filtered = histFiltered;
                   if (histList.length === 0) {
                     return <div style={{ padding: '14px', textAlign: 'center', color: 'var(--muted)' }}>Chưa có cuộc trò chuyện nào được lưu.</div>;
                   }
                   if (filtered.length === 0) {
-                    return <div style={{ padding: '14px', textAlign: 'center', color: 'var(--muted)' }}>Không có cuộc nào khớp "{histSearch}".</div>;
+                    return <div style={{ padding: '14px', textAlign: 'center', color: 'var(--muted)' }}>Không có cuộc nào khớp bộ lọc hiện tại.</div>;
                   }
                   return filtered.map((c) => {
                     const isActive = c.id === paneActiveConvId;
@@ -3465,7 +3553,11 @@ export function App() {
               </div>
             </div>
             <div className="modal-footer" style={{ display: 'flex', gap: '12px', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px' }}>
-              <span style={{ fontSize: '12px', color: 'var(--muted)' }}>{histList.length} cuộc đã lưu</span>
+              <span style={{ fontSize: '12px', color: 'var(--muted)' }}>
+                {histFiltered.length === histList.length
+                  ? `${histList.length} cuộc đã lưu`
+                  : `${histFiltered.length}/${histList.length} cuộc khớp lọc`}
+              </span>
               <button className="btn deny" onClick={() => setHistPanelOpen(false)}>Đóng</button>
             </div>
           </div>

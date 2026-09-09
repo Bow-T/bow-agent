@@ -3424,6 +3424,19 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .btn.picker-root.active { border-color: var(--brass); color: var(--brass); }
 
 /* ─────────────────────  Panel Lịch sử cuộc trò chuyện  ───────────────────── */
+/* Hàng bộ lọc (dự án + khoảng ngày) — xuống dòng gọn khi modal hẹp. */
+.hist-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.hist-filters select,
+.hist-filters input[type="date"] {
+  font-family: inherit;
+  font-size: 12px;
+}
 .hist-list {
   max-height: 420px;
   overflow-y: auto;
