@@ -37,6 +37,7 @@ import { buildMonorepoHooks, buildReadAutoApproveHook } from '../skills/hooks.js
 import { buildSubagents } from './subagents.js';
 import { createCheckpoint, restoreInstructions, recordAction } from './checkpoint.js';
 import { autopilotBashDecision } from './autopilotBash.js';
+import { isReadOnlyBash } from './readOnlyBash.js';
 import { matchesAnyScannable } from './scannableCommand.js';
 import {
   resolveWorkspace,
@@ -1216,6 +1217,14 @@ export async function runAgent(opts: RunOptions): Promise<string | null> {
             //   4) còn lại: siết-duyệt → hỏi; 'auto' → allow; khác → hỏi.
             if (toolName === 'Bash' && typeof input.command === 'string') {
               const cmd = input.command.trim();
+              // 0) Lệnh CHỈ-ĐỌC (đã chứng minh bằng parser tôn trọng nháy, xem readOnlyBash.ts):
+              //    tự chạy, KHÔNG bao giờ gắn risky. Đặt TRƯỚC isRiskyCommand vì bộ lọc risky quét
+              //    regex trên chuỗi đã BUNG NHÁY nên báo động giả rất nhiều với lệnh xem file —
+              //    `awk 'NR>=470 && NR<=520' f.tsx` (dấu > là so sánh, không phải redirect) hay
+              //    `grep -rn "rm -rf" src` (chuỗi tìm kiếm, không phải lệnh xoá). Bị đánh risky thì
+              //    toggle "Tự duyệt" của web CỐ TÌNH bỏ qua → người dùng phải bấm tay từng lệnh đọc.
+              //    Non-admin (requireApprovalForWrites) KHÔNG nới: đọc file vẫn qua admin như cũ.
+              if (!opts.requireApprovalForWrites && isReadOnlyBash(cmd)) return allow;
               if (isRiskyCommand(cmd)) {
                 // Autopilot: NỚI cho ghi-file thuần TRONG repo (mv/cp/redirect/tee) — git checkpoint
                 // hoàn tác được. rm/git/chmod/sudo/ln/inline-script/ghi-ngoài-repo… vẫn hỏi
