@@ -11,9 +11,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   buildFixBrief,
+  commitSideWork,
+  dirtyFileCount,
+  buildKeepBrief,
   buildReviewBrief,
+  buildVerdictBrief,
   collectDiff,
   duelWorktreeTicket,
+  parseVerdictWinner,
   truncateDiff,
   MAX_DIFF_CHARS,
 } from './duel.js';
@@ -122,5 +127,133 @@ test('collectDiff trả rỗng khi không có thay đổi', () => {
     assert.equal(out.diff, '');
   } finally {
     rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('parseVerdictWinner đọc được dòng CHỌN ở mọi kiểu định dạng model hay trả', () => {
+  assert.equal(parseVerdictWinner('CHỌN: A\n\nVÌ SAO: ...'), 'A');
+  assert.equal(parseVerdictWinner('**CHỌN: B**\n'), 'B');
+  assert.equal(parseVerdictWinner('  chọn : b '), 'B');
+  // Không dấu (model trả ASCII) vẫn đọc được.
+  assert.equal(parseVerdictWinner('CHON: A'), 'A');
+  // Dòng CHỌN nằm sau vài dòng mở đầu.
+  assert.equal(parseVerdictWinner('Tôi đã đọc cả hai bài.\nCHỌN: B\nVÌ SAO: ...'), 'B');
+});
+
+test('parseVerdictWinner trả null khi trọng tài không chọn bên nào', () => {
+  assert.equal(parseVerdictWinner('CHỌN: KHÔNG\n\nVÌ SAO: cả hai đều thiếu'), null);
+  // Model trả tự do, không theo khuôn → null, KHÔNG được đoán bừa một bên.
+  assert.equal(parseVerdictWinner('Bài của Claude có vẻ ổn hơn một chút.'), null);
+  assert.equal(parseVerdictWinner(''), null);
+});
+
+test('brief trọng tài nêu cả hai bài, đề bài gốc và khuôn kết quả máy đọc được', () => {
+  const brief = buildVerdictBrief({
+    task: 'Thêm bộ lọc ngày',
+    sides: [
+      { label: 'Claude', sideId: 'A', files: ['web/App.tsx'], result: 'xong', review: 'KẾT LUẬN: ĐẠT' },
+      { label: 'Grok', sideId: 'B', files: [], error: 'hết hạn mức', result: null, review: null },
+    ],
+  });
+  assert.ok(brief.includes('Thêm bộ lọc ngày'));
+  assert.ok(brief.includes('### Phía A — Claude'));
+  assert.ok(brief.includes('### Phía B — Grok'));
+  assert.ok(brief.includes('⚠️ Chạy LỖI: hết hạn mức'));
+  assert.ok(brief.includes('CHỌN: A | B | KHÔNG'));
+  // Trọng tài phải được phép nói "cả hai đều chưa đạt", không bị ép chọn.
+  assert.ok(brief.includes('không bên nào đạt'));
+});
+
+test('brief giữ nhánh nói rõ merge vào đâu và CẤM push/xoá nhánh', () => {
+  const brief = buildKeepBrief({
+    winnerLabel: 'Grok',
+    winnerBranch: 'feat/X-b',
+    baseBranch: 'main',
+    loserBranch: 'feat/X-a',
+    review: 'KẾT LUẬN: ĐẠT',
+  });
+  assert.ok(brief.includes('feat/X-b'));
+  assert.ok(brief.includes('main'));
+  assert.ok(brief.includes('KHÔNG push'));
+  assert.ok(brief.includes('KHÔNG xoá nhánh nào'));
+  // Nhánh thua phải được nêu tên để agent biết cái nào KHÔNG đụng vào.
+  assert.ok(brief.includes('feat/X-a'));
+});
+
+test('commitSideWork đưa bài của một phía lên nhánh (kể cả file mới)', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'bow-duel-'));
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' });
+  try {
+    git('init', '-q');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'Test');
+    writeFileSync(join(repo, 'a.txt'), 'một\n');
+    git('add', '.');
+    git('commit', '-q', '-m', 'base');
+    const before = git('rev-list', '--count', 'HEAD').trim();
+
+    writeFileSync(join(repo, 'a.txt'), 'hai\n');
+    writeFileSync(join(repo, 'b.txt'), 'mới\n');
+    const out = commitSideWork(repo, 'duel(A): T-1 — bài của Claude');
+
+    assert.equal(out.ok, true);
+    assert.equal(out.error, undefined);
+    assert.equal(Number(git('rev-list', '--count', 'HEAD').trim()), Number(before) + 1);
+    assert.equal(git('status', '--porcelain').trim(), '', 'working tree phải sạch sau commit');
+    assert.ok(git('log', '-1', '--pretty=%s').includes('duel(A): T-1'));
+    // File mới cũng phải nằm trên nhánh, không chỉ file đã track.
+    assert.ok(git('show', '--name-only', '--pretty=', 'HEAD').includes('b.txt'));
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('commitSideWork không coi "chẳng có gì để commit" là lỗi', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'bow-duel-'));
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' });
+  try {
+    git('init', '-q');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'Test');
+    writeFileSync(join(repo, 'a.txt'), 'một\n');
+    git('add', '.');
+    git('commit', '-q', '-m', 'base');
+    const before = git('rev-list', '--count', 'HEAD').trim();
+
+    const out = commitSideWork(repo, 'duel(B): T-1 — bài của Grok');
+    assert.equal(out.ok, true);
+    // Không được đẻ commit rỗng.
+    assert.equal(git('rev-list', '--count', 'HEAD').trim(), before);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('dirtyFileCount đếm đúng file chưa commit, kể cả file mới', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'bow-duel-'));
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' });
+  try {
+    git('init', '-q');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'Test');
+    writeFileSync(join(repo, 'a.txt'), 'một\n');
+    git('add', '.');
+    git('commit', '-q', '-m', 'base');
+    assert.equal(dirtyFileCount(repo), 0, 'repo sạch phải là 0');
+
+    writeFileSync(join(repo, 'a.txt'), 'hai\n');
+    writeFileSync(join(repo, 'b.txt'), 'mới\n');
+    assert.equal(dirtyFileCount(repo), 2);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('dirtyFileCount trả 0 (không ném) khi thư mục không phải git repo', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bow-duel-notgit-'));
+  try {
+    assert.equal(dirtyFileCount(dir), 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });

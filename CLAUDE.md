@@ -132,7 +132,7 @@ duel chỉ khác **chỗ chạy**.
         │ feat/<ticket>-a       │ (song   │ feat/<ticket>-b       │
         │ mode auto + cổng duyệt│  song)  │ mode auto + cổng duyệt│
         └───────────┬───────────┘         └───────────┬───────────┘
-                    │ git diff <base>                 │ git diff <base>
+                    │ git diff <base SHA>             │
                     └────────────────┬────────────────┘
                                      │ ĐỔI CHÉO
                     ┌────────────────┴────────────────┐
@@ -145,17 +145,23 @@ duel chỉ khác **chỗ chạy**.
                     └────────────────┬────────────────┘
                                      ▼
                         ┌──────────────────────────┐
-                        │ event 'duel-report'      │
-                        │ UI: 2 cột + phán quyết   │
+                        │ PHA 3 · TRỌNG TÀI        │
+                        │ đọc 2 báo cáo (KHÔNG đọc │
+                        │ lại diff), 'plan', Sonnet│
+                        │ → "CHỌN: A|B|KHÔNG"      │
                         └────────────┬─────────────┘
-                                     │ bạn bấm "Cho <AI> sửa theo review"
-                                     ▼
-                        ┌──────────────────────────┐
-                        │ POST /api/duel/:id/fix   │
-                        │ lượt THƯỜNG: resume đúng │
-                        │ hội thoại + worktree của │
-                        │ phía đó, qua cổng duyệt  │
-                        └──────────────────────────┘
+                                     │ 'duel-report'
+                        ┌────────────▼─────────────┐
+                        │ UI: 2 cột + đề xuất ★    │
+                        └────────────┬─────────────┘
+              ┌──────────────────────┼──────────────────────┐
+              ▼                      ▼                      ▼
+   "Cho <AI> sửa"        "Giữ bài <AI>"          "🧹 Dọn worktree"
+   POST …/fix            POST …/keep             DELETE …/worktrees
+   lượt THƯỜNG:          merge nhánh thắng       LUÔN hỏi; xoá nhánh
+   resume hội thoại      vào nhánh gốc, chạy     phải tick RIÊNG
+   + worktree phía đó    kiểm chứng, commit      (bài chưa merge sẽ
+   qua cổng duyệt        — KHÔNG push            mất hẳn)
 ```
 
 Điểm phải giữ khi sửa:
@@ -173,6 +179,20 @@ duel chỉ khác **chỗ chạy**.
 - **Chỉ có một AI sẵn sàng** (chưa login Claude / chưa có token gateway) → báo một dòng rồi
   chạy đơn luồng như thường, KHÔNG nuốt yêu cầu của người dùng.
 - **Nói chen**: `POST /api/say/:id` nhận thêm `side` — thiếu `side` thì lời nói vào CẢ HAI phía.
+- **Repo gốc bẩn = hai đấu thủ làm trên nền cũ.** Worktree tách từ HEAD, không mang theo file
+  chưa commit. `dirtyFileCount` cảnh báo ngay đầu trận thay vì để người dùng phát hiện lúc so kết quả.
+- **Một trận = MỘT đề bài.** Nhận `duel-report` là UI **tự tắt** công tắc ⚔️. Không tắt thì mọi
+  câu gõ tiếp trong tab ("tiếp", "commit đi") lại khởi động một trận MỚI với hai worktree rỗng —
+  đã xảy ra thật, 4 trận rác trong 20 phút.
+- **Bài phải được COMMIT lên nhánh** (`commitSideWork` chạy ngay sau khi thu diff, không
+  `--no-verify`). Agent thường làm xong rồi để đó; bài nằm ở working tree thì nút "Giữ bài" merge
+  nhánh ra số không. Commit hỏng (hook chặn) → UI hiện "nhánh rỗng" và KHOÁ nút Giữ bài.
+- **Trận KHÔNG tự dọn.** Hai worktree được giữ lại sau khi xong (bấm "Giữ bài" rồi vẫn còn) —
+  xoá là mất luôn bài bên thua khi chưa ai merge. Dọn là thao tác NGƯỜI DÙNG bấm, có hộp xác
+  nhận, và `deleteBranches` phải tick riêng.
+- **Trọng tài có thể thiên vị** (nó là một trong hai hãng, chạy bằng AI mặc định của server).
+  Vì vậy UI luôn ghi rõ ai chấm, và `parseVerdictWinner` trả `null` khi model không theo khuôn —
+  thà không có đề xuất còn hơn đề xuất bịa.
 
 ## Tài liệu chi tiết
 

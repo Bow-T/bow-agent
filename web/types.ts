@@ -75,13 +75,23 @@ export interface DuelSideSummary {
   reviewedBy?: string;
   /** Reviewer kết luận CẦN SỬA → UI mời nút "Cho sửa". */
   needsFix: boolean;
+  /** Lệnh merge sẵn để copy chạy tay. */
+  mergeCommand: string;
+  /** Bài đã nằm trên NHÁNH chưa — chưa commit thì "Giữ bài" merge ra số không. */
+  committed: boolean;
+  /** Vì sao không commit được (nếu có). */
+  commitError?: string;
 }
 
 /** Kết quả trọn trận duel — khớp DuelSummary ở src/web/session.ts. */
 export interface DuelSummary {
   ticket: string;
   baseSha: string;
+  /** Nhánh của repo gốc lúc trận bắt đầu — đích merge của nhánh thắng. */
+  baseBranch: string;
   sides: DuelSideSummary[];
+  /** Đề xuất của trọng tài (vắng nếu pha 3 không chạy). */
+  verdict?: { winner: 'A' | 'B' | null; text: string; arbiterLabel: string };
 }
 
 /** Sự kiện từ backend qua SSE — phải khớp WebEvent ở src/web/session.ts. */

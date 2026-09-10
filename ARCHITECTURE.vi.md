@@ -566,12 +566,18 @@ nào giữ.
         └───────────┬───────────┘  song)  └───────────┬───────────┘
                     └────────────────┬────────────────┘
                                      ▼
-                     'duel-report' → UI 2 cột + phán quyết
-                                     │
-                          bạn bấm "Cho <AI> sửa theo review"
+                     PHA 3 · TRỌNG TÀI đọc HAI BÁO CÁO
+                     (không đọc lại diff) → "CHỌN: A|B|KHÔNG"
                                      ▼
-                     POST /api/duel/:id/fix → lượt THƯỜNG
-                     (resume hội thoại + worktree của phía đó)
+                     'duel-report' → UI 2 cột + đề xuất ★
+                                     │
+         ┌───────────────────────────┼───────────────────────────┐
+         ▼                           ▼                           ▼
+  "Cho <AI> sửa"            "Giữ bài <AI>"             "🧹 Dọn worktree"
+  POST …/fix                POST …/keep                DELETE …/worktrees
+  lượt THƯỜNG, resume       merge nhánh thắng vào      LUÔN hỏi; xoá nhánh
+  hội thoại + worktree      nhánh gốc, kiểm chứng,     phải tick RIÊNG
+  của phía đó               commit — KHÔNG push        (mất bài chưa merge)
 ```
 
 **Ràng buộc thiết kế**
@@ -585,6 +591,13 @@ nào giữ.
 | `WebEvent` mang `side?: 'A' \| 'B' \| 'system'` | Khung duyệt phải nói rõ AI nào đang xin, nếu không người dùng duyệt nhầm việc của bên kia |
 | Chỉ admin, chỉ mode Dev | Mode chia sẻ LAN không được tạo worktree hay chạy hai luồng |
 | Chỉ một AI sẵn sàng → chạy đơn + báo một dòng | Người dùng đã gõ đề bài rồi; nuốt yêu cầu là hỏng nhất |
+| Trọng tài chỉ nhận BÁO CÁO + thống kê, không nhận lại diff | Đủ để so hai bài mà không đốt thêm một lần token cỡ pha 2 |
+| `parseVerdictWinner` trả `null` khi model không theo khuôn | Thà không có đề xuất còn hơn đề xuất bịa; UI vẫn in nguyên văn để người đọc tự chấm |
+| Cảnh báo khi repo gốc còn file chưa commit | Worktree tách từ HEAD; hai đấu thủ sẽ làm trên nền cũ hơn cái người dùng đang thấy trong editor |
+| Nhận `duel-report` ⇒ UI tự tắt công tắc ⚔️ | Một trận là một đề bài; bật mãi thì mỗi câu gõ tiếp lại đẻ một trận mới với hai worktree rỗng |
+| `commitSideWork` commit bài của mỗi phía ngay sau pha 1 | Agent hay làm xong rồi để đó; bài ở working tree thì "Giữ bài" merge nhánh ra số không |
+| Worktree KHÔNG tự dọn; xoá nhánh phải tick riêng | Xoá là mất luôn bài bên thua khi chưa ai merge |
+| "Giữ bài" merge nhưng KHÔNG push | Đẩy lên remote là quyết định của người dùng, không phải hệ quả của một nút bấm |
 
 Mặc định **TẮT** (công tắc ⚔️ per-tab, lưu localStorage): một trận tốn khoảng 2–3× token của
 một lượt chạy thường, chỉ đáng cho task thật khó.
