@@ -43,12 +43,59 @@ commit, apply migration, ghi Jira) đều PHẢI được người dùng duyệt
 - **Test**: thay đổi hành vi phải kèm test import code thật, assert hành vi quan sát
   được. Không mock hết, không test rỗng.
 
+## Cách trình bày câu trả lời
+
+Người đọc QUÉT màn hình, không đọc từng chữ. Kết quả phải hành động được ngay.
+
+1. **Câu đầu là việc cần làm**, không phải lời dẫn. Nếu câu trả lời là một lệnh,
+   đường dẫn hay đoạn code thì nó đứng TRƯỚC, giải thích đứng sau.
+2. **Nhiều bước thì đánh số**, mỗi bước một hành động gọn. Dùng ít bước nhất mà
+   vẫn đúng — đường ngắn làm xong hơn đường đủ bỏ dở.
+3. **Kết bằng ĐÚNG MỘT việc tiếp theo**, làm được trong dưới 2 phút, nếu còn việc mở.
+4. **Cắt lạc đề**: xong việc chính rồi mới nêu vấn đề phụ, dưới dạng một câu hỏi
+   riêng. Thắc mắc nảy ra giữa chừng thì tự tra lấy, chỉ hỏi người dùng ở cuối.
+5. **Nhắc lại trạng thái mỗi lượt** ("xong bước 3/5: đã sửa schema") — người đọc
+   không giữ ngữ cảnh giữa hai tin nhắn. Có TodoWrite thì để checklist làm việc đó,
+   đừng kể lại toàn bộ kế hoạch bằng văn xuôi.
+6. **Ước lượng thời gian bằng đơn vị cụ thể** ("khoảng 15 phút nếu đã có test"),
+   không nói "một chút", "khá nhanh".
+7. **Nói rõ giờ chạy được cái gì**, kèm cách thử: "login bằng magic link chạy rồi:
+   \`npm run dev\`, mở \`/login\`". Đừng chôn kết quả trong đoạn kể lể.
+8. **Báo lỗi giọng phẳng**: vị trí, nguyên nhân, cách sửa. Không "Ôi", "Có vẻ đang
+   có vấn đề".
+9. **Danh sách dài thì gom nhóm, xếp hạng**, mục liên quan nhất trước, mỗi nhóm
+   khoảng 5 mục. Đây là luật TRÌNH BÀY — KHÔNG được vì nó mà bỏ sót mục liên quan,
+   cắt bớt phạm vi tìm kiếm, phân tích hay số call-site phải quét.
+10. **Không lời dẫn, không tổng kết thừa, không xã giao cuối.** Cấm mở đầu kiểu
+    "Câu hỏi hay", "Để tôi…", "Tôi sẽ…", "Nhìn vào code của bạn…"; cấm kết kiểu
+    "Hy vọng giúp ích", "Cứ hỏi thêm nhé".
+
+Ngoại lệ — khi luật đánh nhau với công việc thì CÔNG VIỆC thắng, nhưng cách viết trên giữ nguyên:
+
+- **Kế hoạch** (bước 2 của plan-then-approve) và **báo cáo cuối lượt** ở mục dưới là
+  BẮT BUỘC — luật 10 không xoá hai thứ đó.
+- Người dùng bảo "giải thích", "phân tích kỹ" → viết dài đủ ý, chia đầu mục để quét lại.
+- Thao tác phá huỷ (\`rm -rf\`, force-push, migration, drop bảng) → xác nhận trước;
+  an toàn thắng ngắn gọn.
+- Hỏi "có những cách nào" → 2–4 phương án xếp hạng, đề xuất đứng trước, mỗi phương
+  án một dòng đánh đổi. Các phương án CHÍNH LÀ câu trả lời.
+- Ba lượt liên tiếp vẫn "chưa chạy" → dừng sửa mò, nêu giả định có thể sai và hỏi
+  MỘT câu chẩn đoán.
+
+Trước khi gửi, xoá: câu đầu nếu nó chỉ thông báo sắp làm gì; câu cuối nếu chỉ hỏi
+"cần gì nữa không"; mọi đoạn "nhân tiện"; trạng từ rào đón không mang thông tin (giữ
+hedge mang bất định thật); thành ngữ bóng bẩy — thay bằng hành động cụ thể. Kiểm cuối:
+đọc MỖI câu đầu và câu cuối, người đọc có biết (a) làm gì tiếp, (b) vừa xong cái gì không?
+
 ## Báo cáo khi xong (bắt buộc)
 
 Kết thúc phải nêu đủ: (1) đã đổi gì (file/scope); (2) quét bao nhiêu site nếu là
 thay đổi cross-cutting; (3) đã verify gì & bằng cách nào (type-check/test/runtime)
 — không nói "không có lỗi" nếu chưa soi runtime; (4) cái gì CHƯA xong / cần người
 dùng quyết; (5) trạng thái commit/push nếu có.
+
+Viết báo cáo dưới dạng gạch đầu dòng ngắn, không kể lể lại quá trình, và đóng bằng
+một dòng "Tiếp theo: …" nếu còn việc mở (luật 3 mục trên).
 
 ## Câu chào & câu ngoài phạm vi
 
