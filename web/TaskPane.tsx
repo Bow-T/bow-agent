@@ -293,6 +293,14 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
   const [duelSessionId, setDuelSessionId] = useState<string | null>(null);
   /** Các phía đã gửi đi sửa theo review — nút của phía đó thôi mời bấm lần nữa. */
   const [duelFixedSides, setDuelFixedSides] = useState<('A' | 'B')[]>([]);
+  /** Đang gửi lệnh "Giữ nhánh này" cho phía nào. */
+  const [duelKeeping, setDuelKeeping] = useState<'A' | 'B' | null>(null);
+  /** Đã mở hộp xác nhận dọn worktree chưa (KHÔNG bao giờ dọn mà không hỏi). */
+  const [duelCleanupAsk, setDuelCleanupAsk] = useState(false);
+  /** Có xoá luôn hai nhánh feat/… khi dọn không — mặc định KHÔNG (xoá nhánh là mất bài). */
+  const [duelCleanupBranches, setDuelCleanupBranches] = useState(false);
+  /** Kết quả lần dọn gần nhất, để báo lại cho người dùng. */
+  const [duelCleaned, setDuelCleaned] = useState<string | null>(null);
   // Tài khoản Claude PER-TAB (mỗi tab chạy 1 tài khoản riêng). Khởi tạo: lựa chọn đã lưu của
   // tab, nếu chưa có thì theo tài khoản server đang set (cfg.currentClaudeProfile) hoặc 'default'.
   const [selectedClaudeProfile, setSelectedClaudeProfile] = useState(
@@ -1243,6 +1251,18 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
           break;
         case 'duel-report':
           setDuelReport(ev.report);
+          // Một trận = MỘT đề bài, không phải một chế độ bật mãi. Không tắt ở đây thì câu gõ
+          // tiếp ("tiếp", "commit đi") lại khởi động trận mới với hai worktree rỗng.
+          setDuelOn((was) => {
+            if (was) {
+              addItem(
+                'system',
+                '⚔️ Trận đã xong → tự tắt công tắc Duel. Lượt gõ tiếp sẽ chạy như bình thường; ' +
+                  'muốn đi tiếp với bài của một bên thì bấm "Cho … sửa" hoặc "Giữ bài …" ở khối kết luận.',
+              );
+            }
+            return false;
+          });
           break;
         case 'done':
           setRunning(false);
@@ -1319,6 +1339,72 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
       addItem('error', `Không gọi được backend: ${(err as Error).message}`);
     } finally {
       setDuelFixing(null);
+    }
+  }
+
+  /** "Giữ nhánh này": merge nhánh thắng về nhánh gốc trong repo gốc (một lượt agent có duyệt). */
+  async function duelKeep(side: 'A' | 'B', label: string, branch: string) {
+    const matchId = duelSessionId ?? sessionIdRef.current ?? sessionId;
+    if (!matchId || duelKeeping || running) return;
+    setDuelKeeping(side);
+    try {
+      const res = await apiFetch(`/api/duel/${matchId}/keep`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ side }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        addItem('error', body.error ?? `HTTP ${res.status}`);
+        return;
+      }
+      const { sessionId: sid } = await res.json();
+      addItem('system', `🏁 Giữ bài của ${label}: đang merge \`${branch}\` về nhánh gốc…`);
+      setSessionId(sid);
+      localStorage.setItem(K.session, sid);
+      setRunning(true);
+      setItems((prev) => {
+        sessionBaselineRef.current = prev.length;
+        localStorage.setItem(K.baseline, String(prev.length));
+        return prev;
+      });
+      streamEvents(sid);
+    } catch (err) {
+      addItem('error', `Không gọi được backend: ${(err as Error).message}`);
+    } finally {
+      setDuelKeeping(null);
+    }
+  }
+
+  /** Dọn worktree của trận. CHỈ chạy khi người dùng bấm xác nhận — xem hộp xác nhận ở khối kết luận. */
+  async function duelCleanup() {
+    const matchId = duelSessionId ?? sessionIdRef.current ?? sessionId;
+    if (!matchId) return;
+    try {
+      const res = await apiFetch(`/api/duel/${matchId}/worktrees`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deleteBranches: duelCleanupBranches }),
+      });
+      const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      if (!res.ok) {
+        addItem('error', body.error ?? `HTTP ${res.status}`);
+        return;
+      }
+      const removed: string[] = body.removed ?? [];
+      const errors: string[] = body.errors ?? [];
+      setDuelCleaned(
+        [
+          removed.length ? `Đã gỡ: ${removed.join(', ')}` : 'Không gỡ được thư mục nào.',
+          errors.length ? `Lỗi: ${errors.join(' · ')}` : '',
+        ]
+          .filter(Boolean)
+          .join(' — '),
+      );
+      setDuelCleanupAsk(false);
+      addItem('system', `🧹 Dọn worktree: ${removed.length} thư mục${errors.length ? `, ${errors.length} lỗi` : ''}.`);
+    } catch (err) {
+      addItem('error', `Không gọi được backend: ${(err as Error).message}`);
     }
   }
 
@@ -1988,6 +2074,12 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
                         <b>{summary.review ? (summary.needsFix ? 'CẦN SỬA' : 'ĐẠT') : 'không có báo cáo'}</b>
                       </div>
                       {summary.error && <div className="duel-verdict-error">Lỗi khi chạy: {summary.error}</div>}
+                      {summary.changedFiles.length > 0 && !summary.committed && (
+                        <div className="duel-verdict-error">
+                          ⚠️ Bài CHƯA lên nhánh{summary.commitError ? ` (${summary.commitError})` : ''} — còn nằm trong{' '}
+                          <code>{summary.cwd}</code>. Merge nhánh này sẽ không lấy được gì.
+                        </div>
+                      )}
                       {summary.review && <Markdown text={summary.review} />}
                       {summary.needsFix && (
                         duelFixedSides.includes(sd) ? (
@@ -2008,6 +2100,95 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {/* KẾT LUẬN TRẬN — đề xuất của trọng tài, chọn nhánh giữ, và dọn worktree.
+            Không có khối này thì trận kết thúc bằng hai báo cáo rồi bỏ mặc người dùng tự đọc. */}
+        {duelReport && (
+          <div className="duel-summary">
+            {duelReport.verdict ? (
+              <div className="duel-summary-verdict">
+                <div className="duel-summary-head">
+                  ⚖️ {duelReport.verdict.arbiterLabel} đề xuất:{' '}
+                  <b>
+                    {duelReport.verdict.winner
+                      ? `giữ bài của ${duelLabels?.[duelReport.verdict.winner] ?? `phía ${duelReport.verdict.winner}`}`
+                      : 'chưa bên nào đạt'}
+                  </b>
+                </div>
+                <Markdown text={duelReport.verdict.text} />
+              </div>
+            ) : (
+              <div className="duel-summary-head">
+                ⚖️ Không có đề xuất của trọng tài — đọc hai báo cáo trên rồi tự chọn.
+              </div>
+            )}
+
+            <div className="duel-keep-row">
+              {duelReport.sides.map((sd) => {
+                const label = duelLabels?.[sd.side] ?? sd.label;
+                const suggested = duelReport.verdict?.winner === sd.side;
+                return (
+                  <div key={sd.side} className="duel-keep-card">
+                    <button
+                      type="button"
+                      className={`btn duel-keep-btn${suggested ? ' suggested' : ''}`}
+                      disabled={duelKeeping !== null || running || sd.changedFiles.length === 0 || !sd.committed}
+                      onClick={() => duelKeep(sd.side, label, sd.branch)}
+                      title={`Merge ${sd.branch} vào ${duelReport.baseBranch} trong repo gốc, chạy kiểm chứng rồi commit. Không push.`}
+                    >
+                      {duelKeeping === sd.side ? 'Đang gửi…' : `Giữ bài ${label}`}
+                      {suggested && ' ★'}
+                      {sd.changedFiles.length > 0 && !sd.committed && ' (nhánh rỗng)'}
+                    </button>
+                    <code className="duel-merge-cmd" title="Lệnh tương đương để tự chạy tay">
+                      {sd.mergeCommand}
+                    </code>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="duel-keep-note">
+              Nút này merge nhánh đã chọn vào <code>{duelReport.baseBranch}</code> rồi chạy kiểm chứng và
+              commit — <b>không push</b>, không xoá nhánh nào. Muốn đẩy lên remote thì sau khi merge
+              xong gõ một câu bình thường (“push lên đi”) trong tab này, hoặc chạy tay{' '}
+              <code>git -C … push</code>: push là thao tác rủi ro nên luôn phải qua cổng duyệt.
+            </div>
+
+            {/* Dọn worktree: LUÔN hỏi, và xoá nhánh phải tick riêng. */}
+            <div className="duel-cleanup">
+              {duelCleaned ? (
+                <div className="duel-cleanup-done">🧹 {duelCleaned}</div>
+              ) : !duelCleanupAsk ? (
+                <button type="button" className="btn" onClick={() => setDuelCleanupAsk(true)}>
+                  🧹 Dọn worktree của trận
+                </button>
+              ) : (
+                <div className="duel-cleanup-ask">
+                  <div>
+                    Gỡ hai thư mục worktree của trận <code>{duelReport.ticket}</code>?
+                  </div>
+                  <label className="duel-cleanup-opt">
+                    <input
+                      type="checkbox"
+                      checked={duelCleanupBranches}
+                      onChange={(e) => setDuelCleanupBranches(e.target.checked)}
+                    />{' '}
+                    Xoá luôn hai nhánh <code>{duelReport.sides.map((sd) => sd.branch).join(', ')}</code>
+                    <b> — bài chưa merge sẽ mất hẳn</b>
+                  </label>
+                  <div className="duel-cleanup-actions">
+                    <button type="button" className="btn deny" onClick={duelCleanup}>
+                      Xoá
+                    </button>
+                    <button type="button" className="btn" onClick={() => setDuelCleanupAsk(false)}>
+                      Thôi
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         )}
         {running && pending.length === 0 && questions.length === 0 && (

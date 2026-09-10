@@ -5080,6 +5080,40 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .duel-fix-btn { margin-top: 8px; }
 .duel-fix-sent { margin-top: 8px; font-size: 12px; color: var(--ink-2); }
 
+/* Khối KẾT LUẬN của trận: đề xuất trọng tài + chọn nhánh giữ + dọn worktree. */
+.duel-summary {
+  margin-top: 12px;
+  padding: 12px;
+  border: var(--bd-thin) solid var(--hairline);
+  border-left: 2px solid var(--brass);
+  border-radius: var(--r);
+  background: var(--surface-2);
+  font-size: 13px;
+}
+.duel-summary-head { font-size: 12.5px; margin-bottom: 6px; }
+.duel-summary-verdict { margin-bottom: 10px; }
+.duel-keep-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
+.duel-keep-card { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.duel-keep-btn.suggested { border-color: var(--brass); background: var(--brass-soft); }
+/* Lệnh git dài phải cuộn TRONG ô của nó, không được đẩy tràn ngang cả khung chat. */
+.duel-merge-cmd {
+  display: block;
+  overflow-x: auto;
+  white-space: nowrap;
+  padding: 5px 7px;
+  font-size: 11px;
+  border: var(--bd-thin) solid var(--hairline);
+  border-radius: var(--r);
+  background: var(--surface);
+  color: var(--ink-2);
+}
+.duel-keep-note { margin-top: 8px; font-size: 11.5px; color: var(--ink-2); line-height: 1.5; }
+.duel-cleanup { margin-top: 10px; padding-top: 10px; border-top: var(--bd-thin) solid var(--hairline); }
+.duel-cleanup-ask { display: flex; flex-direction: column; gap: 8px; font-size: 12.5px; }
+.duel-cleanup-opt { display: block; line-height: 1.5; }
+.duel-cleanup-actions { display: flex; gap: 8px; }
+.duel-cleanup-done { font-size: 12px; color: var(--ink-2); }
+
 /* ══════════════════════════════════════════════════════════════════════════════════════
  * §MOBILE · MÀN HẸP — MỌI luật riêng cho điện thoại/tablet dọc gom Ở ĐÂY, một chỗ duy nhất.
  *
@@ -5273,4 +5307,8 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 @media (max-width: 860px) {
   .duel-grid { grid-template-columns: 1fr; }
   .duel-col-body { max-height: none; overflow-y: visible; }
+}
+
+@media (max-width: 860px) {
+  .duel-keep-row { grid-template-columns: 1fr; }
 }

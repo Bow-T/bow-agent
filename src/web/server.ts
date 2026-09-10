@@ -63,7 +63,7 @@ import { loadRegistry, skillStatus, syncSkills } from '../skills/externalSkills.
 import { parseJiraRef } from '../input/jira-ref.js';
 import { fetchJiraTicketImages, fetchJiraTicketVideos } from '../input/jira-attachments.js';
 import { createTicketWorktree, listWorktrees, removeTicketWorktree } from '../core/gitWorktree.js';
-import { runDuel, buildFixBrief, type DuelSideSpec, type DuelSideId } from '../core/duel.js';
+import { runDuel, buildFixBrief, buildKeepBrief, duelWorktreeTicket, type DuelSideSpec, type DuelSideId } from '../core/duel.js';
 import { STANDARD_SUBAGENTS } from '../core/subagents.js';
 import { listSprints, listSprintIssues, readJiraAuth } from '../scheduler/jiraApi.js';
 import {
@@ -678,10 +678,16 @@ interface StoredDuelSide {
  * hội thoại và báo cáo review của từng phía. Giữ tối đa DUEL_REPORT_KEEP bản (LRU thô theo thứ tự
  * chèn) để không rò bộ nhớ khi chạy nhiều trận.
  */
-const duelReports = new Map<string, { params: RunParams; sides: StoredDuelSide[] }>();
+const duelReports = new Map<
+  string,
+  { params: RunParams; sides: StoredDuelSide[]; ticket: string; baseBranch: string; repoCwd: string }
+>();
 const DUEL_REPORT_KEEP = 20;
 
-function rememberDuelReport(sessionId: string, entry: { params: RunParams; sides: StoredDuelSide[] }): void {
+function rememberDuelReport(
+  sessionId: string,
+  entry: { params: RunParams; sides: StoredDuelSide[]; ticket: string; baseBranch: string; repoCwd: string },
+): void {
   duelReports.set(sessionId, entry);
   while (duelReports.size > DUEL_REPORT_KEEP) {
     const oldest = duelReports.keys().next().value;
@@ -765,6 +771,15 @@ function runDuelSession(session: ReturnType<typeof createSession>, params: RunPa
     onInputChannel: (side, send) => {
       sendBySide[side] = send;
     },
+    // Trọng tài pha 3 chạy bằng AI MẶC ĐỊNH của server ở bậc Sonnet: đủ sức so hai báo cáo mà
+    // không đốt thêm một lượt Opus. Nhãn ghi rõ ai chấm để người đọc tự trừ hao thiên vị.
+    arbiter: {
+      label: `${providerLabel(params.provider ?? config.provider)} (trọng tài)`,
+      provider: params.provider ?? config.provider,
+      providerProfile: params.providerProfile,
+      claudeProfile: params.claudeProfile,
+      model: 'claude-sonnet-5',
+    },
   })
     .then((report) => {
       const stored: StoredDuelSide[] = report.sides.map((s) => ({
@@ -775,12 +790,22 @@ function runDuelSession(session: ReturnType<typeof createSession>, params: RunPa
         conversationId: s.conversationId ?? conversationIds.get(s.id),
         review: s.review,
       }));
-      rememberDuelReport(session.id, { params, sides: stored });
+      rememberDuelReport(session.id, {
+        params,
+        sides: stored,
+        ticket: report.ticket,
+        baseBranch: report.baseBranch,
+        repoCwd: params.cwd,
+      });
       session.push({
         type: 'duel-report',
         report: {
           ticket: report.ticket,
           baseSha: report.baseSha,
+          baseBranch: report.baseBranch,
+          verdict: report.verdict
+            ? { winner: report.verdict.winner, text: report.verdict.text, arbiterLabel: report.verdict.arbiterLabel }
+            : undefined,
           sides: report.sides.map((s) => ({
             side: s.id,
             label: s.label,
@@ -794,6 +819,9 @@ function runDuelSession(session: ReturnType<typeof createSession>, params: RunPa
             // Chỉ mời "Cho sửa" khi reviewer THỰC SỰ kết luận cần sửa — tránh nút mời gọi
             // người dùng đốt thêm một lượt cho báo cáo "ĐẠT".
             needsFix: Boolean(s.review && /CẦN SỬA/i.test(s.review)),
+            mergeCommand: `git -C ${params.cwd} checkout ${report.baseBranch} && git -C ${params.cwd} merge --no-ff ${s.branch}`,
+            committed: s.committed,
+            commitError: s.commitError,
           })),
         },
       });
@@ -1463,6 +1491,105 @@ app.post('/api/duel/:id/fix', requireAdmin, checkReadonlyConfig, (req, res) => {
     },
     0,
   );
+});
+
+/**
+ * POST /api/duel/:id/keep — giữ bài của một phía: merge nhánh đó về nhánh gốc TRONG REPO GỐC.
+ * body: { side: 'A' | 'B' }
+ *
+ * Chạy như một lượt agent bình thường (cổng duyệt gác từng thao tác), KHÔNG phải một lệnh git
+ * chạy thẳng từ server: merge có thể xung đột, và sau merge còn phải chạy typecheck/test —
+ * đó là việc của agent, không phải của một `execFile` trong handler HTTP.
+ * Cố ý KHÔNG resume hội thoại của phía đó: merge là việc độc lập, phiên cũ chỉ kéo theo ngữ
+ * cảnh worktree khiến agent nhầm chỗ đứng.
+ */
+app.post('/api/duel/:id/keep', requireAdmin, checkReadonlyConfig, (req, res) => {
+  const cleanIp = getCleanIp(req);
+  const entry = duelReports.get(req.params.id);
+  if (!entry) {
+    res.status(404).json({ error: 'Không tìm thấy báo cáo duel của phiên này (có thể đã quá cũ).' });
+    return;
+  }
+  const sideId = req.body?.side === 'A' || req.body?.side === 'B' ? (req.body.side as DuelSideId) : undefined;
+  const winner = entry.sides.find((sd) => sd.side === sideId);
+  const loser = entry.sides.find((sd) => sd.side !== sideId);
+  if (!winner) {
+    res.status(400).json({ error: "Thiếu hoặc sai 'side' (phải là 'A' hoặc 'B')." });
+    return;
+  }
+
+  const session = createSession();
+  (session as any).clientIp = cleanIp;
+  (session as any).clientName = getClientName(req);
+  res.json({ sessionId: session.id });
+
+  logAudit(
+    `IP: ${cleanIp} - DUEL giữ nhánh ${winner.branch} (${winner.spec.label}) → merge vào ${entry.baseBranch}, session=${session.id}`,
+    cleanIp,
+    getClientName(req),
+  );
+  runAgentSession(
+    session,
+    {
+      ...entry.params,
+      brief: buildKeepBrief({
+        winnerLabel: winner.spec.label,
+        winnerBranch: winner.branch,
+        baseBranch: entry.baseBranch,
+        loserBranch: loser?.branch ?? '(không có)',
+        review: winner.review,
+      }),
+      cwd: entry.repoCwd,
+      mode: entry.params.mode === 'plan' ? 'auto' : entry.params.mode,
+      isExecuting: true,
+      provider: winner.spec.provider,
+      providerProfile: winner.spec.providerProfile,
+      claudeProfile: winner.spec.claudeProfile,
+      model: winner.spec.model,
+      resumeSessionId: undefined,
+    },
+    0,
+  );
+});
+
+/**
+ * DELETE /api/duel/:id/worktrees — dọn worktree của trận đã xong.
+ * body: { sides?: ('A'|'B')[]; deleteBranches?: boolean }
+ *
+ * KHÔNG bao giờ tự chạy: xoá worktree kèm nhánh là xoá luôn bài của bên thua, nên nó chỉ chạy
+ * khi người dùng bấm, và `deleteBranches` phải được gửi tường minh. Bỏ trống `sides` = dọn cả hai.
+ */
+app.delete('/api/duel/:id/worktrees', requireAdmin, checkReadonlyConfig, (req, res) => {
+  const cleanIp = getCleanIp(req);
+  const entry = duelReports.get(req.params.id);
+  if (!entry) {
+    res.status(404).json({ error: 'Không tìm thấy báo cáo duel của phiên này (có thể đã quá cũ).' });
+    return;
+  }
+  const asked: unknown = req.body?.sides;
+  const sides: DuelSideId[] = Array.isArray(asked)
+    ? (asked.filter((x) => x === 'A' || x === 'B') as DuelSideId[])
+    : ['A', 'B'];
+  const deleteBranches = req.body?.deleteBranches === true;
+
+  const removed: string[] = [];
+  const errors: string[] = [];
+  for (const sideId of sides) {
+    const sd = entry.sides.find((x) => x.side === sideId);
+    if (!sd) continue;
+    try {
+      removeTicketWorktree(entry.repoCwd, duelWorktreeTicket(entry.ticket, sideId), deleteBranches);
+      removed.push(deleteBranches ? `${sd.cwd} (+ nhánh ${sd.branch})` : sd.cwd);
+    } catch (err) {
+      errors.push(`${sd.cwd}: ${(err as Error).message}`);
+    }
+  }
+  logAudit(
+    `IP: ${cleanIp} - DUEL dọn worktree ${sides.join(',')} (xoá nhánh: ${deleteBranches}): ok=${removed.length}, lỗi=${errors.length}`,
+    cleanIp,
+    getClientName(req),
+  );
+  res.json({ removed, errors });
 });
 
 /** POST /api/stop/:id — dừng agent giữa chừng. */

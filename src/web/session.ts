@@ -97,13 +97,23 @@ export interface DuelSideSummary {
   reviewedBy?: string;
   /** Có findings để bấm "Cho sửa" hay không (reviewer kết luận CẦN SỬA). */
   needsFix: boolean;
+  /** Lệnh merge sẵn để copy chạy tay, cho người muốn tự làm thay vì bấm nút. */
+  mergeCommand: string;
+  /** Bài đã nằm trên NHÁNH chưa — chưa commit thì "Giữ bài" merge ra số không. */
+  committed: boolean;
+  /** Vì sao không commit được (nếu có). */
+  commitError?: string;
 }
 
 /** Payload sự kiện 'duel-report'. */
 export interface DuelSummary {
   ticket: string;
   baseSha: string;
+  /** Nhánh của repo gốc lúc trận bắt đầu — đích merge của nhánh thắng. */
+  baseBranch: string;
   sides: DuelSideSummary[];
+  /** Đề xuất của trọng tài (vắng nếu pha 3 không chạy). */
+  verdict?: { winner: 'A' | 'B' | null; text: string; arbiterLabel: string };
 }
 
 /**
