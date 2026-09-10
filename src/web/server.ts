@@ -64,6 +64,7 @@ import { parseJiraRef } from '../input/jira-ref.js';
 import { fetchJiraTicketImages, fetchJiraTicketVideos } from '../input/jira-attachments.js';
 import { createTicketWorktree, listWorktrees, removeTicketWorktree } from '../core/gitWorktree.js';
 import { runDuel, buildFixBrief, buildKeepBrief, duelWorktreeTicket, type DuelSideSpec, type DuelSideId } from '../core/duel.js';
+import { recordMatch, loadScores, BADGES } from '../core/duelScore.js';
 import { STANDARD_SUBAGENTS } from '../core/subagents.js';
 import { listSprints, listSprintIssues, readJiraAuth } from '../scheduler/jiraApi.js';
 import {
@@ -790,6 +791,28 @@ function runDuelSession(session: ReturnType<typeof createSession>, params: RunPa
         conversationId: s.conversationId ?? conversationIds.get(s.id),
         review: s.review,
       }));
+      // Bảng đấu: chấm điểm trận này. KHÔNG bao giờ đưa điểm ngược vào prompt của agent —
+      // hai bên phải vào trận với brief y hệt nhau (xem đầu core/duelScore.ts).
+      let scores;
+      try {
+        scores = recordMatch({
+          ticket: report.ticket,
+          cwd: params.cwd,
+          winner: report.verdict?.winner ?? null,
+          verdictText: report.verdict?.text ?? null,
+          sides: report.sides.map((s) => ({
+            side: s.id,
+            id: duel.sides.find((spec) => spec.id === s.id)?.provider ?? config.provider,
+            label: s.label,
+            rebuttal: s.rebuttal,
+            changedFiles: s.changedFiles.length,
+            committed: s.committed,
+          })),
+        });
+      } catch (err) {
+        // Bảng điểm hỏng không được làm hỏng trận — mọi thứ thật đã nằm trong git rồi.
+        logAudit(`IP: ${params.cleanIp} - DUEL không ghi được bảng đấu: ${(err as Error).message}`, params.cleanIp);
+      }
       rememberDuelReport(session.id, {
         params,
         sides: stored,
@@ -806,6 +829,7 @@ function runDuelSession(session: ReturnType<typeof createSession>, params: RunPa
           verdict: report.verdict
             ? { winner: report.verdict.winner, text: report.verdict.text, arbiterLabel: report.verdict.arbiterLabel }
             : undefined,
+          scores,
           sides: report.sides.map((s) => ({
             side: s.id,
             label: s.label,
@@ -816,6 +840,7 @@ function runDuelSession(session: ReturnType<typeof createSession>, params: RunPa
             error: s.error,
             review: s.review,
             reviewedBy: s.reviewedBy,
+            rebuttal: s.rebuttal,
             // Chỉ mời "Cho sửa" khi reviewer THỰC SỰ kết luận cần sửa — tránh nút mời gọi
             // người dùng đốt thêm một lượt cho báo cáo "ĐẠT".
             needsFix: Boolean(s.review && /CẦN SỬA/i.test(s.review)),
@@ -1590,6 +1615,21 @@ app.delete('/api/duel/:id/worktrees', requireAdmin, checkReadonlyConfig, (req, r
     getClientName(req),
   );
   res.json({ removed, errors });
+});
+
+/**
+ * GET /api/duel/scores — bảng đấu tích lũy của hai AI (màn "Bảng đấu" ở nav trái).
+ * Chỉ admin: đây là thống kê toàn máy, không phải dữ liệu của một phiên.
+ */
+app.get('/api/duel/scores', requireAdmin, (_req, res) => {
+  const store = loadScores();
+  res.json({
+    // Sắp sẵn theo điểm để UI khỏi tự đoán thứ hạng.
+    players: Object.values(store.players).sort((a, b) => b.points - a.points),
+    // Mới nhất lên đầu.
+    matches: [...store.matches].reverse(),
+    badges: BADGES.map(({ code, icon, label, hint }) => ({ code, icon, label, hint })),
+  });
 });
 
 /** POST /api/stop/:id — dừng agent giữa chừng. */

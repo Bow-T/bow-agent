@@ -619,8 +619,13 @@ branch to keep.
         └───────────┬───────────┘  lel)   └───────────┬───────────┘
                     └────────────────┬────────────────┘
                                      ▼
-                    PHASE 3 · ARBITER reads BOTH REVIEWS
-                    (not the diffs again) → "CHỌN: A|B|KHÔNG"
+                    PHASE 2.5 · REBUTTAL (1 round, parallel)
+                    each side answers the review OF ITSELF:
+                    CONCEDE / STAND, with runnable evidence
+                                     ▼
+                    PHASE 3 · ARBITER reads reviews + rebuttals
+                    (not the diffs again), rules on EVIDENCE
+                    → "CHỌN: A|B|KHÔNG" + table of disputes
                                      ▼
                     'duel-report' → two-column UI + pick ★
                                      │
@@ -645,13 +650,22 @@ branch to keep.
 | `WebEvent` carries `side?: 'A' \| 'B' \| 'system'` | The approval card must say which AI is asking, otherwise the user approves the wrong side's action |
 | Admin only, Dev mode only | LAN-shared modes may not create worktrees or run two streams |
 | Only one AI ready → single run plus a one-line notice | The user already typed the brief; swallowing it would be the worst outcome |
-| The arbiter gets the REVIEWS + stats, never the diffs again | Enough to compare the two attempts without burning another phase-2-sized round of tokens |
+| Phase 2.5 makes each side answer EVERY finding with file:line or command output | Without it phase 2 is two monologues: the side that was graded wrongly never gets to argue, and the arbiter picks between two accusations |
+| The arbiter rules "evidence wins, rhetoric loses" | Two AIs left to argue freely mean the more verbose one wins — the worst possible outcome |
+| The arbiter gets the REVIEWS + rebuttals + stats, never the diffs again | Enough to compare the two attempts without burning another phase-2-sized round of tokens |
 | `parseVerdictWinner` returns `null` when the model ignores the format | No recommendation beats a made-up one; the UI still prints the arbiter's text verbatim |
 | Warns when the source repo has uncommitted files | Worktrees branch off HEAD, so both contestants would work on an older tree than what the user sees in their editor |
 | Receiving `duel-report` turns the ⚔️ switch off | One match is one brief; left on, every follow-up line starts a fresh match with two empty worktrees |
 | `commitSideWork` commits each side's work right after phase 1 | Agents routinely finish and leave the work uncommitted; work sitting in the working tree makes "keep this branch" merge nothing |
 | Worktrees are never auto-removed; deleting branches needs its own tick | Removing them destroys the losing attempt while nothing has been merged yet |
 | "Keep this branch" merges but does NOT push | Pushing to a remote is the user's call, not a side effect of clicking a button |
+
+**Duel board** (`core/duelScore.ts`): every match is scored into `~/.bow-agent/duel-scores.json` —
++3 for winning, +1 per dispute won, **+1 per self-admitted mistake**, plus cumulative badges; shown
+in the "Duel board" nav panel (admin). Scores are **never** fed back into a prompt: both sides must
+receive an identical brief, and a model that knows its score during the rebuttal will argue instead
+of conceding. Rewarding concessions is deliberate — reward only wins and both sides learn exactly
+one lesson: never admit anything.
 
 **Off** by default (a per-tab ⚔️ switch kept in localStorage): a match costs roughly 2–3× the
 tokens of a normal run, so it is only worth it on genuinely hard tasks.

@@ -14,6 +14,7 @@ import {
   commitSideWork,
   dirtyFileCount,
   buildKeepBrief,
+  buildRebuttalBrief,
   buildReviewBrief,
   buildVerdictBrief,
   collectDiff,
@@ -256,4 +257,37 @@ test('dirtyFileCount trả 0 (không ném) khi thư mục không phải git repo
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('brief đối chất bắt trả lời từng điểm bằng bằng chứng, cho phép nhận sai', () => {
+  const brief = buildRebuttalBrief({
+    task: 'Sửa lỗi đếm ký tự',
+    ownLabel: 'Claude',
+    opponentLabel: 'Grok',
+    reviewOfMe: 'KẾT LUẬN: CẦN SỬA\n- [nặng] app_text_field.dart:42 — off-by-one',
+    myFiles: ['apps/mobile/lib/src/components/input/app_text_field.dart'],
+  });
+  assert.ok(brief.includes('bạn (Claude) trả lời báo cáo của Grok'));
+  assert.ok(brief.includes('app_text_field.dart:42 — off-by-one'), 'phải nhồi nguyên báo cáo về mình');
+  assert.ok(brief.includes('NHẬN SAI | GIỮ NGUYÊN | CHƯA ĐỦ DỮ LIỆU'));
+  assert.ok(brief.includes('Bằng chứng:'));
+  // Read-only và không được lái sang chấm ngược bài đối thủ.
+  assert.ok(brief.includes('KHÔNG được sửa gì'));
+  assert.ok(brief.includes('không chấm ngược lại bài của họ'));
+});
+
+test('brief trọng tài nhồi cả phản biện và bắt liệt kê điểm bất đồng', () => {
+  const brief = buildVerdictBrief({
+    task: 'Tìm nguyên nhân crash',
+    sides: [
+      { label: 'Claude', sideId: 'A', files: ['a.dart'], result: 'nguyên nhân là X', review: 'CẦN SỬA', rebuttal: 'GIỮ NGUYÊN — a.dart:10' },
+      { label: 'Grok', sideId: 'B', files: ['b.dart'], result: 'nguyên nhân là Y', review: 'ĐẠT', rebuttal: null },
+    ],
+  });
+  assert.ok(brief.includes('GIỮ NGUYÊN — a.dart:10'));
+  assert.ok(brief.includes('(không phản biện)'), 'bên không phản biện phải ghi rõ, không bỏ trống lặng lẽ');
+  assert.ok(brief.includes('ĐIỂM BẤT ĐỒNG'));
+  // Luật xử: bằng chứng thắng hùng biện.
+  assert.ok(brief.includes('BẰNG CHỨNG, không theo giọng văn'));
+  assert.ok(brief.includes('HAI NGUYÊN NHÂN khác nhau'));
 });

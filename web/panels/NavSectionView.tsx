@@ -12,6 +12,7 @@ import type { CollabApproval } from './ApprovalsPanel.js';
 import { JiraPanel } from './JiraPanel.js';
 import { ReposPanel } from './ReposPanel.js';
 import { ActivityPanel } from './ActivityPanel.js';
+import { DuelBoardPanel } from './DuelBoardPanel.js';
 import { ApprovalsPanel } from './ApprovalsPanel.js';
 import { SettingsPanel } from './SettingsPanel.js';
 // Bản đồ kéo theo Three.js — lazy để bundle chính không phình vì một màn ít mở.
@@ -70,6 +71,8 @@ export function NavSectionView(props: NavSectionViewProps) {
       return <ReposPanel {...props} />;
     case 'activity':
       return <ActivityPanel {...props} />;
+    case 'duel':
+      return <DuelBoardPanel {...props} />;
     case 'settings':
       return <SettingsPanel {...props} />;
     case 'map':

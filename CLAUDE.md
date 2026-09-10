@@ -143,12 +143,24 @@ duel chỉ khác **chỗ chạy**.
         │ cwd = worktree của A  │  song)  │ cwd = worktree của B  │
         └───────────┬───────────┘         └───────────┬───────────┘
                     └────────────────┬────────────────┘
+                                     │ mỗi bên đọc BÁO CÁO VỀ MÌNH
+                    ┌────────────────┴────────────────┐
+                    ▼                                 ▼
+        ┌───────────────────────┐         ┌───────────────────────┐
+        │ A phản biện báo cáo   │PHA 2.5 ·│ B phản biện báo cáo   │
+        │ của B về mình         │ ĐỐI CHẤT│ của A về mình         │
+        │ NHẬN SAI/GIỮ NGUYÊN + │  (1 vòng│ NHẬN SAI/GIỮ NGUYÊN + │
+        │ BẰNG CHỨNG chạy được  │  song   │ BẰNG CHỨNG chạy được  │
+        └───────────┬───────────┘  song)  └───────────┬───────────┘
+                    └────────────────┬────────────────┘
                                      ▼
                         ┌──────────────────────────┐
                         │ PHA 3 · TRỌNG TÀI        │
-                        │ đọc 2 báo cáo (KHÔNG đọc │
-                        │ lại diff), 'plan', Sonnet│
-                        │ → "CHỌN: A|B|KHÔNG"      │
+                        │ đọc báo cáo + ĐỐI CHẤT   │
+                        │ (KHÔNG đọc lại diff)     │
+                        │ xử theo BẰNG CHỨNG       │
+                        │ → "CHỌN: A|B|KHÔNG" +    │
+                        │   bảng ĐIỂM BẤT ĐỒNG     │
                         └────────────┬─────────────┘
                                      │ 'duel-report'
                         ┌────────────▼─────────────┐
@@ -179,6 +191,10 @@ duel chỉ khác **chỗ chạy**.
 - **Chỉ có một AI sẵn sàng** (chưa login Claude / chưa có token gateway) → báo một dòng rồi
   chạy đơn luồng như thường, KHÔNG nuốt yêu cầu của người dùng.
 - **Nói chen**: `POST /api/say/:id` nhận thêm `side` — thiếu `side` thì lời nói vào CẢ HAI phía.
+- **Đối chất quyết bằng BẰNG CHỨNG, không bằng hùng biện.** Pha 2.5 bắt mỗi bên trả lời từng
+  phát hiện bằng file:line có thật / output lệnh; trọng tài xử "bên nào dẫn được bằng chứng thì
+  thắng điểm đó, lý luận dài mà không bằng chứng thì THUA". Thiếu luật này, hai AI cãi nhau và
+  bên viết dài luôn thắng — kết quả tệ nhất có thể có.
 - **Repo gốc bẩn = hai đấu thủ làm trên nền cũ.** Worktree tách từ HEAD, không mang theo file
   chưa commit. `dirtyFileCount` cảnh báo ngay đầu trận thay vì để người dùng phát hiện lúc so kết quả.
 - **Một trận = MỘT đề bài.** Nhận `duel-report` là UI **tự tắt** công tắc ⚔️. Không tắt thì mọi
@@ -193,6 +209,27 @@ duel chỉ khác **chỗ chạy**.
 - **Trọng tài có thể thiên vị** (nó là một trong hai hãng, chạy bằng AI mặc định của server).
   Vì vậy UI luôn ghi rõ ai chấm, và `parseVerdictWinner` trả `null` khi model không theo khuôn —
   thà không có đề xuất còn hơn đề xuất bịa.
+
+### Bảng đấu (`core/duelScore.ts` + màn "Bảng đấu" ở nav trái)
+
+Mỗi trận ghi điểm vào `~/.bow-agent/duel-scores.json` (đổi chỗ bằng `BOW_DUEL_SCORES`):
+
+```
+  +3  thắng trận (trọng tài CHỌN)
+  +1  mỗi điểm bất đồng trọng tài xử cho mình   (đọc bảng "ĐÚNG: A/B")
+  +1  mỗi lần TỰ NHẬN SAI trong đối chất        (đọc dấu đầu dòng "- [NHẬN SAI]")
+  🏆🔥⚡🎯🤝💯🎖️  huy hiệu mở theo thống kê tích lũy
+```
+
+- **Điểm KHÔNG BAO GIỜ vào prompt.** Hai bên phải nhận brief y hệt nhau, nếu không phép so mất
+  tính công bằng. Riêng pha đối chất mà biết điểm thì model sẽ cãi cố thay vì nhận sai — phá đúng
+  thứ pha đó sinh ra để làm.
+- **Thưởng cả việc nhận sai** là chủ ý: chỉ thưởng thắng thì cả hai học được đúng một bài — không
+  bao giờ nhận sai — và đối chất thành cãi lộn.
+- Đếm bằng dấu đầu dòng theo khuôn (`countConcessions`), KHÔNG quét văn xuôi: câu "tôi KHÔNG nhận
+  sai điểm này" mà quét thô thì cũng bị tính là nhận sai.
+- Bảng điểm hỏng/không ghi được KHÔNG làm hỏng trận — mọi thứ thật đã nằm trong git.
+- Đọc qua `GET /api/duel/scores` (**admin**).
 
 ## Tài liệu chi tiết
 

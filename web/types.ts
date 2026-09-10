@@ -73,6 +73,8 @@ export interface DuelSideSummary {
   /** Báo cáo do phía KIA viết về phía này. */
   review: string | null;
   reviewedBy?: string;
+  /** Phía này trả lời báo cáo về mình ra sao (pha đối chất). */
+  rebuttal: string | null;
   /** Reviewer kết luận CẦN SỬA → UI mời nút "Cho sửa". */
   needsFix: boolean;
   /** Lệnh merge sẵn để copy chạy tay. */
@@ -92,6 +94,64 @@ export interface DuelSummary {
   sides: DuelSideSummary[];
   /** Đề xuất của trọng tài (vắng nếu pha 3 không chạy). */
   verdict?: { winner: 'A' | 'B' | null; text: string; arbiterLabel: string };
+  /** Điểm hai bên vừa ăn + huy hiệu mới mở. */
+  scores?: DuelScoreDelta[];
+}
+
+/** Điểm một phía ăn được trong một trận — khớp ScoreDelta ở src/core/duelScore.ts. */
+export interface DuelScoreDelta {
+  side: 'A' | 'B';
+  id: string;
+  label: string;
+  points: number;
+  disputesWon: number;
+  concessions: number;
+  isWinner: boolean;
+  newBadges: { code: string; icon: string; label: string; hint: string }[];
+  totalPoints: number;
+  streak: number;
+}
+
+/** Thành tích tích lũy của một AI — khớp PlayerStats ở src/core/duelScore.ts. */
+export interface DuelPlayerStats {
+  id: string;
+  label: string;
+  matches: number;
+  wins: number;
+  losses: number;
+  draws: number;
+  points: number;
+  disputesWon: number;
+  concessions: number;
+  streak: number;
+  bestStreak: number;
+  badges: string[];
+  lastPlayedAt: string;
+}
+
+/** Một trận trong lịch sử bảng đấu — khớp MatchRecord ở src/core/duelScore.ts. */
+export interface DuelMatchRecord {
+  at: string;
+  ticket: string;
+  cwd: string;
+  winner: 'A' | 'B' | null;
+  sides: {
+    side: 'A' | 'B';
+    id: string;
+    label: string;
+    points: number;
+    disputesWon: number;
+    concessions: number;
+    changedFiles: number;
+    committed: boolean;
+  }[];
+}
+
+/** Trả lời của GET /api/duel/scores. */
+export interface DuelScoreboard {
+  players: DuelPlayerStats[];
+  matches: DuelMatchRecord[];
+  badges: { code: string; icon: string; label: string; hint: string }[];
 }
 
 /** Sự kiện từ backend qua SSE — phải khớp WebEvent ở src/web/session.ts. */
@@ -257,6 +317,7 @@ export type NavSection =
   | 'cosmos'
   | 'map'
   | 'activity'
+  | 'duel'
   | 'settings';
 
 /** Kết quả nhận diện source từ backend. */

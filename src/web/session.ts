@@ -114,6 +114,22 @@ export interface DuelSummary {
   sides: DuelSideSummary[];
   /** Đề xuất của trọng tài (vắng nếu pha 3 không chạy). */
   verdict?: { winner: 'A' | 'B' | null; text: string; arbiterLabel: string };
+  /** Điểm hai bên vừa ăn ở trận này + huy hiệu mới mở (bảng đấu, xem core/duelScore.ts). */
+  scores?: DuelScoreDelta[];
+}
+
+/** Điểm một phía ăn được trong một trận — khớp ScoreDelta ở core/duelScore.ts. */
+export interface DuelScoreDelta {
+  side: 'A' | 'B';
+  id: string;
+  label: string;
+  points: number;
+  disputesWon: number;
+  concessions: number;
+  isWinner: boolean;
+  newBadges: { code: string; icon: string; label: string; hint: string }[];
+  totalPoints: number;
+  streak: number;
 }
 
 /**

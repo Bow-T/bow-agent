@@ -35,6 +35,7 @@ const NAV_ITEMS: NavItemDef[] = [
   { id: 'cosmos', icon: 'starChart', vi: 'Cosmos', en: 'Cosmos' },
   { id: 'map', icon: 'target', vi: 'Bản đồ', en: 'Map' },
   { id: 'activity', icon: 'activityLog', vi: 'Hoạt động', en: 'Activity' },
+  { id: 'duel', icon: 'starChart', vi: 'Bảng đấu', en: 'Duel board', adminOnly: true },
   { id: 'settings', icon: 'tool', vi: 'Cài đặt', en: 'Settings' },
 ];
 
