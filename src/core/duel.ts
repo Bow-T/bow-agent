@@ -85,6 +85,11 @@ export interface DuelSideOutcome {
   review: string | null;
   /** Nhãn của bên đã review phía này. */
   reviewedBy?: string;
+  /**
+   * PHẢN BIỆN của chính phía này trước báo cáo viết về mình (pha 2.5). Không có bước này thì
+   * review chéo chỉ là hai bản độc thoại — bên bị chấm sai không bao giờ được cãi.
+   */
+  rebuttal: string | null;
 }
 
 export interface DuelOptions {
@@ -212,6 +217,64 @@ export function collectDiff(cwd: string, baseSha: string): { diff: string; files
 }
 
 /**
+ * Brief cho PHA 2.5 — đối chất: `ownLabel` đọc báo cáo mà `opponentLabel` vừa viết VỀ MÌNH và
+ * trả lời từng điểm.
+ *
+ * Luật xương sống: mỗi điểm phải chốt bằng BẰNG CHỨNG CHẠY ĐƯỢC (file:line có thật, output lệnh,
+ * test tái hiện), không phải bằng lý luận. Hai AI hùng biện với nhau thì bên viết dài thường
+ * thắng — đó là kết quả tệ nhất có thể có của một phiên đối chất.
+ */
+export function buildRebuttalBrief(params: {
+  task: string;
+  ownLabel: string;
+  opponentLabel: string;
+  reviewOfMe: string;
+  myFiles: string[];
+}): string {
+  const { task, ownLabel, opponentLabel, reviewOfMe, myFiles } = params;
+  return [
+    `# Đối chất — bạn (${ownLabel}) trả lời báo cáo của ${opponentLabel}`,
+    '',
+    `Bạn vừa làm nhiệm vụ dưới đây. ${opponentLabel} đã soi bài của bạn và viết báo cáo ở dưới.`,
+    'Việc của bạn: trả lời TỪNG PHÁT HIỆN. Bạn đang ở mode read-only — được đọc file và chạy lệnh',
+    'kiểm chứng, KHÔNG được sửa gì.',
+    '',
+    '## Nhiệm vụ gốc',
+    '',
+    task,
+    '',
+    `## File bạn đã đổi (${myFiles.length})`,
+    '',
+    myFiles.length ? myFiles.map((f) => `- ${f}`).join('\n') : '(không có)',
+    '',
+    `## ${opponentLabel} nói về bài của bạn`,
+    '',
+    reviewOfMe,
+    '',
+    '## Cách trả lời',
+    '',
+    '1. **Kiểm chứng trước, cãi sau.** Mở đúng file:line reviewer nêu. Chạy được lệnh/test để',
+    '   chứng minh thì chạy. Đừng trả lời chỉ dựa trên trí nhớ về code mình vừa viết.',
+    '2. **Sai thì nhận.** Reviewer đúng thì ghi NHẬN SAI — nhận sớm một lỗi thật tốt hơn nhiều',
+    '   so với bảo vệ nó qua ba đoạn văn.',
+    '3. **Đúng thì giữ, kèm bằng chứng.** Nêu file:line hoặc output lệnh chứng minh reviewer nhầm.',
+    '4. **Không đủ dữ liệu thì nói thẳng** thay vì đoán.',
+    '5. Không mở chủ đề mới, không chấm ngược lại bài của họ — chỗ này chỉ để trả lời về BÀI BẠN.',
+    '',
+    '## Khuôn kết quả',
+    '',
+    '```',
+    'TỔNG: <số điểm bạn NHẬN SAI> nhận / <số điểm bạn GIỮ> giữ',
+    '',
+    'TỪNG ĐIỂM:',
+    '- [NHẬN SAI | GIỮ NGUYÊN | CHƯA ĐỦ DỮ LIỆU] <phát hiện của reviewer, tóm trong một câu>',
+    '  Bằng chứng: <file:line có thật, hoặc lệnh đã chạy + output>',
+    '  <nếu NHẬN SAI: cách sửa. nếu GIỮ NGUYÊN: reviewer nhầm ở chỗ nào>',
+    '```',
+  ].join('\n');
+}
+
+/**
  * Commit bài của một phía lên chính nhánh của nó. BẮT BUỘC phải có: "Giữ bài" merge NHÁNH, nên
  * thay đổi còn nằm ở working tree là merge ra số không — mà agent thì thường xuyên làm xong rồi
  * để đó, không tự commit.
@@ -291,7 +354,16 @@ export function buildReviewBrief(params: {
 /** Brief cho pha 3: trọng tài đọc hai báo cáo review rồi đề xuất giữ bên nào. */
 export function buildVerdictBrief(params: {
   task: string;
-  sides: { label: string; sideId: DuelSideId; files: string[]; error?: string; result: string | null; review: string | null }[];
+  sides: {
+    label: string;
+    sideId: DuelSideId;
+    files: string[];
+    error?: string;
+    result: string | null;
+    review: string | null;
+    /** Phía này đã trả lời báo cáo về mình ra sao (pha 2.5). */
+    rebuttal?: string | null;
+  }[];
 }): string {
   const { task, sides } = params;
   const block = (s: (typeof sides)[number]) =>
@@ -304,6 +376,10 @@ export function buildVerdictBrief(params: {
       '**Bên kia chấm phía này:**',
       '',
       s.review ?? '(không có báo cáo review)',
+      '',
+      '**Phía này ĐỐI CHẤT lại (nhận sai chỗ nào, giữ chỗ nào, bằng chứng gì):**',
+      '',
+      s.rebuttal ?? '(không phản biện)',
       '',
       '**Phía này tự tổng kết:**',
       '',
@@ -329,16 +405,24 @@ export function buildVerdictBrief(params: {
     ...sides.map(block),
     '## Cách chấm',
     '',
-    '1. Ưu tiên ĐÚNG trước: bên nào có lỗi thật (theo phát hiện của reviewer) thì trừ nặng.',
-    '2. Rồi tới ĐỦ: bên nào bỏ sót yêu cầu trong đề.',
-    '3. Cuối mới tới gọn: ít thay đổi hơn mà làm đủ việc thì hơn.',
-    '4. Đừng chọn bừa để có kết quả: nếu CẢ HAI đều sai/thiếu, nói thẳng là không bên nào đạt.',
-    '5. Báo cáo review là ý kiến của một AI khác — được phép BÁC nếu bạn kiểm tra thấy nó sai.',
+    '1. **Xử theo BẰNG CHỨNG, không theo giọng văn.** Mỗi tranh cãi giữa reviewer và phần đối',
+    '   chất: bên nào dẫn được file:line có thật / output lệnh thì bên đó thắng điểm ấy. Lý luận',
+    '   dài mà không có bằng chứng thì THUA điểm — kể cả khi nghe rất thuyết phục.',
+    '2. Bạn được phép (và nên) TỰ KIỂM một vài điểm quan trọng bằng cách mở file/chạy lệnh đọc,',
+    '   thay vì tin lời cả hai bên.',
+    '3. Một bên đã NHẬN SAI thì coi như điểm đó chốt — không cần xử lại.',
+    '4. Ưu tiên ĐÚNG trước, rồi ĐỦ (bỏ sót yêu cầu nào trong đề), cuối mới tới gọn.',
+    '5. Đừng chọn bừa để có kết quả: nếu CẢ HAI đều sai/thiếu, nói thẳng là không bên nào đạt.',
+    '6. Hai bên ra HAI NGUYÊN NHÂN khác nhau cho cùng một hiện tượng thì phải nói rõ nguyên nhân',
+    '   nào có bằng chứng đứng được — hoặc rằng chưa đủ dữ liệu để kết luận, cần chạy gì để biết.',
     '',
     '## Khuôn kết quả (dòng đầu bắt buộc đúng khuôn — máy đọc dòng này)',
     '',
     '```',
     'CHỌN: A | B | KHÔNG',
+    '',
+    'ĐIỂM BẤT ĐỒNG (mỗi dòng một điểm hai bên chưa thống nhất):',
+    '- <điểm tranh cãi> → ĐÚNG: <A|B|chưa rõ> — <bằng chứng quyết định>',
     '',
     'VÌ SAO: <2-4 câu, nêu điểm quyết định chứ không tóm tắt lại cả hai bài>',
     '',
@@ -428,6 +512,7 @@ async function runSide(
     diffTruncated: false,
     committed: false,
     review: null,
+    rebuttal: null,
   };
   try {
     outcome.result = await runAgent({
@@ -500,6 +585,39 @@ async function reviewSide(
   }
 }
 
+/**
+ * Chạy pha 2.5 cho một phía: chính tác giả trả lời báo cáo viết về mình. Chạy bằng AI CỦA PHÍA ĐÓ
+ * (nó bảo vệ bài của nó) trong worktree của nó, read-only.
+ */
+async function rebutSide(opts: DuelOptions, spec: DuelSideSpec, own: DuelSideOutcome, opponentLabel: string): Promise<string | null> {
+  if (!own.review) return null;
+  const brief = buildRebuttalBrief({
+    task: opts.brief,
+    ownLabel: own.label,
+    opponentLabel,
+    reviewOfMe: own.review,
+    myFiles: own.changedFiles,
+  });
+  try {
+    return await runAgent({
+      ...opts.runBase,
+      brief,
+      cwd: own.cwd,
+      mode: 'plan',
+      provider: spec.provider,
+      providerProfile: spec.providerProfile,
+      claudeProfile: spec.claudeProfile,
+      model: spec.model,
+      abortSignal: opts.abortSignal,
+      onEvent: (ev) => opts.onEvent(spec.id, ev),
+      onQuestion: opts.onQuestion ? (questions) => opts.onQuestion!(spec.id, questions) : undefined,
+    });
+  } catch (err) {
+    opts.onEvent('system', { type: 'text', text: `⚠️ ${own.label} không phản biện được: ${(err as Error).message}` });
+    return null;
+  }
+}
+
 /** Chạy pha 3: trọng tài đọc hai báo cáo rồi đề xuất giữ bên nào. Trả undefined nếu không chạy được. */
 async function runArbiter(
   opts: DuelOptions,
@@ -515,6 +633,7 @@ async function runArbiter(
       error: o.error,
       result: o.result,
       review: o.review,
+      rebuttal: o.rebuttal,
     })),
   });
   try {
@@ -625,6 +744,19 @@ export async function runDuel(opts: DuelOptions): Promise<DuelReport> {
     outB.reviewedBy = specA.label;
     outA.review = reviewOfA;
     outA.reviewedBy = specB.label;
+
+    // PHA 2.5 — ĐỐI CHẤT: mỗi bên trả lời báo cáo viết về MÌNH, kèm bằng chứng chạy được.
+    // Thiếu bước này thì pha 2 chỉ là hai bản độc thoại và trọng tài phải chọn giữa hai lời
+    // buộc tội mà không bên nào được cãi.
+    if (outA.review || outB.review) {
+      note(opts, `💬 Đối chất: ${specA.label} và ${specB.label} trả lời báo cáo viết về mình…`);
+      const [rebutA, rebutB] = await Promise.all([
+        rebutSide(opts, specA, outA, specB.label),
+        rebutSide(opts, specB, outB, specA.label),
+      ]);
+      outA.rebuttal = rebutA;
+      outB.rebuttal = rebutB;
+    }
   }
 
   // PHA 3 — trọng tài. Chỉ chạy khi có gì để so: ít nhất một bên có thay đổi.

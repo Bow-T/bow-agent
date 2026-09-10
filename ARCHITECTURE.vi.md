@@ -566,8 +566,13 @@ nào giữ.
         └───────────┬───────────┘  song)  └───────────┬───────────┘
                     └────────────────┬────────────────┘
                                      ▼
-                     PHA 3 · TRỌNG TÀI đọc HAI BÁO CÁO
-                     (không đọc lại diff) → "CHỌN: A|B|KHÔNG"
+                     PHA 2.5 · ĐỐI CHẤT (1 vòng, song song)
+                     mỗi bên trả lời báo cáo VỀ MÌNH:
+                     NHẬN SAI / GIỮ NGUYÊN + BẰNG CHỨNG chạy được
+                                     ▼
+                     PHA 3 · TRỌNG TÀI đọc báo cáo + đối chất
+                     (không đọc lại diff), xử theo BẰNG CHỨNG
+                     → "CHỌN: A|B|KHÔNG" + bảng ĐIỂM BẤT ĐỒNG
                                      ▼
                      'duel-report' → UI 2 cột + đề xuất ★
                                      │
@@ -591,13 +596,21 @@ nào giữ.
 | `WebEvent` mang `side?: 'A' \| 'B' \| 'system'` | Khung duyệt phải nói rõ AI nào đang xin, nếu không người dùng duyệt nhầm việc của bên kia |
 | Chỉ admin, chỉ mode Dev | Mode chia sẻ LAN không được tạo worktree hay chạy hai luồng |
 | Chỉ một AI sẵn sàng → chạy đơn + báo một dòng | Người dùng đã gõ đề bài rồi; nuốt yêu cầu là hỏng nhất |
-| Trọng tài chỉ nhận BÁO CÁO + thống kê, không nhận lại diff | Đủ để so hai bài mà không đốt thêm một lần token cỡ pha 2 |
+| Pha 2.5 bắt mỗi bên trả lời TỪNG phát hiện, kèm file:line/output lệnh | Không có bước này thì pha 2 là hai bản độc thoại: bên bị chấm sai không bao giờ được cãi, và trọng tài chọn giữa hai lời buộc tội |
+| Trọng tài xử "bằng chứng thắng, hùng biện thua" | Hai AI cãi nhau tự do thì bên viết dài thường thắng — kết quả tệ nhất có thể có |
+| Trọng tài chỉ nhận BÁO CÁO + đối chất + thống kê, không nhận lại diff | Đủ để so hai bài mà không đốt thêm một lần token cỡ pha 2 |
 | `parseVerdictWinner` trả `null` khi model không theo khuôn | Thà không có đề xuất còn hơn đề xuất bịa; UI vẫn in nguyên văn để người đọc tự chấm |
 | Cảnh báo khi repo gốc còn file chưa commit | Worktree tách từ HEAD; hai đấu thủ sẽ làm trên nền cũ hơn cái người dùng đang thấy trong editor |
 | Nhận `duel-report` ⇒ UI tự tắt công tắc ⚔️ | Một trận là một đề bài; bật mãi thì mỗi câu gõ tiếp lại đẻ một trận mới với hai worktree rỗng |
 | `commitSideWork` commit bài của mỗi phía ngay sau pha 1 | Agent hay làm xong rồi để đó; bài ở working tree thì "Giữ bài" merge nhánh ra số không |
 | Worktree KHÔNG tự dọn; xoá nhánh phải tick riêng | Xoá là mất luôn bài bên thua khi chưa ai merge |
 | "Giữ bài" merge nhưng KHÔNG push | Đẩy lên remote là quyết định của người dùng, không phải hệ quả của một nút bấm |
+
+**Bảng đấu** (`core/duelScore.ts`): mỗi trận ghi điểm vào `~/.bow-agent/duel-scores.json` — thắng
+trận +3, mỗi điểm bất đồng thắng +1, **mỗi lần tự nhận sai +1**, kèm huy hiệu tích lũy; xem ở màn
+"Bảng đấu" (nav trái, admin). Điểm **không bao giờ** được nhồi vào prompt: hai bên phải nhận brief
+y hệt nhau, và biết điểm ở pha đối chất thì model sẽ cãi cố thay vì nhận sai. Thưởng việc nhận sai
+là chủ ý — chỉ thưởng thắng thì cả hai học được đúng một bài: không bao giờ nhận sai.
 
 Mặc định **TẮT** (công tắc ⚔️ per-tab, lưu localStorage): một trận tốn khoảng 2–3× token của
 một lượt chạy thường, chỉ đáng cho task thật khó.

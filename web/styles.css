@@ -5078,6 +5078,10 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .duel-verdict-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 12.5px; }
 .duel-verdict-error { color: var(--danger); margin-bottom: 6px; }
 .duel-fix-btn { margin-top: 8px; }
+/* Đối chất gấp lại mặc định: người dùng đọc phán quyết trước, mở ra khi muốn xem hai bên cãi. */
+.duel-rebuttal { margin-top: 8px; border-top: var(--bd-thin) dashed var(--hairline); padding-top: 8px; }
+.duel-rebuttal > summary { cursor: pointer; font-size: 12px; color: var(--ink-2); }
+.duel-rebuttal[open] > summary { margin-bottom: 6px; }
 .duel-fix-sent { margin-top: 8px; font-size: 12px; color: var(--ink-2); }
 
 /* Khối KẾT LUẬN của trận: đề xuất trọng tài + chọn nhánh giữ + dọn worktree. */
@@ -5092,6 +5096,56 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 }
 .duel-summary-head { font-size: 12.5px; margin-bottom: 6px; }
 .duel-summary-verdict { margin-bottom: 10px; }
+/* Điểm vừa ăn sau trận — phần "quà" hiển thị cho NGƯỜI DÙNG, không bao giờ vào prompt của AI. */
+.duel-score-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0; }
+.duel-score-card {
+  min-width: 0;
+  padding: 8px 10px;
+  border: var(--bd-thin) solid var(--hairline);
+  border-radius: var(--r);
+  background: var(--surface);
+}
+.duel-score-card.winner { border-color: var(--brass); background: var(--brass-soft); }
+.duel-score-head { font-size: 12.5px; }
+.duel-score-gain { color: var(--brass); font-weight: 700; }
+.duel-score-total { color: var(--ink-2); font-size: 11px; }
+.duel-score-detail { margin-top: 3px; font-size: 11px; color: var(--ink-2); }
+.duel-score-badges { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 5px; }
+.duel-badge-new {
+  font-size: 10.5px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: var(--bd-thin) solid var(--brass);
+  background: var(--surface-2);
+}
+.duel-streak-up { color: var(--brass); }
+.duel-streak-down { color: var(--ink-2); }
+
+/* Màn Bảng đấu (nav trái). */
+.duel-board-standings { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 6px; }
+.duel-board-card {
+  min-width: 0;
+  padding: 12px;
+  border: var(--bd-thin) solid var(--hairline);
+  border-radius: var(--r);
+  background: var(--surface-2);
+}
+.duel-board-card.leader { border-left: 2px solid var(--brass); }
+.duel-board-card-head { display: flex; align-items: baseline; gap: 8px; font-size: 14px; }
+.duel-board-rank { color: var(--ink-2); font-size: 12px; }
+.duel-board-points { margin-left: auto; color: var(--brass); font-weight: 700; }
+.duel-board-record { margin-top: 6px; font-size: 12px; }
+.duel-board-sub { margin-top: 4px; font-size: 11.5px; color: var(--ink-2); }
+.duel-board-badges { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+/* Huy hiệu chưa mở vẫn hiện (mờ) để người dùng biết còn gì để mở. */
+.duel-badge-chip { font-size: 15px; opacity: 0.22; filter: grayscale(1); cursor: help; }
+.duel-badge-chip.owned { opacity: 1; filter: none; }
+.duel-match-row { padding: 8px 10px; border: var(--bd-thin) solid var(--hairline); border-radius: var(--r); }
+.duel-match-head { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px; }
+.duel-match-repo { color: var(--ink-2); font-size: 11px; }
+.duel-match-when { margin-left: auto; color: var(--ink-2); font-size: 11px; }
+.duel-match-body { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 10px; font-size: 11.5px; color: var(--ink-2); }
+.duel-match-winner { color: var(--ink); }
 .duel-keep-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
 .duel-keep-card { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .duel-keep-btn.suggested { border-color: var(--brass); background: var(--brass-soft); }
@@ -5311,4 +5365,8 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 
 @media (max-width: 860px) {
   .duel-keep-row { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 860px) {
+  .duel-score-row, .duel-board-standings { grid-template-columns: 1fr; }
 }

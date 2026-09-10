@@ -2081,6 +2081,12 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
                         </div>
                       )}
                       {summary.review && <Markdown text={summary.review} />}
+                      {summary.rebuttal && (
+                        <details className="duel-rebuttal">
+                          <summary>💬 {label} trả lời báo cáo này</summary>
+                          <Markdown text={summary.rebuttal} />
+                        </details>
+                      )}
                       {summary.needsFix && (
                         duelFixedSides.includes(sd) ? (
                           <div className="duel-fix-sent">✔️ Đã gửi review cho {label} sửa.</div>
@@ -2122,6 +2128,36 @@ export const TaskPane = forwardRef<TaskPaneHandle, TaskPaneProps>(function TaskP
             ) : (
               <div className="duel-summary-head">
                 ⚖️ Không có đề xuất của trọng tài — đọc hai báo cáo trên rồi tự chọn.
+              </div>
+            )}
+
+            {duelReport.scores && duelReport.scores.length > 0 && (
+              <div className="duel-score-row">
+                {duelReport.scores.map((sc) => (
+                  <div key={sc.side} className={`duel-score-card${sc.isWinner ? ' winner' : ''}`}>
+                    <div className="duel-score-head">
+                      {sc.isWinner && '🏆 '}
+                      <b>{sc.label}</b> <span className="duel-score-gain">+{sc.points}</span>
+                      <span className="duel-score-total">({sc.totalPoints} điểm)</span>
+                      {sc.streak > 1 && <span className="duel-streak-up"> chuỗi {sc.streak}🔥</span>}
+                    </div>
+                    <div className="duel-score-detail">
+                      {sc.isWinner && '+3 thắng trận · '}
+                      {sc.disputesWon > 0 && `+${sc.disputesWon} điểm bất đồng · `}
+                      {sc.concessions > 0 && `+${sc.concessions} dám nhận sai`}
+                      {!sc.isWinner && sc.disputesWon === 0 && sc.concessions === 0 && 'chưa ăn điểm nào'}
+                    </div>
+                    {sc.newBadges.length > 0 && (
+                      <div className="duel-score-badges">
+                        {sc.newBadges.map((b) => (
+                          <span key={b.code} className="duel-badge-new" title={b.hint}>
+                            {b.icon} {b.label}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
             )}
 
